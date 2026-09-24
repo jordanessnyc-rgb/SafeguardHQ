@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Building2, CalendarClock, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
+import { BarChart3, Building2, CalendarClock, Gavel, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -16,6 +16,7 @@ const NAV = [
   { href: "/outbox", label: "Outbox", icon: Send },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/compliance", label: "Compliance", icon: CalendarClock },
+  { href: "/bids", label: "Bids", icon: Gavel },
   { href: "/reports", label: "Reports", icon: BarChart3, ownerOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

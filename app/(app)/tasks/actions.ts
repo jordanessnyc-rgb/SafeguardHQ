@@ -20,6 +20,7 @@ const taskSchema = z.object({
   contactId: optionalUuid,
   propertyId: optionalUuid,
   airnycCaseId: optionalUuid,
+  bidId: optionalUuid,
 });
 
 export async function createTask(_prev: ActionState, form: FormData): Promise<ActionState> {
