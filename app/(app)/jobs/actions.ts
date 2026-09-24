@@ -35,6 +35,7 @@ const jobSchema = z.object({
   assignedTo: optionalUuid,
   subOrgId: optionalUuid,
   hpdViolationRef: z.string().max(100).optional(),
+  nextCycleDue: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(5000).optional(),
 });
 

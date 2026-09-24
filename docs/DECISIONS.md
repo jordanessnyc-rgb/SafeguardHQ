@@ -121,3 +121,19 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
 ### Deferred
 - FreshBooks estimates from signed proposals (optional in §6.2; proposals are Phase 4).
 - Pushing CRM contact edits back to FreshBooks clients (only the link is kept).
+
+## 2026-09-24 — Phase 4a (Compliance calendar & credential alerts)
+
+- **No legal cycle is built in (SPEC §6.6).** `compliance_rules` starts empty, and Jordan enters each service's cycle on the Compliance page: months, lead time, notes. A rule with no month count means "set this job's next date by hand". In that case the worker creates an owner task asking for the date.
+- **When a date is computed:** a job moving to **Closed** gets `next_cycle_due` = the inspection date + the rule's months, clamped to the end of the month.
+  - **Inspection date:** field-complete, else delivered, else stage entry, taken as the New York date.
+  - **Outreach task:** one per job, at 9 AM New York time, `lead_time_days` before the due date.
+  - **Manual dates win:** a date already entered by hand is kept.
+- **Once per job, and retroactive.** `jobs.cycle_scheduled_at` is claimed atomically before any task is created. Jobs whose service has no rule are left unmarked, so adding a rule later picks up jobs that were already closed. Their outreach tasks fall due immediately if the lead time has already passed.
+- **Licenses:** the `credentials` table is seeded with the three licenses SPEC §4.8 names, with number and expiry left blank for Jordan. Only the owner edits them; staff can read them.
+- **Subcontractor profiles:** `sub_profiles` holds trades, license numbers and the COI date. There are no rates here — they stay in `sub_costs`, which only the owner can see. Staff can edit these fields, because COIs arrive by email and a VA files them.
+- **Expiry alerts:** at 60, 30 and 7 days, plus once on expiry. Each alert is recorded in `expiry_alerts` per (subject, expiry date, threshold).
+  - **Late entry:** a date entered with 5 days left raises only the 7-day alert, not three at once.
+  - **Renewal:** a new expiry date restarts the sequence.
+- **Digest:** now includes licenses and COIs expiring within 60 days, and compliance cycles due within 60 days.
+- **Deferred:** uploading the license or COI file itself. The `file_path` and `coi_path` columns exist, but the upload UI comes with the Phase 4c document work.
