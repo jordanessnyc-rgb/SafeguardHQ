@@ -689,7 +689,7 @@ export const activities = pgTable(
     toAddress: text("to_address"),
     threadKey: text("thread_key"), // email Message-ID root / Quo conversation id
     transcript: text("transcript"),
-    attachments: jsonb("attachments").$type<{ filename: string; contentType: string; size: number; storageBucket: string; storagePath: string; documentId?: string }[]>(),
+    attachments: jsonb("attachments").$type<{ filename: string; contentType: string; size: number; storageBucket: string; storagePath: string; documentId?: string; ownerOnly?: boolean }[]>(),
     callStatus: text("call_status"),
     durationSeconds: integer("duration_seconds"),
     triageStatus: triageStatusEnum("triage_status"),

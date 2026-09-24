@@ -103,7 +103,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
           </Card>
           <Card>
             <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
-            <CardContent><Timeline items={activities} /></CardContent>
+            <CardContent><Timeline items={activities} viewerIsOwner={user.role === "OWNER"} /></CardContent>
           </Card>
         </div>
         <Card>

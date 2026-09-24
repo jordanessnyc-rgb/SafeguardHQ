@@ -8,7 +8,7 @@ import { and, eq, like } from "drizzle-orm";
 import MailComposer from "nodemailer/lib/mail-composer";
 import * as s from "@/db/schema";
 import { ingestEmail, type Uploader } from "@/lib/mail/ingest";
-import { containsToken, isLikelyEmsl } from "@/lib/mail/emsl";
+import { containsToken, isEmslReportFile, isLikelyEmsl, normalizeAddress } from "@/lib/mail/emsl";
 import { openContent } from "@/lib/comms/sensitive";
 import { encryptMember } from "@/lib/airnyc/cases";
 import { createUser, hasTestDb, setupTestDb, type TestDb } from "../helpers/db";
@@ -35,6 +35,17 @@ describe("EMSL helpers", () => {
     expect(isLikelyEmsl("lab@mail.emsl.com", "x")).toBe(true);
     expect(isLikelyEmsl("someone@gmail.com", "EMSL Order 12345")).toBe(true);
     expect(isLikelyEmsl("someone@notemsl.com", "hello")).toBe(false);
+  });
+  it("the report + COC attachment is the one ending in 002", () => {
+    expect(isEmslReportFile("062654144_002.pdf")).toBe(true);
+    expect(isEmslReportFile("EMSL 062654144-002.PDF")).toBe(true);
+    expect(isEmslReportFile("062654144_001.pdf")).toBe(false);
+    expect(isEmslReportFile("062654144_0021.pdf")).toBe(false);
+  });
+  it("normalizes EMSL file-name addresses and PLUTO addresses to the same words", () => {
+    expect(normalizeAddress("420_Central_Park_West_New_York_NY_10025_Apt_2E")).toBe("420 central park w new york ny 10025 apt 2e");
+    expect(normalizeAddress("420 CENTRAL PARK WEST")).toBe("420 central park w");
+    expect(normalizeAddress("47-58 43rd Street")).toBe("47 58 43 st");
   });
   it("matches whole tokens only", () => {
     expect(containsToken("Project: COC-5551, rush", "COC-5551")).toBe(true);
@@ -127,13 +138,13 @@ describe.skipIf(!hasTestDb)("ingestEmail", () => {
 
     it("partial results: matched sample → RESULTS_IN + PDF; job stays Lab Pending while others are out", async () => {
       const res = await ingest(
-        await raw({ from: "results@emsl.com", subject: "EMSL Analytical - Order 012345678 - Project COC-5551", text: "Please find attached.", attachments: [pdf("012345678_COC-5551.pdf")] }),
+        await raw({ from: "results@emsl.com", subject: "EMSL Analytical - Order 012345678 - Project COC-5551", text: "Please find attached.", attachments: [pdf("012345678_COC-5551_002.pdf")] }),
       );
       expect(res.emsl).toEqual({ matchedSamples: 1, jobIds: [labJobId] });
       const samples = await t.db.select().from(s.samples).where(eq(s.samples.jobId, labJobId));
       const byId = Object.fromEntries(samples.map((x) => [x.sampleId, x]));
       expect(byId["A-01"]).toMatchObject({ status: "RESULTS_IN" });
-      expect(byId["A-01"].resultPdfPath).toMatch(/^mail-attachments\/.+012345678_COC-5551\.pdf$/);
+      expect(byId["A-01"].resultPdfPath).toMatch(/^mail-attachments\/.+012345678_COC-5551_002\.pdf$/);
       expect(byId["A-02"].status).toBe("SUBMITTED");
       expect(byId["A-03"].status).toBe("COLLECTED"); // "COC-555" is not a whole-token match
       const [job] = await t.db.select().from(s.jobs).where(eq(s.jobs.id, labJobId));
@@ -145,13 +156,59 @@ describe.skipIf(!hasTestDb)("ingestEmail", () => {
     });
 
     it("final results: job moves to Drafting and the owner gets a task", async () => {
-      const res = await ingest(await raw({ from: "results@emsl.com", subject: "EMSL Results COC-5552", text: "", attachments: [pdf("results.pdf")] }));
+      const res = await ingest(await raw({ from: "results@emsl.com", subject: "EMSL Results COC-5552", text: "", attachments: [pdf("results_002.pdf")] }));
       expect(res.emsl?.matchedSamples).toBe(1);
       const [job] = await t.db.select().from(s.jobs).where(eq(s.jobs.id, labJobId));
       expect(job.stage).toBe("DRAFTING");
       const tasks = await t.db.select().from(s.tasks).where(like(s.tasks.title, `Lab results in — ${labJobNumber}%`));
       expect(tasks.map((x) => x.description)).toContain("Job moved to Drafting.");
       expect(tasks.every((x) => x.assignee)).toBe(true);
+    });
+
+    it("real EMSL shape: 3 attachments, matched by address + unit from the file name; invoice files owner-only", async () => {
+      const [prop] = await t.db.insert(s.properties).values({ addressLine: "420 CENTRAL PARK WEST", unit: "2E" }).returning();
+      const [other] = await t.db.insert(s.properties).values({ addressLine: "420 CENTRAL PARK WEST", unit: "3F" }).returning();
+      const [job] = await t.db.insert(s.jobs).values({ serviceCode: "MOLD_ASSESS", pipelineKey: "INSPECTION", stage: "FIELD_COMPLETE", propertyId: prop.id }).returning();
+      const [otherJob] = await t.db.insert(s.jobs).values({ serviceCode: "MOLD_ASSESS", pipelineKey: "INSPECTION", stage: "FIELD_COMPLETE", propertyId: other.id }).returning();
+      await t.db.insert(s.samples).values([
+        { jobId: job.id, sampleId: "CPW-1", type: "AIR", cocNumber: "ESS-COC-88", status: "SUBMITTED" },
+        { jobId: otherJob.id, sampleId: "CPW-9", type: "AIR", cocNumber: "ESS-COC-99", status: "SUBMITTED" },
+      ]);
+      await t.db.update(s.jobs).set({ stage: "LAB_PENDING" }).where(eq(s.jobs.id, job.id));
+      const base = "EMSL_report_invoice_COC_for_orders_062654144__420_Central_Park_West_New_York_NY_10025_Apt_2E";
+      const res = await ingest(
+        await raw({
+          from: "EMSL Analytical <reports@emsl.com>",
+          subject: "EMSL Order 062654144",
+          text: "Please see attached.",
+          attachments: [pdf(`${base}_001.pdf`), pdf(`${base}_002.pdf`), pdf(`${base}_003.pdf`)],
+        }),
+      );
+      expect(res.emsl).toEqual({ matchedSamples: 1, jobIds: [job.id] });
+      const [sample] = await t.db.select().from(s.samples).where(eq(s.samples.sampleId, "CPW-1"));
+      expect(sample.status).toBe("RESULTS_IN");
+      expect(sample.resultPdfPath).toMatch(/^mail-attachments\/.+_002\.pdf$/);
+      const [untouched] = await t.db.select().from(s.samples).where(eq(s.samples.sampleId, "CPW-9"));
+      expect(untouched.status).toBe("SUBMITTED"); // same building, different unit
+      const [a] = await t.db.select().from(s.activities).where(eq(s.activities.id, res.activityId!));
+      expect(a.attachments!.map((x) => [x.filename.slice(-7), x.storageBucket, Boolean(x.ownerOnly)])).toEqual([
+        ["001.pdf", "job-files-pricing", true],
+        ["002.pdf", "mail-attachments", false],
+        ["003.pdf", "job-files-pricing", true],
+      ]);
+      const [j] = await t.db.select().from(s.jobs).where(eq(s.jobs.id, job.id));
+      expect(j.stage).toBe("DRAFTING");
+    });
+
+    it("EMSL invoice documents are hidden from VAs; the lab report is visible", async () => {
+      const va = await createUser(t, "VA");
+      const [prop] = await t.db.insert(s.properties).values({ addressLine: "15 WEST 72 STREET" }).returning();
+      const [job] = await t.db.insert(s.jobs).values({ serviceCode: "MOLD_ASSESS", pipelineKey: "INSPECTION", stage: "SCHEDULED", propertyId: prop.id }).returning();
+      await ingest(await raw({ from: "reports@emsl.com", subject: `EMSL ${job.jobNumber}`, text: "", attachments: [pdf("x_001.pdf"), pdf("x_002.pdf")] }));
+      const all = await t.db.select().from(s.documents).where(eq(s.documents.jobId, job.id));
+      expect(all.map((d) => [d.title, d.kind, d.containsPricing])).toEqual(expect.arrayContaining([["x_001.pdf", "OTHER", true], ["x_002.pdf", "LAB_RESULT", false]]));
+      const seen = await va.as((tx) => tx.select().from(s.documents).where(eq(s.documents.jobId, job.id)));
+      expect(seen.map((d) => d.title)).toEqual(["x_002.pdf"]);
     });
 
     it("an EMSL email matching nothing raises a manual-filing task", async () => {

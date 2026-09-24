@@ -20,7 +20,7 @@ export type TimelineItem = {
   channelLine?: string | null;
   callStatus?: string | null;
   durationSeconds?: number | null;
-  attachments?: { filename: string; documentId?: string }[] | null;
+  attachments?: { filename: string; documentId?: string; ownerOnly?: boolean }[] | null;
   triageCategory?: string | null;
   triageStatus?: string | null;
   sensitive?: boolean;
@@ -31,7 +31,7 @@ const who = (v?: string | null) => (v ? (v.startsWith("+") ? formatPhone(v) : v)
 const mins = (sec?: number | null) => (sec ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}` : null);
 
 /** Unified activity timeline (SPEC §4.6): calls, texts, emails, notes, stage changes. */
-export function Timeline({ items }: { items: TimelineItem[] }) {
+export function Timeline({ items, viewerIsOwner = false }: { items: TimelineItem[]; viewerIsOwner?: boolean }) {
   if (items.length === 0) return <p className="text-sm text-muted-foreground">No activity yet.</p>;
   return (
     <ol className="space-y-4 border-l pl-4">
@@ -78,7 +78,11 @@ export function Timeline({ items }: { items: TimelineItem[] }) {
             {a.attachments && a.attachments.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-2 text-xs">
                 {a.attachments.map((f, i) =>
-                  f.documentId ? (
+                  f.ownerOnly && !viewerIsOwner ? (
+                    <span key={i} className="inline-flex items-center gap-1 text-muted-foreground">
+                      <Paperclip className="size-3" /> {f.filename} (owner only)
+                    </span>
+                  ) : f.documentId ? (
                     <a key={i} href={`/api/documents/${f.documentId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
                       <Paperclip className="size-3" /> {f.filename}
                     </a>

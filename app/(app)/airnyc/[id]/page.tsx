@@ -161,7 +161,7 @@ export default async function CasePage({ params }: PageProps<"/airnyc/[id]">) {
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
-          <CardContent><Timeline items={activities} /></CardContent>
+          <CardContent><Timeline items={activities} viewerIsOwner={user.role === "OWNER"} /></CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>Edit case</CardTitle></CardHeader>

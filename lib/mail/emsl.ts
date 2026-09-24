@@ -12,7 +12,34 @@ import { schema as s, type Db, type Tx } from "@/lib/db";
 import { JOB_NUMBER_RE } from "./patterns";
 
 type Conn = Db | Tx;
-type StoredAttachment = { filename: string; contentType: string; storageBucket: string; storagePath: string; documentId?: string };
+type StoredAttachment = { filename: string; contentType: string; storageBucket: string; storagePath: string; documentId?: string; ownerOnly?: boolean };
+
+/**
+ * EMSL emails carry three attachments; the one whose name ends in "002" is the lab report with
+ * the chain of custody (per Jordan, 2026-09-24). The others include EMSL's invoice — lab cost,
+ * so owner-only.
+ */
+export function isEmslReportFile(filename: string): boolean {
+  return /002$/i.test(filename.replace(/\.[a-z0-9]{2,4}$/i, "").trim());
+}
+
+const SUFFIXES: Record<string, string> = {
+  street: "st", avenue: "ave", av: "ave", road: "rd", place: "pl", boulevard: "blvd", drive: "dr",
+  parkway: "pkwy", lane: "ln", court: "ct", terrace: "ter", west: "w", east: "e", north: "n", south: "s",
+  apartment: "apt", unit: "apt",
+};
+
+/** "420_Central_Park_West_…" and "420 CENTRAL PARK WEST" normalize to the same words. */
+export function normalizeAddress(v: string): string {
+  return v
+    .toLowerCase()
+    .replace(/[_,.#/-]+/g, " ")
+    .replace(/(\d+)(st|nd|rd|th)\b/g, "$1")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => SUFFIXES[w] ?? w)
+    .join(" ");
+}
 
 export function isLikelyEmsl(from: string | null, subject: string): boolean {
   return /(^|[@.])emsl\.com$/i.test(from?.split("@")[1] ?? "") || /\bEMSL\b/i.test(subject);
@@ -31,7 +58,9 @@ export async function applyEmslResults(
 ): Promise<{ matchedSamples: number; jobIds: string[] }> {
   const now = input.now ?? new Date();
   const text = `${input.text}\n${input.attachments.map((a) => a.filename).join("\n")}`;
-  const pdf = input.attachments.find((a) => a.contentType === "application/pdf" || /\.pdf$/i.test(a.filename));
+  const isPdf = (a: StoredAttachment) => a.contentType === "application/pdf" || /\.pdf$/i.test(a.filename);
+  // The report + COC attachment ends in "002"; fall back to the first non-owner-only PDF.
+  const pdf = input.attachments.find((a) => isPdf(a) && isEmslReportFile(a.filename)) ?? input.attachments.find((a) => isPdf(a) && !a.ownerOnly);
 
   const pending = await conn
     .select({ id: s.samples.id, jobId: s.samples.jobId, coc: s.samples.cocNumber })
@@ -53,9 +82,28 @@ export async function applyEmslResults(
     }
   }
   if (matched.length === 0) {
+    // EMSL puts the property address in the attachment file names
+    // (e.g. "…_420_Central_Park_West_New_York_NY_10025_Apt_2E.pdf"): match jobs with samples
+    // still out at the lab whose property address (and unit, if any) appears there.
+    const haystack = ` ${normalizeAddress(text)} `;
+    const candidates = await conn
+      .select({ sampleId: s.samples.id, jobId: s.samples.jobId, coc: s.samples.cocNumber, address: s.properties.addressLine, unit: s.properties.unit })
+      .from(s.samples)
+      .innerJoin(s.jobs, eq(s.jobs.id, s.samples.jobId))
+      .innerJoin(s.properties, eq(s.properties.id, s.jobs.propertyId))
+      .where(and(eq(s.samples.status, "SUBMITTED"), isNull(s.samples.archivedAt), isNull(s.jobs.archivedAt)));
+    const hits = candidates.filter((c) => {
+      const addr = normalizeAddress(c.address);
+      if (addr.length < 8 || !haystack.includes(` ${addr} `)) return false;
+      return !c.unit || haystack.includes(` apt ${normalizeAddress(c.unit)} `) || haystack.includes(` ${normalizeAddress(c.unit)} `);
+    });
+    // Only trust an address match that points at a single job.
+    if (new Set(hits.map((h) => h.jobId)).size === 1) matched = hits.map((h) => ({ id: h.sampleId, jobId: h.jobId, coc: h.coc }));
+  }
+  if (matched.length === 0) {
     await notifyOwners(conn, {
       title: "EMSL email didn't match any submitted sample — file it manually",
-      description: "No pending chain-of-custody number or job number was found in the email. Open the Inbox review queue.",
+      description: "No pending chain-of-custody number, job number, or property address was found in the email. Open the Inbox review queue.",
     });
     return { matchedSamples: 0, jobIds: [] };
   }

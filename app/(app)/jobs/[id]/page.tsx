@@ -366,7 +366,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
               <Textarea name="body" rows={2} placeholder="Add a note…" />
               <SubmitButton size="sm" variant="secondary">Add note</SubmitButton>
             </ActionForm>
-            <Timeline items={activities} />
+            <Timeline items={activities} viewerIsOwner={isOwner} />
           </CardContent>
         </Card>
         <Card>

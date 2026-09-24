@@ -13,7 +13,7 @@ import { simpleParser, type ParsedMail } from "mailparser";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import { findContactByEmail } from "@/lib/comms/contacts";
 import { AIRNYC_CASE_ID_RE, sealContent } from "@/lib/comms/sensitive";
-import { applyEmslResults, isLikelyEmsl } from "./emsl";
+import { applyEmslResults, isEmslReportFile, isLikelyEmsl } from "./emsl";
 import { JOB_NUMBER_RE } from "./patterns";
 
 type Conn = Db | Tx;
@@ -136,16 +136,20 @@ export async function ingestEmail(
 
   // --- attachments ----------------------------------------------------------------------------
   const msgKey = createHash("sha256").update(messageId).digest("hex").slice(0, 16);
+  const emsl = !outbound && isLikelyEmsl(from, subject);
   const stored: NonNullable<typeof s.activities.$inferInsert.attachments> = [];
   for (const a of m.attachments.filter((a) => a.contentDisposition !== "inline" || a.contentType === "application/pdf")) {
     const filename = (a.filename ?? `attachment-${stored.length + 1}`).replace(/[^\w.\- ]+/g, "_");
+    // EMSL sends report+COC ("…002") plus other files that include its invoice (ESS's lab cost).
+    // Everything except the report goes to the OWNER-only bucket (CLAUDE.md rule 4).
+    const ownerOnly = emsl && !isEmslReportFile(filename);
+    const bucket = ownerOnly ? "job-files-pricing" : "mail-attachments";
     const path = `mail/${(opts.now ?? new Date()).toISOString().slice(0, 7)}/${msgKey}/${filename}`;
-    await opts.storage.upload("mail-attachments", path, a.content, a.contentType);
-    stored.push({ filename, contentType: a.contentType, size: a.size, storageBucket: "mail-attachments", storagePath: path });
+    await opts.storage.upload(bucket, path, a.content, a.contentType);
+    stored.push({ filename, contentType: a.contentType, size: a.size, storageBucket: bucket, storagePath: path, ...(ownerOnly ? { ownerOnly } : {}) });
   }
 
   // --- the activity ---------------------------------------------------------------------------
-  const emsl = !outbound && isLikelyEmsl(from, subject);
   const [activity] = await conn
     .insert(s.activities)
     .values({
@@ -175,7 +179,8 @@ export async function ingestEmail(
     const [job] = await conn.select({ driveFolderId: s.jobs.driveFolderId }).from(s.jobs).where(eq(s.jobs.id, jobId));
     for (const att of stored) {
       let driveFileId: string | undefined;
-      if (opts.drive && job?.driveFolderId) {
+      // Owner-only files (EMSL invoices) stay out of the shared job Drive folder.
+      if (opts.drive && job?.driveFolderId && !att.ownerOnly) {
         const src = m.attachments.find((x) => (x.filename ?? "").replace(/[^\w.\- ]+/g, "_") === att.filename);
         if (src) driveFileId = await opts.drive.uploadToFolder(job.driveFolderId, att.filename, src.content, att.contentType).catch(() => undefined);
       }
@@ -183,9 +188,10 @@ export async function ingestEmail(
         .insert(s.documents)
         .values({
           jobId,
-          kind: emsl && att.contentType === "application/pdf" ? "LAB_RESULT" : "OTHER",
+          kind: emsl && !att.ownerOnly && att.contentType === "application/pdf" ? "LAB_RESULT" : "OTHER",
           title: att.filename,
           status: "FINAL",
+          containsPricing: Boolean(att.ownerOnly),
           storageBucket: att.storageBucket,
           storagePath: att.storagePath,
           driveFileId,
