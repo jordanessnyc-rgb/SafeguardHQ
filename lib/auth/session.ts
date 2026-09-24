@@ -35,11 +35,20 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   };
 });
 
-/** OWNER or VA. Everyone else is sent away (FIELD/SUB screens arrive in later phases). */
+/** OWNER or VA. Subcontractors go to their portal; everyone else is sent away. */
 export async function requireStaff(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.role === "SUB") redirect("/portal");
   if (user.role !== "OWNER" && user.role !== "VA") redirect("/no-access");
+  return user;
+}
+
+/** SUB users only (subcontractor portal). Their data comes solely from the sub_portal_* views. */
+export async function requireSub(): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  if (user.role !== "SUB") redirect("/");
   return user;
 }
 

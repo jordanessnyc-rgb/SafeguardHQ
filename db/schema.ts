@@ -16,6 +16,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  pgView,
   primaryKey,
   text,
   time,
@@ -1141,3 +1142,30 @@ export const bids = pgTable(
   },
   (t) => [uniqueIndex("bids_source_external_uq").on(t.source, t.externalId), index("bids_due_idx").on(t.dueAt)],
 );
+
+// ---------------------------------------------------------------------------
+// Phase 5 — subcontractor portal views (defined in migration 0018; SUB reads only these)
+// ---------------------------------------------------------------------------
+export const subPortalJobs = pgView("sub_portal_jobs", {
+  id: uuid("id").notNull(),
+  jobNumber: text("job_number").notNull(),
+  serviceCode: serviceCodeEnum("service_code").notNull(),
+  stage: text("stage").notNull(),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  fieldCompletedAt: timestamp("field_completed_at", { withTimezone: true }),
+  addressLine: text("address_line"),
+  unit: text("unit"),
+  borough: text("borough"),
+  zip: text("zip"),
+}).existing();
+
+export const subPortalDocuments = pgView("sub_portal_documents", {
+  id: uuid("id").notNull(),
+  jobId: uuid("job_id").notNull(),
+  title: text("title"),
+  version: integer("version").notNull(),
+  status: documentStatusEnum("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  storageBucket: text("storage_bucket"),
+  storagePath: text("storage_path"),
+}).existing();
