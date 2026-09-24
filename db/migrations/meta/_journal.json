@@ -78,6 +78,20 @@
       "when": 1790278417396,
       "tag": "0010_ai_drafting",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790279195930,
+      "tag": "0011_quote_builder",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790279197357,
+      "tag": "0012_quote_builder_rls",
+      "breakpoints": true
     }
   ]
 }

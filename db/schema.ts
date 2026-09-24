@@ -491,6 +491,8 @@ export const jobFinancials = pgTable("job_financials", {
   ),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Quote builder inputs (SPEC §10) — the lines above are computed from these + pricing_rules.
+  quoteInputs: jsonb("quote_inputs").$type<QuoteInputs>(),
 });
 
 // OWNER only. Filled by FreshBooks sync in Phase 3; created now so RLS is in place from day one.
@@ -525,6 +527,8 @@ export const subCosts = pgTable("sub_costs", {
   description: text("description"),
   amount: numeric("amount", { precision: 12, scale: 2 }),
   rates: jsonb("rates"),
+  // Quote comparison (SPEC §10): the sub quote chosen for the job.
+  selected: boolean("selected").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -1044,3 +1048,27 @@ export const expiryAlerts = pgTable(
   },
   (t) => [unique("expiry_alerts_once").on(t.subjectType, t.subjectId, t.expiresOn, t.thresholdDays)],
 );
+
+/** Quote builder inputs, per job (OWNER only via job_financials). */
+export type QuoteInputs = {
+  sqft?: number | null;
+  samples?: number | null;
+  extras?: { description: string; quantity: number; unitPrice: number }[];
+  scope?: string | null;
+  validDays?: number | null;
+};
+
+/** Jordan's pricing rules per service (SPEC §10). OWNER only — never visible to VAs or subs. */
+export const pricingRules = pgTable("pricing_rules", {
+  ...baseColumns(),
+  serviceCode: serviceCodeEnum("service_code").notNull().unique(),
+  baseAmount: numeric("base_amount", { precision: 12, scale: 2 }).notNull(),
+  includedSqft: integer("included_sqft").notNull().default(0),
+  perSqft: numeric("per_sqft", { precision: 12, scale: 4 }),
+  includedSamples: integer("included_samples").notNull().default(0),
+  perSample: numeric("per_sample", { precision: 12, scale: 2 }),
+  minimumAmount: numeric("minimum_amount", { precision: 12, scale: 2 }),
+  defaultScope: text("default_scope"),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+});
