@@ -15,8 +15,10 @@ import { eq, sql } from "drizzle-orm";
 import { schema as s, type Db } from "@/lib/db";
 import { decryptField, encryptField } from "@/lib/crypto";
 
-export const FB_API = process.env.FRESHBOOKS_API_BASE ?? "https://api.freshbooks.com"; // override only for local mocks
-export const FB_AUTH = process.env.FRESHBOOKS_AUTH_BASE ?? "https://auth.freshbooks.com";
+// Mock-server overrides for local end-to-end only; ignored in production so tokens can't be sent elsewhere.
+const devOverride = (v: string | undefined) => (process.env.NODE_ENV === "production" ? undefined : v || undefined);
+export const FB_API = devOverride(process.env.FRESHBOOKS_API_BASE) ?? "https://api.freshbooks.com";
+export const FB_AUTH = devOverride(process.env.FRESHBOOKS_AUTH_BASE) ?? "https://auth.freshbooks.com";
 export const FB_SCOPES = [
   "user:profile:read",
   "user:clients:read",
