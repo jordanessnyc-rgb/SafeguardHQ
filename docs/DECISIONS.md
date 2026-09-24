@@ -71,7 +71,7 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
 ### AIRnyc data (CLAUDE.md rule 5)
 - **Sealed content:** anything AIRnyc-linked — the Quo line with key `AIRNYC`, an email with a case ID, a sender domain on the AIRnyc list, or a message about a case — stores subject/body/summary/transcript **encrypted** in `activities.sensitive_enc`. Raw payloads are dropped, and the webhook delivery log keeps IDs only (a test caught plaintext in both before this was fixed). Viewing goes through an audited "Reveal".
 - **AI calls:** the wrapper blocks AIRnyc-linked calls while `airnyc_ai_allowed=false`, and logs the block to `ai_calls`. Triage doesn't even decrypt the content in that case. When AI is allowed, text is redacted before it's sent and un-redacted afterwards.
-- **Known gap — needs Jordan's decision:** Outbox *drafts* addressed to AIRnyc members store the body in plaintext in `outbound_messages` until sent (the timeline copy is sealed). Options: seal drafts too (they'd need Reveal to edit), or forbid free-text drafts to AIRnyc members.
+- **Outbox drafts to AIRnyc members stay unencrypted until sent** (the sealed copy is on the timeline). Jordan decided this on 2026-09-24: no HIPAA or similar rules apply to these drafts. Member fields on the case record are still encrypted.
 
 ### Deferred (not in the Phase 2 list)
 - Pushing new CRM contacts to Quo (§6.1 contact sync). `contact.updated` is pulled and links `quo_contact_id`.
