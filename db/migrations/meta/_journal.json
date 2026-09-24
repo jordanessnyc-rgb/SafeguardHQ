@@ -92,6 +92,13 @@
       "when": 1790279197357,
       "tag": "0012_quote_builder_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790280100225,
+      "tag": "0013_calendar_sync",
+      "breakpoints": true
     }
   ]
 }

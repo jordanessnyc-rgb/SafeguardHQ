@@ -7,6 +7,7 @@
  *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2)
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
  *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
+ *  - scheduled inspections → Titan calendar over CalDAV (SPEC §6.3), every 5 min
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -25,6 +26,8 @@ import { invoiceDeliveredJobs } from "@/lib/money/invoicing";
 import { sendDigestIfDue } from "@/lib/money/digest";
 import { scheduleNextCycles } from "@/lib/compliance/cycles";
 import { raiseExpiryAlerts } from "@/lib/compliance/expiry";
+import { syncCalendar } from "@/lib/calendar/sync";
+import { titanCalendarFromEnv } from "@/lib/integrations/titan-calendar";
 import { storageUploader } from "@/lib/supabase/service";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
@@ -148,6 +151,18 @@ async function main() {
       if (cycles.length || alerts.length) console.log(`[compliance] ${cycles.length} cycles scheduled, ${alerts.length} expiry alerts`);
     }),
   );
+
+  const cal = titanCalendarFromEnv();
+  if (cal) {
+    timers.push(
+      every(5 * 60_000, "calendar", async () => {
+        const r = await syncCalendar(adminDb(), cal);
+        if (r.written || r.removed || r.errors) console.log(`[calendar] ${r.written} written, ${r.removed} removed, ${r.errors} errors`);
+      }),
+    );
+  } else {
+    console.log("[calendar] TITAN_CALDAV_ENABLED not set — scheduled jobs aren't copied to the Titan calendar");
+  }
 
   console.log("Worker started.");
   const stop = async () => {

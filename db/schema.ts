@@ -446,6 +446,10 @@ export const jobs = pgTable(
     nextCycleDue: date("next_cycle_due"),
     // Set when the compliance worker has scheduled this job's next cycle (SPEC §6.6), so it runs once.
     cycleScheduledAt: timestamp("cycle_scheduled_at", { withTimezone: true }),
+    // Titan calendar sync (SPEC §6.3): hash of the last event written; null = not on the calendar.
+    calendarHash: text("calendar_hash"),
+    calendarSequence: integer("calendar_sequence").notNull().default(0),
+    calendarError: text("calendar_error"),
     notes: text("notes"),
   },
   (t) => [
