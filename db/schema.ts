@@ -447,6 +447,8 @@ export const jobs = pgTable(
     nextCycleDue: date("next_cycle_due"),
     // Set when the compliance worker has scheduled this job's next cycle (SPEC §6.6), so it runs once.
     cycleScheduledAt: timestamp("cycle_scheduled_at", { withTimezone: true }),
+    // First-touch campaign attribution (SPEC §11): QR scan, dedicated Quo number, or landing page.
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     // Titan calendar sync (SPEC §6.3): hash of the last event written; null = not on the calendar.
     calendarHash: text("calendar_hash"),
     calendarSequence: integer("calendar_sequence").notNull().default(0),
@@ -1169,3 +1171,17 @@ export const subPortalDocuments = pgView("sub_portal_documents", {
   storageBucket: text("storage_bucket"),
   storagePath: text("storage_path"),
 }).existing();
+
+/** Campaign touchpoints we can count without identifying anyone (QR scans). SPEC §11. */
+export const campaignEvents = pgTable(
+  "campaign_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // SCAN
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("campaign_events_campaign_idx").on(t.campaignId, t.at)],
+);

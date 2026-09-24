@@ -32,11 +32,15 @@ export async function findContactByEmail(conn: Conn, email: string | null | unde
 export async function findOrCreateLeadByPhone(
   conn: Conn,
   phone: string,
-  opts: { brand?: "ESS" | "GAS_PRO"; lineLabel?: string; name?: string | null } = {},
+  opts: { brand?: "ESS" | "GAS_PRO"; lineLabel?: string; lineNumber?: string | null; name?: string | null } = {},
 ) {
   const existing = await findContactByPhone(conn, phone);
   if (existing) return { contact: existing, created: false };
   const e164 = toE164(phone) ?? phone;
+  // Campaign attribution (SPEC §11): a new caller on a campaign's dedicated Quo number.
+  const [campaign] = opts.lineNumber
+    ? await conn.select({ id: s.campaigns.id }).from(s.campaigns).where(and(sql`${s.campaigns.tracking} ->> 'quoNumber' = ${opts.lineNumber}`, isNull(s.campaigns.archivedAt))).limit(1)
+    : [];
   const [first, ...rest] = (opts.name ?? "").trim().split(/\s+/).filter(Boolean);
   const [contact] = await conn
     .insert(s.contacts)
@@ -44,7 +48,8 @@ export async function findOrCreateLeadByPhone(
       firstName: first ?? null,
       lastName: rest.join(" ") || null,
       phones: [e164],
-      source: "QUO",
+      source: campaign ? "MAILER_CAMPAIGN" : "QUO",
+      campaignId: campaign?.id ?? null,
       brand: opts.brand ?? "ESS",
       notes: `Auto-created from inbound ${opts.lineLabel ? `on ${opts.lineLabel}` : "call/text"}.`,
     })

@@ -134,6 +134,20 @@
       "when": 1790286347346,
       "tag": "0018_sub_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790286515676,
+      "tag": "0019_campaigns",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790286516988,
+      "tag": "0020_campaigns_rls",
+      "breakpoints": true
     }
   ]
 }
