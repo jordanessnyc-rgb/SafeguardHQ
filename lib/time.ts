@@ -41,3 +41,8 @@ export function isWithinBusinessHours(at: Date, hours: Hours): boolean {
   const hm = `${parts.hour}:${parts.minute}`;
   return hm >= window.open && hm < window.close;
 }
+
+/** Date → "YYYY-MM-DD" in New York. */
+export function nyDate(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: TZ });
+}

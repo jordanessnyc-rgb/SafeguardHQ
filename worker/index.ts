@@ -6,6 +6,7 @@
  *  - mail health check → SMS alert to Jordan (every 5 min)
  *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2)
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
+ *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -21,6 +22,8 @@ import { mailSenderFromEnv, titanConfigFromEnv } from "@/lib/integrations/titan-
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { invoiceDeliveredJobs } from "@/lib/money/invoicing";
 import { sendDigestIfDue } from "@/lib/money/digest";
+import { scheduleNextCycles } from "@/lib/compliance/cycles";
+import { raiseExpiryAlerts } from "@/lib/compliance/expiry";
 import { storageUploader } from "@/lib/supabase/service";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
@@ -133,6 +136,14 @@ async function main() {
     every(5 * 60_000, "digest", async () => {
       const r = await sendDigestIfDue(adminDb(), { mail: mailSenderFromEnv(), quo: quoFromEnv() });
       if (r === "sent" || r === "no-recipients") console.log(`[digest] ${r}`);
+    }),
+  );
+
+  timers.push(
+    every(15 * 60_000, "compliance", async () => {
+      const cycles = await scheduleNextCycles(adminDb());
+      const alerts = await raiseExpiryAlerts(adminDb());
+      if (cycles.length || alerts.length) console.log(`[compliance] ${cycles.length} cycles scheduled, ${alerts.length} expiry alerts`);
     }),
   );
 
