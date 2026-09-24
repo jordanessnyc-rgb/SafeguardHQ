@@ -36,6 +36,20 @@
       "when": 1790268963769,
       "tag": "0004_communications_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790274588673,
+      "tag": "0005_money",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790274590037,
+      "tag": "0006_money_rls",
+      "breakpoints": true
     }
   ]
 }
