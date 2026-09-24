@@ -274,3 +274,27 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **Drive times** are estimated as straight-line distance × 1.4 at about 12 mph, plus 5 minutes per stop to park.
   - **"Open in Google Maps"** uses the public directions URL (no API key or cost).
   - **Suggestion only:** it never reschedules anything or tells clients.
+
+### Read-only MCP server (Phase 5f)
+
+- **Verified against:** MCP spec revision 2026-07-28 and the official TypeScript SDK
+  `@modelcontextprotocol/server@2.1.0` (package docs and type definitions, Sept 2026). The SDK's
+  `createMcpHandler(factory)` serves the 2026-07-28 per-request protocol and, by default, falls back to
+  stateless serving for 2025-era clients, so current Claude Code and claude.ai connectors both work.
+  The handler does no auth or Origin checks itself; per the SDK docs we put `originValidationResponse`
+  and `requireBearerAuth` in front of it. The SDK's bearer gate rejects tokens without `expiresAt`, so
+  the verifier sets a 5-minute expiry. That's fine because every request is checked against the database again.
+- **Auth: personal access tokens, not OAuth.** Staff create tokens in Settings → Claude access. Each token
+  is 32 random bytes, shown once and stored as SHA-256, and can be revoked. Claude Code sends it as
+  `Authorization: Bearer`. claude.ai custom connectors accept a static header too. A full OAuth
+  authorization server is out of scope for a one-owner firm; we can revisit if more staff use it.
+- **Every tool runs as the token's user under RLS** (`runAsUser`), so a VA's token never returns pricing,
+  invoices or A/R. SUB and unassigned users can't hold tokens (the RLS policy and the verifier both check this).
+- **Curated tools, no free SQL.** Tool results go straight to an AI, so the tools are fixed, read-only
+  queries: search_jobs, get_job, search_contacts, property_violations, list_tasks, pipeline_summary. All
+  are annotated `readOnlyHint`. Nothing can be written or sent through them.
+- **AIRnyc is always excluded**, regardless of `airnyc_ai_allowed`. AIRnyc jobs, tasks linked to AIRnyc
+  cases, contacts tied to AIRnyc jobs or sensitive activities, and properties with AIRnyc jobs are filtered
+  out in every query. Counts in the pipeline summary are the only aggregate that includes them.
+- `/api/mcp` is public in the proxy (like the webhooks) because the Supabase session cookie doesn't
+  apply; the route verifies the token itself.

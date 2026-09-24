@@ -1185,3 +1185,16 @@ export const campaignEvents = pgTable(
   },
   (t) => [index("campaign_events_campaign_idx").on(t.campaignId, t.at)],
 );
+
+/** Personal access tokens for the read-only MCP connector (Phase 5). Only a SHA-256 hash is stored. */
+export const mcpTokens = pgTable("mcp_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => authUsers.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});

@@ -55,6 +55,7 @@ export default async function SettingsPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>
+            <Link href="/settings/claude" className={buttonVariants({ variant: "outline" })}>Claude access →</Link>
             {isOwner && <Link href="/settings/freshbooks" className={buttonVariants({ variant: "outline" })}>FreshBooks →</Link>}
             {isOwner && <Link href="/settings/pricing" className={buttonVariants({ variant: "outline" })}>Pricing →</Link>}
             {isOwner && process.env.DOCUSIGN_INTEGRATION_KEY && (
