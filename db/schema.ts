@@ -179,6 +179,12 @@ export const enrichmentStatusEnum = pgEnum("enrichment_status", [
   "FAILED",
 ]);
 
+// Phase 2 — communications
+export const outboundChannelEnum = pgEnum("outbound_channel", ["SMS", "EMAIL"]);
+export const outboundStatusEnum = pgEnum("outbound_status", ["DRAFT", "APPROVED", "SENDING", "SENT", "FAILED", "DISCARDED"]);
+export const outboundSourceEnum = pgEnum("outbound_source", ["MANUAL", "TEMPLATE", "MISSED_CALL", "AI_DRAFT", "SYSTEM"]);
+export const triageStatusEnum = pgEnum("triage_status", ["PENDING", "AUTO", "NEEDS_REVIEW", "REVIEWED", "BLOCKED", "SKIPPED"]);
+
 // ---------------------------------------------------------------------------
 // Shared columns (SPEC §4: id, created_at, updated_at, created_by; soft delete via archived_at)
 // ---------------------------------------------------------------------------
@@ -678,12 +684,27 @@ export const activities = pgTable(
     raw: jsonb("raw"),
     aiClassification: jsonb("ai_classification"),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    // --- Phase 2 ---
+    fromAddress: text("from_address"), // E.164 or email of the counterpart / sender
+    toAddress: text("to_address"),
+    threadKey: text("thread_key"), // email Message-ID root / Quo conversation id
+    transcript: text("transcript"),
+    attachments: jsonb("attachments").$type<{ filename: string; contentType: string; size: number; storageBucket: string; storagePath: string; documentId?: string }[]>(),
+    callStatus: text("call_status"),
+    durationSeconds: integer("duration_seconds"),
+    triageStatus: triageStatusEnum("triage_status"),
+    triageCategory: text("triage_category"),
+    // AIRnyc-linked content is stored encrypted here instead of subject/body/transcript (CLAUDE.md rule 5).
+    sensitive: boolean("sensitive").notNull().default(false),
+    sensitiveEnc: text("sensitive_enc"),
   },
   (t) => [
     index("activities_job_idx").on(t.jobId, t.occurredAt),
     index("activities_contact_idx").on(t.contactId, t.occurredAt),
     index("activities_property_idx").on(t.propertyId, t.occurredAt),
     uniqueIndex("activities_external_uq").on(t.type, t.externalId),
+    index("activities_thread_idx").on(t.threadKey),
+    index("activities_triage_idx").on(t.triageStatus),
   ],
 );
 
@@ -734,6 +755,13 @@ export const settings = pgTable("settings", {
   driveAirnycParentFolderId: text("drive_airnyc_parent_folder_id"),
   driveTemplateFolderId: text("drive_template_folder_id"),
   aiMonthlyCostCapUsd: numeric("ai_monthly_cost_cap_usd", { precision: 10, scale: 2 }),
+  // --- Phase 2 ---
+  quoSummariesEnabled: boolean("quo_summaries_enabled").notNull().default(false), // Business/Scale plan only
+  healthAlertPhone: text("health_alert_phone"), // E.164; Jordan's cell for integration alerts
+  healthAlertLineId: uuid("health_alert_line_id"),
+  defaultFromEmail: text("default_from_email").notNull().default("sales@ess-nyc.com"),
+  airnycSenderDomains: text("airnyc_sender_domains").array().notNull().default(sql`'{}'::text[]`),
+  triageConfidenceThreshold: numeric("triage_confidence_threshold", { precision: 3, scale: 2 }).notNull().default("0.75"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });
@@ -754,4 +782,116 @@ export const auditLog = pgTable(
     detail: jsonb("detail"),
   },
   (t) => [index("audit_log_entity_idx").on(t.entity, t.entityId, t.at)],
+);
+
+// ===========================================================================
+// Phase 2 — Communications (SPEC §6.1, §6.3, §9)
+// ===========================================================================
+
+/** Which Quo number is which line (SPEC §6.1 "configured in a phone_lines table"). */
+export const phoneLines = pgTable("phone_lines", {
+  ...baseColumns(),
+  quoPhoneNumberId: text("quo_phone_number_id").notNull().unique(), // e.g. PN123…
+  number: text("number").notNull(), // E.164
+  label: text("label").notNull(), // "ESS main", "Gas Pro", "AIRnyc line"
+  lineKey: text("line_key").notNull(), // stored on activities.channel_line
+  brand: brandEnum("brand").notNull().default("ESS"),
+  missedCallTextback: boolean("missed_call_textback").notNull().default(false),
+});
+
+/** Provider webhook deliveries — the dedupe ledger (CLAUDE.md rule 7). */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: text("provider").notNull(), // QUO | FRESHBOOKS | AIRNYC
+    deliveryId: text("delivery_id").notNull(),
+    eventType: text("event_type"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    error: text("error"),
+    payload: jsonb("payload"),
+  },
+  (t) => [uniqueIndex("webhook_deliveries_uq").on(t.provider, t.deliveryId)],
+);
+
+export const messageTemplates = pgTable("message_templates", {
+  ...baseColumns(),
+  key: text("key").notNull().unique(), // APPOINTMENT_CONFIRMATION, MISSED_CALL, …
+  name: text("name").notNull(),
+  channel: outboundChannelEnum("channel").notNull(),
+  brand: brandEnum("brand"),
+  subject: text("subject"),
+  // Tokens: {{first_name}}, {{job_number}}, {{address}}, {{scheduled_date}}, {{scheduled_time}}, {{brand_name}}, {{brand_phone}}
+  body: text("body").notNull(),
+  active: boolean("active").notNull().default(true),
+});
+
+/** Every outbound SMS/email starts as a row here: draft → approve → send (CLAUDE.md rule 6). */
+export const outboundMessages = pgTable(
+  "outbound_messages",
+  {
+    ...baseColumns(),
+    channel: outboundChannelEnum("channel").notNull(),
+    status: outboundStatusEnum("status").notNull().default("DRAFT"),
+    source: outboundSourceEnum("source").notNull().default("MANUAL"),
+    templateKey: text("template_key"),
+    toAddress: text("to_address").notNull(), // E.164 or email
+    fromLineId: uuid("from_line_id").references(() => phoneLines.id, { onDelete: "set null" }),
+    fromEmail: text("from_email"),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    inReplyTo: text("in_reply_to"),
+    brand: brandEnum("brand").notNull().default("ESS"),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    airnycCaseId: uuid("airnyc_case_id").references(() => airnycCases.id, { onDelete: "set null" }),
+    replyToActivityId: uuid("reply_to_activity_id"),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    externalId: text("external_id"),
+    error: text("error"),
+    // Contains pricing → only the OWNER may approve (SPEC §9.2).
+    containsPricing: boolean("contains_pricing").notNull().default(false),
+  },
+  (t) => [index("outbound_status_idx").on(t.status, t.createdAt)],
+);
+
+/** IMAP listener state per mailbox/folder + health (SPEC §6.3). */
+export const mailSyncState = pgTable(
+  "mail_sync_state",
+  {
+    mailbox: text("mailbox").notNull(),
+    folder: text("folder").notNull(),
+    uidValidity: text("uid_validity"),
+    lastUid: integer("last_uid").notNull().default(0),
+    lastConnectedAt: timestamp("last_connected_at", { withTimezone: true }),
+    lastOkAt: timestamp("last_ok_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    lastAlertAt: timestamp("last_alert_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.mailbox, t.folder] })],
+);
+
+/** SPEC §9.8: every AI call (or blocked attempt) with model, tokens, cost, feature, job. */
+export const aiCalls = pgTable(
+  "ai_calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    feature: text("feature").notNull(), // TRIAGE | CALL_EXTRACT | DRAFT_REPLY …
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: numeric("cost_usd", { precision: 10, scale: 5 }),
+    jobId: uuid("job_id"),
+    activityId: uuid("activity_id"),
+    airnycLinked: boolean("airnyc_linked").notNull().default(false),
+    redacted: boolean("redacted").notNull().default(false),
+    blocked: text("blocked"), // reason when the wrapper refused to call
+    error: text("error"),
+  },
+  (t) => [index("ai_calls_at_idx").on(t.at)],
 );
