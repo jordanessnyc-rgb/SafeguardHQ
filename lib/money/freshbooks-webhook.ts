@@ -12,6 +12,7 @@ import { decryptField, encryptField } from "@/lib/crypto";
 import { verifyFreshbooksSignature, type FreshBooksClient } from "@/lib/integrations/freshbooks";
 import { syncInvoice, syncPayment } from "./invoicing";
 import { refreshImportedClient } from "./client-sync";
+import { mergeCallback } from "./freshbooks-setup";
 
 export type FbWebhookResult = { status: 200 | 401 | 500; body: Record<string, unknown> };
 
@@ -25,11 +26,9 @@ export async function handleFreshbooksWebhook(db: Db, fb: FreshBooksClient, rawB
   if (form.verifier) {
     const callbackId = form.object_id ?? form.callbackid ?? form.callback_id;
     if (!callbackId || !callbacks[callbackId]) return { status: 401, body: { error: "unknown callback" } };
-    const updated = { ...callbacks, [callbackId]: { ...callbacks[callbackId], verifierEnc: encryptField(form.verifier)! } };
-    await db.update(s.freshbooksConnection).set({ webhookCallbacks: updated }).where(eq(s.freshbooksConnection.id, 1));
+    await mergeCallback(db, callbackId, { verifierEnc: encryptField(form.verifier)! });
     await fb.verifyCallback(callbackId, form.verifier);
-    updated[callbackId] = { ...updated[callbackId], verified: true };
-    await db.update(s.freshbooksConnection).set({ webhookCallbacks: updated }).where(eq(s.freshbooksConnection.id, 1));
+    await mergeCallback(db, callbackId, { verified: true });
     return { status: 200, body: { verified: callbackId } };
   }
 

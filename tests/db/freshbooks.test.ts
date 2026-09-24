@@ -184,6 +184,19 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       expect(bad.status).toBe(401);
     });
 
+    it("keeps every verifier when FreshBooks sends all the handshakes at once", async () => {
+      const uri = "https://crm.example/api/webhooks/freshbooks-concurrent";
+      await registerWebhooks(t.db, fb, uri);
+      const mine = fake.callbacks.filter((c) => c.uri === uri);
+      const results = await Promise.all(mine.map((cb) => webhook([["name", "callback.verify"], ["object_id", String(cb.callbackid)], ["verifier", cb.verifier]], null)));
+      expect(results.every((r) => r.status === 200)).toBe(true);
+      const [c] = await t.db.select().from(s.freshbooksConnection);
+      for (const cb of mine) expect(c.webhookCallbacks![String(cb.callbackid)]).toMatchObject({ verified: true, verifierEnc: expect.any(String) });
+      await registerWebhooks(t.db, fb, uri); // re-registering never drops a stored verifier
+      const [again] = await t.db.select().from(s.freshbooksConnection);
+      for (const cb of mine) expect(again.webhookCallbacks![String(cb.callbackid)].verifierEnc).toBeTruthy();
+    });
+
     it("rejects unsigned or wrongly signed deliveries", async () => {
       const form: [string, string][] = [["name", "invoice.update"], ["object_id", "1"], ["account_id", "ACC1"]];
       expect((await webhook(form, null)).status).toBe(401);
