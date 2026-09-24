@@ -4,7 +4,7 @@
  * *_enc columns directly.
  */
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { schema as s, type Tx } from "@/lib/db";
+import { schema as s, type Db, type Tx } from "@/lib/db";
 import { decryptField, encryptField } from "@/lib/crypto";
 
 export type MemberFields = {
@@ -45,7 +45,7 @@ function decryptRow(row: CaseRow): AirnycCase {
   };
 }
 
-async function logRead(tx: Tx, actor: string, rows: CaseRow[], view: string) {
+async function logRead(tx: Tx | Db, actor: string | null, rows: CaseRow[], view: string) {
   if (rows.length === 0) return;
   await tx.insert(s.auditLog).values(
     rows.map((r) => ({
@@ -58,13 +58,13 @@ async function logRead(tx: Tx, actor: string, rows: CaseRow[], view: string) {
   );
 }
 
-export async function listCases(tx: Tx, actor: string): Promise<AirnycCase[]> {
+export async function listCases(tx: Tx, actor: string | null): Promise<AirnycCase[]> {
   const rows = await tx.select().from(s.airnycCases).where(isNull(s.airnycCases.archivedAt)).orderBy(desc(s.airnycCases.createdAt)).limit(500);
   await logRead(tx, actor, rows, "list");
   return rows.map(decryptRow);
 }
 
-export async function getCase(tx: Tx, actor: string, id: string): Promise<AirnycCase | null> {
+export async function getCase(tx: Tx | Db, actor: string | null, id: string): Promise<AirnycCase | null> {
   const [row] = await tx.select().from(s.airnycCases).where(and(eq(s.airnycCases.id, id)));
   if (!row) return null;
   await logRead(tx, actor, [row], "detail");

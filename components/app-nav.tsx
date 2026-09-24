@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, CheckSquare, ClipboardList, HeartPulse, Home, Landmark, Settings, Users } from "lucide-react";
+import { Building2, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -12,6 +12,8 @@ const NAV = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/organizations", label: "Organizations", icon: Landmark },
   { href: "/airnyc", label: "AIRnyc", icon: HeartPulse },
+  { href: "/inbox", label: "Inbox review", icon: Inbox },
+  { href: "/outbox", label: "Outbox", icon: Send },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

@@ -39,10 +39,24 @@ export function ActionForm({
   );
 }
 
-export function SubmitButton({ children, className, variant, size }: { children: ReactNode; className?: string; variant?: "default" | "outline" | "secondary" | "ghost" | "destructive"; size?: "default" | "sm" | "lg" | "xs" }) {
+export function SubmitButton({
+  children,
+  className,
+  variant,
+  size,
+  name,
+  value,
+}: {
+  children: ReactNode;
+  className?: string;
+  variant?: "default" | "outline" | "secondary" | "ghost" | "destructive";
+  size?: "default" | "sm" | "lg" | "xs";
+  name?: string;
+  value?: string;
+}) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" disabled={pending} className={className} variant={variant} size={size}>
+    <Button type="submit" disabled={pending} className={className} variant={variant} size={size} name={name} value={value}>
       {pending ? "Saving…" : children}
     </Button>
   );

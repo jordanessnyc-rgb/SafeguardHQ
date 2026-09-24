@@ -24,3 +24,20 @@ export function toNyInput(d: Date | null | undefined): string {
   const local = new Date(d.getTime() + offsetMinutes(d) * 60000);
   return local.toISOString().slice(0, 16);
 }
+
+type Hours = Record<string, { open: string; close: string } | null>;
+const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+
+/** Is `at` inside ESS business hours (settings.business_hours, New York time)? */
+export function isWithinBusinessHours(at: Date, hours: Hours): boolean {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(at)
+      .map((p) => [p.type, p.value]),
+  );
+  const day = DAY_KEYS[["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday)];
+  const window = hours[day];
+  if (!window) return false;
+  const hm = `${parts.hour}:${parts.minute}`;
+  return hm >= window.open && hm < window.close;
+}
