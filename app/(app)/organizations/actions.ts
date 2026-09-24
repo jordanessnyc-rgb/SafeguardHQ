@@ -17,6 +17,10 @@ const orgSchema = z.object({
   phone: z.string().optional().transform((v) => (v ? (toE164(v) ?? v) : undefined)),
   email: z.email().optional(),
   notes: z.string().max(5000).optional(),
+  holdReportUntilPaid: z
+    .enum(["", "true", "false"])
+    .optional()
+    .transform((v) => (v === "true" ? true : v === "false" ? false : null)),
 });
 
 export async function createOrganization(_prev: ActionState, form: FormData): Promise<ActionState> {

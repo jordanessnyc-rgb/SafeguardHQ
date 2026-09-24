@@ -20,7 +20,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             <div className="text-sm font-semibold text-primary">ESS CRM</div>
             <div className="text-xs text-muted-foreground">Environmental Safeguard Solutions</div>
           </div>
-          <SideNav />
+          <SideNav isOwner={user.role === "OWNER"} />
         </div>
         <div className="px-2.5">{identity}</div>
       </aside>
@@ -30,7 +30,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             <span className="text-sm font-semibold text-primary">ESS CRM</span>
             {identity}
           </div>
-          <MobileNav />
+          <MobileNav isOwner={user.role === "OWNER"} />
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">{children}</main>
       </div>

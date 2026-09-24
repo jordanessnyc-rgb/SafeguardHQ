@@ -82,3 +82,42 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
 - Pushing new CRM contacts to Quo (§6.1 contact sync). `contact.updated` is pulled and links `quo_contact_id`.
 - The "Going cold" lead-SLA list (it lands with the Phase 3 daily digest).
 - AIRnyc email mode (§7.4 mode 2) is Phase 5. Case-ID emails are already sealed and linked.
+
+## 2026-09-24 — Phase 3 (Money)
+
+### API verification (FreshBooks)
+| Item | Spec said | Docs said | What we did |
+|---|---|---|---|
+| OAuth | OAuth 2 | Authorize at `auth.freshbooks.com/oauth/authorize`; token at `POST api.freshbooks.com/auth/oauth/token` (JSON body). **The redirect URI must be HTTPS**, even in development. Access tokens last 12h. **Refresh tokens are single-use**: each refresh returns a new pair, and the old refresh token stops working. | Tokens are stored encrypted (AES-256-GCM, same key as AIRnyc fields). Refresh happens 2 minutes before expiry, under a Postgres advisory lock plus `select … for update`, so the web app and worker can't both spend the same refresh token. A 401 forces one refresh, then one retry. |
+| Account ID | — | `GET /auth/api/v1/users/me` → `response.business_memberships[].business.account_id`. Accounting URLs are `/accounting/account/{account_id}/…`. | Saved on the connection row. |
+| Invoices | "Create DRAFT invoice" | New invoices are drafts by default. Sending is a separate `PUT` with `action_email: true` + `email_recipients`. Lines use `unit_cost: {amount, code}` + `qty`. `due_offset_days` sets the due date. | Drafts only. `action_email` is used only when Settings → "Auto-send FreshBooks invoices" is on (CLAUDE.md rule 6). |
+| Webhooks | "verify signature; dedupe on delivery id" | Callbacks are created at `/events/account/{account_id}/events/callbacks`. FreshBooks POSTs a `verifier` to the URL, and we confirm with `PUT …/callbacks/{id}` `{callback:{verifier}}`. Deliveries are **form-encoded** (`name`, `object_id`, `account_id`, `business_id`, `identity_id`) and signed with `X-FreshBooks-Hmac-SHA256` = base64 HMAC-SHA256 of the Python `json.dumps()` of the form fields, keyed with the verifier. **There is no delivery ID, and ordering and exactly-once are not guaranteed.** | **Deviation from CLAUDE.md rule 7:** with no delivery ID there's nothing to dedupe on. Each delivery is a signed *trigger*: we re-fetch the invoice/payment/client from the API and apply its current state idempotently. Invoice cache writes never replace a newer `updated` with an older one. "Job paid" side effects (stage → Paid, report release, review request) run once, gated on an atomic `paid_at is null` claim. Every delivery is still logged in `webhook_deliveries` with a random ID. Signatures are checked against every stored verifier, in both the received key order and sorted order (the docs don't pin the order). |
+| Pagination | — | `per_page` max 100. `Api-Version: alpha` header on accounting calls. | As documented. |
+
+### Behaviour
+- **Draft on Delivered:** a job entering Delivered gets a FreshBooks draft invoice. This runs right away (after the stage change responds) and also in the worker every minute as a backstop.
+  - **Lines:** the job's line items, else one line for the quoted amount. If there's neither, it records an error on the job plus one owner task — nothing is guessed.
+  - **Notes and due date:** the invoice notes carry `ESS job ESS-YYYY-####` plus the service address. The due date comes from Settings → payment terms (default 30 days).
+  - **FreshBooks client:** it uses the organization's `freshbooks_client_id`, else the contact's, else finds one by email, else creates one.
+- **Never two invoices per job:** an attempt is claimed atomically (`invoice_attempt_at`, 2-minute window), so the stage-move trigger and the worker can't both create one. After a crash between FreshBooks and our DB, the retry searches that client's invoices for the job marker before creating another.
+- **Only jobs delivered after connecting are auto-invoiced.** Jobs already Delivered when FreshBooks was connected may have been billed by hand, so they get a draft only via the job page's "Create draft invoice now" button.
+- **Stages:**
+  - An invoice that FreshBooks reports as sent/viewed/partial moves Delivered → Invoiced.
+  - Fully paid moves Delivered/Invoiced → Paid, and creates a review-request **draft** text in the Outbox (when `REVIEW_URL`, a line and a phone exist) plus a task.
+- **Hold report until paid:**
+  - **Where the flag is set:** the effective flag is job → client organization → Settings default.
+  - **What "released automatically on payment" (SPEC §6.2) means here:** payment clears the hold and creates an owner task "Paid — release the report". Nothing is emailed to the client by itself (CLAUDE.md rule 6).
+  - **Where it shows:** the job page shows the hold.
+- **Client import never merges anything.** Every FreshBooks client lands in a review list with a suggested match (same email → same company name ignoring LLC/Inc/punctuation → same person name). Jordan chooses Link / Create new / Ignore. When there's an organization, the link is stored on it (invoices go to the company).
+- **Reports** (owner only; enforced by RLS on `invoices_cache` / `job_financials` / `payments_cache`, and the page also redirects VAs):
+  - **A/R aging:** open (non-draft, non-void) invoices by client type (AIRnyc if the job is AIRnyc; Government = a GOV_AGENCY org; Management co.; otherwise Private) and days past due.
+  - **Margins:** by service and by month delivered (New York time). Revenue is the invoice amount, else the quoted amount.
+- **Daily digest (§9.7):**
+  - **Schedule:** weekdays at `digest_time` (New York), once per day (`digest_runs` is the idempotency key).
+  - **Channels:** email to the digest recipients from the default From address, plus an optional one-line SMS to the alert number.
+  - **Contents:** stale jobs, lab results waiting for review, the unpaid total by age, going-cold leads (inbound more than 24h ago in the last 14 days, no reply since, no job past Qualified, not do-not-contact), and overdue tasks.
+  - **Deferred sections:** open bids (Phase 5), expiring licenses (Phase 6) and compliance deadlines (Phase 6) are left out because those modules don't exist yet.
+
+### Deferred
+- FreshBooks estimates from signed proposals (optional in §6.2; proposals are Phase 4).
+- Pushing CRM contact edits back to FreshBooks clients (only the link is kept).

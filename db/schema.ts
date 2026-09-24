@@ -250,6 +250,8 @@ export const organizations = pgTable(
     type: orgTypeEnum("type").notNull().default("OTHER"),
     brand: brandEnum("brand").notNull().default("ESS"),
     freshbooksClientId: text("freshbooks_client_id"),
+    // null = use settings.hold_report_until_paid_default; a job's own flag overrides this.
+    holdReportUntilPaid: boolean("hold_report_until_paid"),
     website: text("website"),
     phone: text("phone"),
     email: text("email"),
@@ -270,6 +272,7 @@ export const contacts = pgTable(
     // E.164, normalized by lib/phone.ts before insert.
     phones: text("phones").array().notNull().default(sql`'{}'::text[]`),
     quoContactId: text("quo_contact_id"),
+    freshbooksClientId: text("freshbooks_client_id"),
     preferredChannel: preferredChannelEnum("preferred_channel"),
     doNotContact: boolean("do_not_contact").notNull().default(false),
     source: contactSourceEnum("source").notNull().default("MANUAL"),
@@ -476,6 +479,9 @@ export const jobFinancials = pgTable("job_financials", {
   amountPaid: numeric("amount_paid", { precision: 12, scale: 2 }),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   holdReportUntilPaid: boolean("hold_report_until_paid"),
+  reportReleasedAt: timestamp("report_released_at", { withTimezone: true }),
+  invoiceError: text("invoice_error"),
+  invoiceAttemptAt: timestamp("invoice_attempt_at", { withTimezone: true }), // set before calling FreshBooks (crash-safe retry)
   grossMargin: numeric("gross_margin", { precision: 12, scale: 2 }).generatedAlwaysAs(
     sql`coalesce(quoted_amount, 0) - coalesce(sub_cost, 0) - coalesce(lab_cost, 0) - coalesce(other_cost, 0)`,
   ),
@@ -495,6 +501,12 @@ export const invoicesCache = pgTable("invoices_cache", {
   issuedAt: date("issued_at"),
   dueAt: date("due_at"),
   raw: jsonb("raw"),
+  // --- Phase 3 ---
+  invoiceNumber: text("invoice_number"),
+  freshbooksClientId: text("freshbooks_client_id"),
+  paid: numeric("paid", { precision: 12, scale: 2 }),
+  currency: text("currency"),
+  fbUpdatedAt: timestamp("fb_updated_at", { withTimezone: true }), // last-modified per FreshBooks (ordering guard)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -762,6 +774,10 @@ export const settings = pgTable("settings", {
   defaultFromEmail: text("default_from_email").notNull().default("sales@ess-nyc.com"),
   airnycSenderDomains: text("airnyc_sender_domains").array().notNull().default(sql`'{}'::text[]`),
   triageConfidenceThreshold: numeric("triage_confidence_threshold", { precision: 3, scale: 2 }).notNull().default("0.75"),
+  // --- Phase 3 ---
+  digestEnabled: boolean("digest_enabled").notNull().default(true),
+  digestSmsEnabled: boolean("digest_sms_enabled").notNull().default(true),
+  invoicePaymentTermsDays: integer("invoice_payment_terms_days").notNull().default(30),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });
@@ -895,3 +911,71 @@ export const aiCalls = pgTable(
   },
   (t) => [index("ai_calls_at_idx").on(t.at)],
 );
+
+// ===========================================================================
+// Phase 3 — Money (SPEC §6.2, §9.7)
+// ===========================================================================
+
+export const clientMatchStatusEnum = pgEnum("client_match_status", ["PENDING", "LINKED", "CREATED", "IGNORED"]);
+
+/** FreshBooks OAuth connection (single row). Tokens are AES-GCM encrypted; OWNER only. */
+export const freshbooksConnection = pgTable("freshbooks_connection", {
+  id: integer("id").primaryKey().default(1),
+  accountId: text("account_id").notNull(),
+  businessId: text("business_id"),
+  businessName: text("business_name"),
+  accessTokenEnc: text("access_token_enc").notNull(),
+  refreshTokenEnc: text("refresh_token_enc").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  scopes: text("scopes"),
+  connectedBy: uuid("connected_by"),
+  lastRefreshAt: timestamp("last_refresh_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  // callbackId → { event, verified, verifierEnc }. Each callback's verifier (sent during the
+  // handshake) is also the HMAC key FreshBooks signs that callback's deliveries with.
+  webhookCallbacks: jsonb("webhook_callbacks").$type<Record<string, { event: string; verified: boolean; verifierEnc?: string }>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Initial FreshBooks client import + duplicate review (SPEC §6.2). */
+export const freshbooksClients = pgTable("freshbooks_clients", {
+  freshbooksClientId: text("freshbooks_client_id").primaryKey(),
+  organization: text("organization"),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  email: text("email"),
+  phone: text("phone"),
+  matchStatus: clientMatchStatusEnum("match_status").notNull().default("PENDING"),
+  suggestedOrgId: uuid("suggested_org_id").references(() => organizations.id, { onDelete: "set null" }),
+  suggestedContactId: uuid("suggested_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  matchReason: text("match_reason"),
+  linkedOrgId: uuid("linked_org_id").references(() => organizations.id, { onDelete: "set null" }),
+  linkedContactId: uuid("linked_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  raw: jsonb("raw"),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** FreshBooks payments (OWNER only). */
+export const paymentsCache = pgTable("payments_cache", {
+  freshbooksPaymentId: text("freshbooks_payment_id").primaryKey(),
+  freshbooksInvoiceId: text("freshbooks_invoice_id"),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  amount: numeric("amount", { precision: 12, scale: 2 }),
+  paidOn: date("paid_on"),
+  type: text("type"),
+  deleted: boolean("deleted").notNull().default(false),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Daily digest runs (idempotency: one per NY date). */
+export const digestRuns = pgTable("digest_runs", {
+  runDate: date("run_date").primaryKey(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  recipients: text("recipients").array(),
+  summary: jsonb("summary"),
+  error: text("error"),
+});

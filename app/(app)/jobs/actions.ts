@@ -3,9 +3,12 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { schema as s } from "@/lib/db";
+import { adminDb, schema as s } from "@/lib/db";
+import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
+import { createDraftInvoiceForJob, invoiceDeliveredJobs, syncInvoice } from "@/lib/money/invoicing";
 import { requireOwner, requireStaff } from "@/lib/auth/session";
 import { checkbox, formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { pipelineForService } from "@/lib/pipeline/config";
@@ -84,10 +87,46 @@ export async function setJobStage(id: string, stage: string, lostReason?: string
         .set({ stage, ...(stage === "LOST" ? { lostReason: lostReason ?? null } : {}) })
         .where(eq(s.jobs.id, id)),
     );
+    // Draft the FreshBooks invoice right away rather than waiting for the worker's next pass.
+    if (stage === "DELIVERED") {
+      after(async () => {
+        const fb = freshbooksFromEnv(adminDb());
+        if (fb) await invoiceDeliveredJobs(adminDb(), fb, 1, id).catch((e) => console.error("[invoice]", e));
+      });
+    }
     return { ok: true, message: "Stage updated." };
   });
   revalidatePath(`/jobs/${id}`);
   revalidatePath("/jobs");
+  return res;
+}
+
+/** Owner: create (or retry) the FreshBooks draft invoice for this job. Never sends it unless auto-send is on. */
+export async function createJobInvoice(jobId: string, _prev: ActionState): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const fb = freshbooksFromEnv(adminDb());
+    if (!fb) throw new Error("FreshBooks isn't set up on the server (see Settings → FreshBooks).");
+    const out = await createDraftInvoiceForJob(adminDb(), fb, jobId);
+    if (out.status === "error" || out.status === "skipped") return { error: out.reason ?? "Couldn't create the invoice." };
+    return { ok: true, message: out.status === "created" ? "Draft invoice created in FreshBooks." : "This job already has an invoice." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+/** Owner: re-read the invoice from FreshBooks (status, payments). Same path as the webhook. */
+export async function refreshJobInvoice(jobId: string, _prev: ActionState): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const fb = freshbooksFromEnv(adminDb());
+    if (!fb) throw new Error("FreshBooks isn't set up on the server.");
+    const [fin] = await user.db((tx) => tx.select({ inv: s.jobFinancials.freshbooksInvoiceId }).from(s.jobFinancials).where(eq(s.jobFinancials.jobId, jobId)));
+    if (!fin?.inv) throw new Error("No invoice yet.");
+    await syncInvoice(adminDb(), fb, fin.inv);
+    return { ok: true, message: "Updated from FreshBooks." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
   return res;
 }
 
@@ -238,13 +277,17 @@ const finSchema = z.object({
   labCost: money,
   otherCost: money,
   lineItems,
-  holdReportUntilPaid: checkbox,
+  // "" = inherit (client organization, then Settings default)
+  holdReportUntilPaid: z
+    .enum(["", "true", "false"])
+    .optional()
+    .transform((v) => (v === "true" ? true : v === "false" ? false : null)),
 });
 
 export async function saveFinancials(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireOwner();
   const res = await safeAction(async () => {
-    const f = finSchema.parse({ ...formObject(form), holdReportUntilPaid: form.get("holdReportUntilPaid") });
+    const f = finSchema.parse(formObject(form));
     const values = {
       quotedAmount: f.quotedAmount ?? null,
       subCost: f.subCost ?? null,

@@ -18,7 +18,8 @@ import { loadComposeData } from "@/lib/comms/compose-data";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { loadJobOptions } from "@/lib/jobs/options";
-import { BRAND_LABELS, fmtDate, label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
+import { BRAND_LABELS, fmtDate, label, personName, SERVICE_LABELS, titleCase, usd } from "@/lib/labels";
+import { reportHeld } from "@/lib/money/invoicing";
 import { stagesFor } from "@/lib/pipeline/config";
 import { checkStageTransition, daysInStage, isStale } from "@/lib/pipeline/rules";
 import {
@@ -27,7 +28,9 @@ import {
   addSample,
   archiveJob,
   createJobDriveFolder,
+  createJobInvoice,
   moveJobStage,
+  refreshJobInvoice,
   saveFinancials,
   setDocumentStatus,
   setSampleStatus,
@@ -64,10 +67,18 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
       // RLS returns nothing here for a VA; we also don't render the panel for them.
       isOwner ? tx.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, id)) : Promise.resolve([]),
     ]);
-    return { ...row, stages, samples, documents, tasks, activities, options, financials: financials[0], compose: await loadComposeData(tx) };
+    const fin = financials[0];
+    const money = isOwner
+      ? {
+          invoice: fin?.freshbooksInvoiceId ? (await tx.select().from(s.invoicesCache).where(eq(s.invoicesCache.freshbooksInvoiceId, fin.freshbooksInvoiceId)))[0] : undefined,
+          held: await reportHeld(tx, row.job, fin),
+          connected: (await tx.select({ id: s.freshbooksConnection.id }).from(s.freshbooksConnection)).length > 0,
+        }
+      : null;
+    return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, compose: await loadComposeData(tx) };
   });
   if (!data) notFound();
-  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, compose } = data;
+  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, compose } = data;
 
   const current = stages.find((st) => st.key === job.stage);
   const stale = !current?.isTerminal && isStale(job.stageEnteredAt, current?.staleAfterDays ?? null);
@@ -321,22 +332,68 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
                 <Field label="Lab cost $"><Input name="labCost" inputMode="decimal" defaultValue={financials?.labCost ?? ""} /></Field>
                 <Field label="Other cost $"><Input name="otherCost" inputMode="decimal" defaultValue={financials?.otherCost ?? ""} /></Field>
               </div>
-              <Field label="Line items" hint="One per line: Description | qty | unit price. These become the FreshBooks invoice lines in Phase 3.">
+              <Field label="Line items" hint="One per line: Description | qty | unit price. These become the FreshBooks invoice lines (else one line for the quoted amount).">
                 <Textarea
                   name="lineItems"
                   rows={3}
                   defaultValue={financials?.lineItems.map((l) => `${l.description} | ${l.quantity} | ${l.unitPrice}`).join("\n")}
                 />
               </Field>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" name="holdReportUntilPaid" defaultChecked={financials?.holdReportUntilPaid ?? false} className="size-4 accent-primary" />
-                Hold report until paid
-              </label>
+              <Field label="Hold report until paid" className="max-w-xs">
+                <NativeSelect name="holdReportUntilPaid" defaultValue={financials?.holdReportUntilPaid == null ? "" : String(financials.holdReportUntilPaid)}>
+                  <option value="">Client / Settings default ({money?.held && financials?.holdReportUntilPaid == null ? "hold" : "don't hold"})</option>
+                  <option value="true">Hold until paid</option>
+                  <option value="false">Don&apos;t hold</option>
+                </NativeSelect>
+              </Field>
               <div className="flex items-center justify-between">
                 <SubmitButton size="sm">Save financials</SubmitButton>
                 {financials && <span className="text-sm">Gross margin: <strong>${financials.grossMargin}</strong></span>}
               </div>
             </ActionForm>
+
+            <div className="mt-4 space-y-2 border-t pt-3 text-sm">
+              <div className="font-medium">FreshBooks invoice</div>
+              {financials?.freshbooksInvoiceId ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>#{money?.invoice?.invoiceNumber ?? financials.freshbooksInvoiceId}</span>
+                  <Badge variant={financials.paidAt ? "default" : "secondary"}>{financials.invoiceStatus ?? "draft"}</Badge>
+                  {money?.invoice?.amount && (
+                    <span className="text-muted-foreground">
+                      {usd(money.invoice.amount)}
+                      {Number(money.invoice.outstanding ?? 0) > 0 && ` · ${usd(money.invoice.outstanding)} outstanding`}
+                      {money.invoice.dueAt && ` · due ${fmtDate(money.invoice.dueAt)}`}
+                    </span>
+                  )}
+                  {financials.paidAt && <span className="text-muted-foreground">paid {fmtDate(financials.paidAt)}</span>}
+                  <ActionForm action={refreshJobInvoice.bind(null, id)} className="inline-flex flex-col">
+                    <SubmitButton size="xs" variant="ghost">Refresh</SubmitButton>
+                  </ActionForm>
+                  <a href="https://my.freshbooks.com/#/invoices" target="_blank" rel="noreferrer" className="text-xs underline">Open FreshBooks</a>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">
+                    {!money?.connected
+                      ? "FreshBooks isn't connected yet (Settings → FreshBooks)."
+                      : job.stage === "DELIVERED"
+                        ? "Drafts are automatic for jobs delivered after FreshBooks was connected; use the button for older jobs."
+                        : "A draft invoice is created when this job is marked Delivered."}
+                  </p>
+                  {financials?.invoiceError && <p className="text-destructive">Last attempt failed: {financials.invoiceError}</p>}
+                  {money?.connected && (
+                    <ActionForm action={createJobInvoice.bind(null, id)} className="flex flex-col items-start gap-1">
+                      <SubmitButton size="xs" variant="outline">{financials?.invoiceError ? "Retry draft invoice" : "Create draft invoice now"}</SubmitButton>
+                    </ActionForm>
+                  )}
+                </div>
+              )}
+              {money?.held && (
+                <p className={financials?.reportReleasedAt ? "text-primary" : "text-amber-700 dark:text-amber-400"}>
+                  {financials?.reportReleasedAt ? `Paid — report released ${fmtDate(financials.reportReleasedAt)}.` : "Report is held until this invoice is paid — don't send it to the client yet."}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

@@ -4,6 +4,8 @@
  *  - Titan IMAP listener → email ingest, EMSL parser (SPEC §6.3)
  *  - AI triage of inbound email/SMS (SPEC §9.1), every 30s
  *  - mail health check → SMS alert to Jordan (every 5 min)
+ *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2)
+ *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -15,7 +17,10 @@ import { enrichProperty } from "@/lib/properties/enrich";
 import { triagePending } from "@/lib/ai/classify";
 import { driveFromEnv } from "@/lib/integrations/google-drive";
 import { quoFromEnv } from "@/lib/integrations/quo";
-import { titanConfigFromEnv } from "@/lib/integrations/titan-mail";
+import { mailSenderFromEnv, titanConfigFromEnv } from "@/lib/integrations/titan-mail";
+import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
+import { invoiceDeliveredJobs } from "@/lib/money/invoicing";
+import { sendDigestIfDue } from "@/lib/money/digest";
 import { storageUploader } from "@/lib/supabase/service";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
@@ -112,6 +117,24 @@ async function main() {
   } else {
     console.log("[triage] ANTHROPIC_API_KEY not set — inbound messages stay PENDING for manual review");
   }
+
+  const fb = freshbooksFromEnv(adminDb());
+  if (fb) {
+    timers.push(
+      every(60_000, "invoices", async () => {
+        for (const o of await invoiceDeliveredJobs(adminDb(), fb)) console.log(`[invoices] ${o.status} ${o.invoiceId ?? ""} ${o.reason ?? ""}`.trim());
+      }),
+    );
+  } else {
+    console.log("[invoices] FRESHBOOKS_CLIENT_ID/SECRET not set — no draft invoices");
+  }
+
+  timers.push(
+    every(5 * 60_000, "digest", async () => {
+      const r = await sendDigestIfDue(adminDb(), { mail: mailSenderFromEnv(), quo: quoFromEnv() });
+      if (r === "sent" || r === "no-recipients") console.log(`[digest] ${r}`);
+    }),
+  );
 
   console.log("Worker started.");
   const stop = async () => {
