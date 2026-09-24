@@ -88,6 +88,7 @@ describe.skipIf(!hasTestDb)("Quo webhook processing", () => {
       { quoPhoneNumberId: LINE_PN, number: "+19293051232", label: "ESS main", lineKey: "ESS_MAIN", missedCallTextback: true },
       { quoPhoneNumberId: AIRNYC_PN, number: "+19293050000", label: "AIRnyc line", lineKey: "AIRNYC" },
     ]);
+    await t.db.update(s.settings).set({ quoSummariesEnabled: true });
     [{ id: contactId }] = await t.db.insert(s.contacts).values({ firstName: "Pat", lastName: "Lee", phones: ["+17185550100"] }).returning();
   });
   afterAll(async () => t?.close());
@@ -140,6 +141,14 @@ describe.skipIf(!hasTestDb)("Quo webhook processing", () => {
     expect(a.nextSteps).toEqual(["Send proposal", "Schedule inspection"]);
     const steps = await t.db.select().from(s.tasks).where(eq(s.tasks.source, "QUO_NEXT_STEP"));
     expect(steps.map((x) => x.title).sort()).toEqual(["Schedule inspection", "Send proposal"]);
+  });
+
+  it("ignores summaries/transcripts while the plan feature flag is off", async () => {
+    await t.db.update(s.settings).set({ quoSummariesEnabled: false });
+    const r = await deliver(summaryEvent("CA-flag-off"));
+    expect(r.json).toMatchObject({ handled: false });
+    expect(await t.db.select().from(s.activities).where(eq(s.activities.externalId, "CA-flag-off"))).toHaveLength(0);
+    await t.db.update(s.settings).set({ quoSummariesEnabled: true });
   });
 
   it("stores call transcripts", async () => {

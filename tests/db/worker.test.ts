@@ -35,7 +35,7 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
   afterAll(async () => t?.close());
 
   it("first connect starts from 'now' instead of importing the whole inbox", async () => {
-    const n = await processNew(fakeImap(7n, 101, [{ uid: 100, source: await mail(100) }]), deps());
+    const n = await processNew(fakeImap(BigInt(7), 101, [{ uid: 100, source: await mail(100) }]), deps());
     expect(n).toBe(0);
     expect(await loadState(t.db, cfg.user)).toMatchObject({ uidValidity: "7", lastUid: 100 });
   });
@@ -46,15 +46,15 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
       { uid: 101, source: await mail(101) },
       { uid: 102, source: await mail(102) },
     ];
-    expect(await processNew(fakeImap(7n, 103, msgs), deps())).toBe(2);
-    expect(await processNew(fakeImap(7n, 103, msgs), deps())).toBe(0); // "*" returns uid 102 again → filtered
+    expect(await processNew(fakeImap(BigInt(7), 103, msgs), deps())).toBe(2);
+    expect(await processNew(fakeImap(BigInt(7), 103, msgs), deps())).toBe(0); // "*" returns uid 102 again → filtered
     expect((await loadState(t.db, cfg.user))?.lastUid).toBe(102);
     const acts = await t.db.select().from(s.activities);
     expect(acts.map((a) => a.externalId).sort()).toEqual(["<w101@test>", "<w102@test>"]);
   });
 
   it("a UIDVALIDITY change resets the cursor without re-importing", async () => {
-    expect(await processNew(fakeImap(8n, 5, [{ uid: 4, source: await mail(101) }]), deps())).toBe(0);
+    expect(await processNew(fakeImap(BigInt(8), 5, [{ uid: 4, source: await mail(101) }]), deps())).toBe(0);
     expect(await loadState(t.db, cfg.user)).toMatchObject({ uidValidity: "8", lastUid: 4 });
   });
 

@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
 import { Timeline } from "@/components/timeline";
+import { ComposeMessage } from "@/components/compose-message";
+import { loadComposeData } from "@/lib/comms/compose-data";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
@@ -34,10 +36,10 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       .where(or(eq(s.activities.contactId, id)))
       .orderBy(desc(s.activities.occurredAt))
       .limit(100);
-    return { contact, org, orgs, properties, jobs, activities };
+    return { contact, org, orgs, properties, jobs, activities, compose: await loadComposeData(tx) };
   });
   if (!data) notFound();
-  const { contact: c, org, orgs, properties, jobs, activities } = data;
+  const { contact: c, org, orgs, properties, jobs, activities, compose } = data;
 
   return (
     <>
@@ -81,10 +83,29 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
         </Card>
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
-          <CardContent><Timeline items={activities} /></CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader><CardTitle>Message</CardTitle></CardHeader>
+            <CardContent>
+              {c.doNotContact ? (
+                <p className="text-sm text-destructive">Marked do-not-contact.</p>
+              ) : (
+                <ComposeMessage
+                  phones={c.phones}
+                  emails={c.emails}
+                  {...compose}
+                  context={{ contactId: id, jobId: jobs.length === 1 ? jobs[0].id : undefined }}
+                  revalidate={`/contacts/${id}`}
+                  isOwner={user.role === "OWNER"}
+                />
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
+            <CardContent><Timeline items={activities} /></CardContent>
+          </Card>
+        </div>
         <Card>
           <CardHeader><CardTitle>Edit</CardTitle></CardHeader>
           <CardContent className="space-y-4">

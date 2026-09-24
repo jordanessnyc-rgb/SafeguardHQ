@@ -80,9 +80,12 @@ export async function processQuoEvent(conn: Conn, event: QuoEvent): Promise<QuoO
     case "call.missed":
       return onCall(conn, event);
     case "call.summary.completed":
-      return onSummary(conn, event);
-    case "call.transcript.completed":
-      return onTranscript(conn, event);
+    case "call.transcript.completed": {
+      // Feature-flagged: summaries/transcripts need a Quo Business/Scale plan (SPEC §6.1).
+      const [cfg] = await conn.select({ on: s.settings.quoSummariesEnabled }).from(s.settings);
+      if (!cfg?.on) return { handled: false, note: "quo summaries disabled in settings" };
+      return event.type === "call.summary.completed" ? onSummary(conn, event) : onTranscript(conn, event);
+    }
     case "contact.updated":
       return onContact(conn, event);
     default:

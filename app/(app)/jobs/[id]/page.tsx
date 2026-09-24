@@ -13,6 +13,8 @@ import { ActionForm, Field, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
 import { TaskList } from "@/components/task-list";
 import { Timeline } from "@/components/timeline";
+import { ComposeMessage } from "@/components/compose-message";
+import { loadComposeData } from "@/lib/comms/compose-data";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { loadJobOptions } from "@/lib/jobs/options";
@@ -62,10 +64,10 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
       // RLS returns nothing here for a VA; we also don't render the panel for them.
       isOwner ? tx.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, id)) : Promise.resolve([]),
     ]);
-    return { ...row, stages, samples, documents, tasks, activities, options, financials: financials[0] };
+    return { ...row, stages, samples, documents, tasks, activities, options, financials: financials[0], compose: await loadComposeData(tx) };
   });
   if (!data) notFound();
-  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials } = data;
+  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, compose } = data;
 
   const current = stages.find((st) => st.key === job.stage);
   const stale = !current?.isTerminal && isStale(job.stageEnteredAt, current?.staleAfterDays ?? null);
@@ -345,6 +347,21 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
             <CardTitle>Timeline</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {contact && !contact.doNotContact && (
+              <details className="rounded-lg border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Message {personName(contact)}</summary>
+                <div className="mt-3">
+                  <ComposeMessage
+                    phones={contact.phones}
+                    emails={contact.emails}
+                    {...compose}
+                    context={{ contactId: contact.id, jobId: id, airnycCaseId: job.airnycCaseId ?? undefined }}
+                    revalidate={`/jobs/${id}`}
+                    isOwner={isOwner}
+                  />
+                </div>
+              </details>
+            )}
             <ActionForm action={addJobNote.bind(null, id)} className="space-y-2">
               <Textarea name="body" rows={2} placeholder="Add a note…" />
               <SubmitButton size="sm" variant="secondary">Add note</SubmitButton>

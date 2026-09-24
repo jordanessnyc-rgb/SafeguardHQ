@@ -8,7 +8,8 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const QUO_BASE = "https://api.quo.com";
+// QUO_API_BASE exists only so local end-to-end tests can point at a mock server.
+export const QUO_BASE = process.env.QUO_API_BASE ?? "https://api.quo.com";
 export const QUO_API_VERSION = "2026-03-30";
 const TOLERANCE_SECONDS = 5 * 60;
 

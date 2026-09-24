@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { asc } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -47,7 +48,11 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description={isOwner ? undefined : "Read-only — only the owner can change settings."} />
+      <PageHeader
+        title="Settings"
+        description={isOwner ? undefined : "Read-only — only the owner can change settings."}
+        actions={<Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>}
+      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
