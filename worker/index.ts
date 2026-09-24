@@ -9,6 +9,7 @@
  *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
  *  - scheduled inspections → Titan calendar over CalDAV (SPEC §6.3), every 5 min
  *  - DocuSign webhook deliveries left unprocessed are retried (SPEC §6.7), every 20 min
+ *  - bid listings: NYC City Record open data every 6 h; bid alert emails → bids every 2 min (SPEC §8)
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -31,6 +32,7 @@ import { syncCalendar } from "@/lib/calendar/sync";
 import { titanCalendarFromEnv } from "@/lib/integrations/titan-calendar";
 import { docusignFromEnv } from "@/lib/integrations/docusign";
 import { retryDocuSignDeliveries } from "@/lib/docs/esign";
+import { bidsFromPendingEmails, ingestCityRecord } from "@/lib/bids/ingest";
 import { storageDownloader } from "@/lib/supabase/service";
 import { storageUploader } from "@/lib/supabase/service";
 import { mailHealthCheck } from "./health";
@@ -170,6 +172,19 @@ async function main() {
 
   const ds = docusignFromEnv();
   if (ds) timers.push(every(20 * 60_000, "docusign", () => retryDocuSignDeliveries(adminDb(), ds, { ...storageUploader(), ...storageDownloader() })));
+
+  timers.push(
+    every(6 * 3600_000, "bids-city-record", async () => {
+      const r = await ingestCityRecord(adminDb());
+      if (r.inserted) console.log(`[bids] City Record: ${r.inserted} new of ${r.matched} matching`);
+    }),
+  );
+  if (process.env.ANTHROPIC_API_KEY) {
+    timers.push(every(2 * 60_000, "bids-email", async () => {
+      const n = await bidsFromPendingEmails(adminDb());
+      if (n) console.log(`[bids] ${n} new from alert emails`);
+    }));
+  }
 
   console.log("Worker started.");
   const stop = async () => {

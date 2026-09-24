@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "bid_keywords" text[] DEFAULT '{mold,asbestos,lead,"industrial hygiene",environmental,abatement,"hazardous material","air monitoring","air sampling","indoor air",radon,"gas piping","local law 152",parapet,"local law 126","lead-based paint",microbial}'::text[] NOT NULL;

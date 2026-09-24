@@ -799,6 +799,11 @@ export const settings = pgTable("settings", {
   invoicePaymentTermsDays: integer("invoice_payment_terms_days").notNull().default(30),
   // Jordan's notes on how he writes (tone, sign-off, phrases) — fed to AI reply drafts (SPEC §9.2).
   aiVoiceNotes: text("ai_voice_notes"),
+  // Bid ingestion (SPEC §8): listings whose title/description match any of these are kept.
+  bidKeywords: text("bid_keywords")
+    .array()
+    .notNull()
+    .default(sql`'{mold,asbestos,lead,"industrial hygiene",environmental,abatement,"hazardous material","air monitoring","air sampling","indoor air",radon,"gas piping","local law 152",parapet,"local law 126","lead-based paint",microbial}'::text[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });

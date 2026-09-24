@@ -16,6 +16,8 @@ export const DATASETS = {
   pluto: "64uk-42ks",
   dobViolations: "3h2n-5cm9",
   ecbViolations: "6bgk-3dad",
+  // City Record Online (DCAS). Solicitations: section_name='Procurement' AND type_of_notice_description='Solicitation'.
+  cityRecord: "dg92-zbpx",
 } as const;
 
 /** Upper bound of rows pulled per dataset per property (big portfolios can have thousands). */
