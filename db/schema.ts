@@ -539,9 +539,9 @@ export const fieldData = pgTable("field_data", {
     .notNull()
     .unique()
     .references(() => jobs.id, { onDelete: "cascade" }),
-  readings: jsonb("readings").notNull().default(sql`'[]'::jsonb`),
+  readings: jsonb("readings").$type<FieldReading[]>().notNull().default(sql`'[]'::jsonb`),
   observations: text("observations"),
-  photos: jsonb("photos").notNull().default(sql`'[]'::jsonb`),
+  photos: jsonb("photos").$type<FieldPhoto[]>().notNull().default(sql`'[]'::jsonb`),
   areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
 });
 
@@ -1072,3 +1072,6 @@ export const pricingRules = pgTable("pricing_rules", {
   notes: text("notes"),
   active: boolean("active").notNull().default(true),
 });
+
+export type FieldReading = { area: string; moisture?: string | null; rh?: string | null; temp?: string | null; note?: string | null };
+export type FieldPhoto = { path: string; caption: string; area?: string | null; contentType: string; width?: number; height?: number };
