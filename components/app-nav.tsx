@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
+import { BarChart3, Building2, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -15,16 +15,19 @@ const NAV = [
   { href: "/inbox", label: "Inbox review", icon: Inbox },
   { href: "/outbox", label: "Outbox", icon: Send },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
+  { href: "/reports", label: "Reports", icon: BarChart3, ownerOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
+const navFor = (isOwner: boolean) => NAV.filter((n) => isOwner || !n.ownerOnly);
+
 const isActive = (path: string, href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
-export function SideNav() {
+export function SideNav({ isOwner }: { isOwner: boolean }) {
   const path = usePathname();
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.map(({ href, label, icon: Icon }) => (
+      {navFor(isOwner).map(({ href, label, icon: Icon }) => (
         <Link
           key={href}
           href={href}
@@ -41,11 +44,11 @@ export function SideNav() {
   );
 }
 
-export function MobileNav() {
+export function MobileNav({ isOwner }: { isOwner: boolean }) {
   const path = usePathname();
   return (
     <nav className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-2">
-      {NAV.map(({ href, label }) => (
+      {navFor(isOwner).map(({ href, label }) => (
         <Link
           key={href}
           href={href}
