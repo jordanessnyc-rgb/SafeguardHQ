@@ -157,3 +157,27 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **Sealed-call output:** extraction on sealed calls stores only urgency and a follow-up count on the row, and its tasks carry no call content.
   - **Sealed transcripts:** these are flagged when they arrive (`ai_classification.sealedTranscript`), so the worker doesn't have to decrypt calls just to check whether a transcript exists.
 - **Report drafting (§9.5)** is part of 4c, because it writes into the DOCX templates.
+
+## 2026-09-24 — Phase 4c (Documents: templates, quote builder, sub copies, report drafting)
+
+- **Templates:** docxtemplater 3.71 with PizZip.
+  - **Which file is used:** Jordan's files in `/templates` (`ESS_Proposal.docx`, `ESS_Report.docx`) win. Until they exist, generated **placeholder** templates in `/templates/placeholder` are used. These carry a red "PLACEHOLDER TEMPLATE" banner, and bracketed slots for ESS's terms, limitations language and license numbers; no legal wording was invented. The tags they use are listed in the RUNBOOK.
+  - **Missing values** render as a visible `[tag]`.
+  - **Photos:** docxtemplater's image module is paid, so photos are embedded by a small helper. It adds the media, relationships and content types, and fills a `{@photo_log}` tag.
+- **Quote builder (§10):**
+  - **Pricing rules:** `pricing_rules`, one per service, owner-only and audited. A rule sets the base price, an included sq ft plus a per-sq-ft rate above it, included samples plus a per-sample rate above them, a minimum, and the default proposal scope. The rules start **empty**, and Jordan enters his prices on Settings → Pricing. With no rule, only lines entered by hand are priced.
+  - **Building a quote** replaces the job's line items and quoted total; the inputs are kept in `job_financials.quote_inputs`.
+  - **Sub quotes:** compared side by side from `sub_costs` (owner-only), with ESS margin per option. "Use this sub" sets the job's subcontractor and sub cost.
+- **Proposal:** a Word file from the ESS template, with a **client-signature-only** block. It's stored in the owner-only `job-files-pricing` bucket, marked `contains_pricing`, and not copied to Drive.
+- **Sub copy (§10):** made from a Word report and applied to the WordprocessingML itself.
+  - **Removed:** whole sections under headings about price, fees, costs, invoices, payment, funding, terms, signatures or consent, plus single lines and table rows that mention money, funding, deposits, Medicaid/SCN, signatures or consent. Header and footer lines are filtered too.
+  - **Kept:** photos and everything else.
+  - **Release check:** the result's full text, including footnotes, is scanned for `$`, price, cost, invoice and funding. **Any hit means nothing is saved,** and Jordan sees the offending lines. Removing too much is the chosen failure mode.
+  - **Bug found in testing:** text from adjacent table cells was run together, so "Fee" + "Amount" read as "FeeAmount" and escaped word matching. Paragraphs are now space-separated.
+- **Field data:** a card on the job page for areas, observations, readings and photos with captions. Photos are JPEG/PNG up to 15 MB, stored in `job-files`, and served through signed links. It's mobile-friendly, including the camera capture hint.
+- **Report drafting (§9.5):** "Draft report with AI" uses `claude-opus-5` (`AI_MODEL_REPORT`).
+  - **What the model gets:** field data, photo captions and sample data — never prices or the client's name.
+  - **What it writes:** five fixed sections (summary, scope, observations, lab results, recommendations). It must not invent facts or state legal requirements; gaps are marked `[Jordan: …]`.
+  - **The output:** a DRAFT report document carrying an "AI DRAFT — not for release" notice, a skipped section left visibly as `[Jordan: section not drafted]`, and an owner review task listing the open questions.
+  - **AIRnyc:** jobs are gated like the other AI features, including the no-known-names block.
+- **Deferred:** uploading license and COI files; Drive copies of generated drafts (drafts stay in the CRM until Jordan finalizes them); FreshBooks estimates from signed proposals (optional in §6.2, and naturally follows DocuSign in 4d).

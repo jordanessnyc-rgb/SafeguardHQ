@@ -30,8 +30,12 @@ import {
   createJobDriveFolder,
   addSubQuote,
   buildQuote,
+  addFieldPhoto,
   createJobInvoice,
+  draftReportAction,
   generateProposalDoc,
+  removeFieldPhoto,
+  saveFieldData,
   makeSubCopy,
   moveJobStage,
   selectSubQuote,
@@ -73,6 +77,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
       isOwner ? tx.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, id)) : Promise.resolve([]),
     ]);
     const fin = financials[0];
+    const [field] = await tx.select().from(s.fieldData).where(eq(s.fieldData.jobId, id));
     const money = isOwner
       ? {
           invoice: fin?.freshbooksInvoiceId ? (await tx.select().from(s.invoicesCache).where(eq(s.invoicesCache.freshbooksInvoiceId, fin.freshbooksInvoiceId)))[0] : undefined,
@@ -92,10 +97,11 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
             .orderBy(asc(s.organizations.name)),
         }
       : null;
-    return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, compose: await loadComposeData(tx) };
+    return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, field, compose: await loadComposeData(tx) };
   });
   if (!data) notFound();
-  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, compose } = data;
+  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, field, compose } = data;
+  const aiEnabled = Boolean(process.env.ANTHROPIC_API_KEY);
 
   const current = stages.find((st) => st.key === job.stage);
   const stale = !current?.isTerminal && isStale(job.stageEnteredAt, current?.staleAfterDays ?? null);
@@ -222,6 +228,58 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
                 <div className="text-xs text-muted-foreground">Delivered</div>
                 {fmtDate(job.deliveredAt)}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle>Field data</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 lg:grid-cols-2">
+            <ActionForm action={saveFieldData.bind(null, id)} className="space-y-2">
+              <Field label="Areas inspected" hint="Comma-separated, e.g. Bathroom, Bedroom 2, Hall closet">
+                <Input name="areas" defaultValue={field?.areas.join(", ") ?? ""} />
+              </Field>
+              <Field label="Observations">
+                <Textarea name="observations" rows={5} defaultValue={field?.observations ?? ""} placeholder="What you saw, area by area." />
+              </Field>
+              <Field label="Readings" hint="One per line: Area | moisture % | RH % | temp °F | note">
+                <Textarea name="readings" rows={3} defaultValue={(field?.readings ?? []).map((r) => [r.area, r.moisture, r.rh, r.temp, r.note].map((x) => x ?? "").join(" | ").replace(/( \| )+$/, "")).join("\n")} />
+              </Field>
+              <SubmitButton size="sm" variant="secondary">Save field data</SubmitButton>
+            </ActionForm>
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Photos ({field?.photos.length ?? 0})</div>
+              {(field?.photos ?? []).length > 0 && (
+                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {field!.photos.map((p, i) => (
+                    <li key={p.path} className="text-xs">
+                      <a href={`/api/field-photos/${id}/${i}`} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed storage URL via redirect */}
+                        <img src={`/api/field-photos/${id}/${i}`} alt={p.caption} className="aspect-[4/3] w-full rounded border object-cover" loading="lazy" />
+                      </a>
+                      <div className="mt-0.5">{i + 1}. {p.area ? `${p.area} — ` : ""}{p.caption}</div>
+                      <form action={removeFieldPhoto.bind(null, id, i)}>
+                        <button className="text-muted-foreground underline" type="submit">remove</button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <ActionForm action={addFieldPhoto.bind(null, id)} className="grid gap-2 sm:grid-cols-2">
+                <Input name="photo" type="file" accept="image/jpeg,image/png" capture="environment" className="sm:col-span-2" aria-label="Photo" />
+                <Input name="caption" placeholder="Caption (goes in the photo log)" aria-label="Caption" />
+                <Input name="area" placeholder="Area" aria-label="Area" list="field-areas" />
+                <datalist id="field-areas">{(field?.areas ?? []).map((a) => <option key={a} value={a} />)}</datalist>
+                <SubmitButton size="sm" variant="outline">Add photo</SubmitButton>
+              </ActionForm>
+              {aiEnabled && (
+                <ActionForm action={draftReportAction.bind(null, id)} className="flex flex-col items-start gap-1 border-t pt-3">
+                  <SubmitButton size="sm">Draft report with AI</SubmitButton>
+                  <span className="text-xs text-muted-foreground">Writes the findings, observations, results and recommendations from the field data, photos and samples into the report template as a DRAFT for Jordan to edit.</span>
+                </ActionForm>
+              )}
             </div>
           </CardContent>
         </Card>

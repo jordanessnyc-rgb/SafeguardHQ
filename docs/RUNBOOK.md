@@ -92,6 +92,21 @@ Verified in the browser on 2026-09-24:
 - **After payment:** the held report was released with a task, and a review-request draft was waiting in the Outbox.
 - **VA:** sees no Reports link; `/reports` and `/settings/freshbooks` redirect; no financials on the job.
 
+## Phase 4 setup (documents, pricing, compliance)
+1. **Templates.** Save ESS's Word templates as `/templates/ESS_Proposal.docx` and `/templates/ESS_Report.docx`, then commit them. Until then, the red-bannered placeholders in `/templates/placeholder` are used. `pnpm tsx scripts/make-placeholder-templates.ts` regenerates them. Tags use `{name}`:
+   - **Proposal tags:**
+     - Details: `{brand_name} {proposal_number} {proposal_date} {client_name} {client_org} {property_address} {service_name} {scope} {total} {valid_days}`.
+     - Line items: a table row with `{#lines}{description}` | `{qty}` | `{unit_price}` | `{amount}{/lines}`.
+     - Signature block: client only.
+   - **Report tags:**
+     - Details: `{brand_name} {report_title} {draft_notice} {report_status} {job_number} {report_date} {client_name} {property_address} {assessor}`.
+     - Sections: `{#sections}` / `{title}` / `{body}` / `{/sections}`, each on its own paragraph.
+     - Samples: a table row with `{#samples}{sample_id}` | `{type}` | `{location}` | `{result}{/samples}`.
+     - Photos: `{@photo_log}`, alone in its paragraph.
+2. **Pricing.** Go to Settings → Pricing and enter each service's base price, included sq ft and samples, per-unit rates, minimum and default scope. It is owner-only.
+3. **Compliance.** Go to Compliance → Cycle rules and enter each service's cycle and lead time. Then fill in ESS license numbers and expiry dates, and each subcontractor's COI date on its organization page.
+4. **AI.** Go to Settings → Communications → "How Jordan writes" and describe your tone. Reply drafts, call extraction and report drafts need `ANTHROPIC_API_KEY`; the model names are in `AI_MODEL_*`.
+
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.
 - **Refreshing a property's NYC data:** use the property page → "Refresh NYC data". The worker also refreshes nightly.

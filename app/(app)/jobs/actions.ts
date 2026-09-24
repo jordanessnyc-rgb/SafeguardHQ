@@ -10,6 +10,8 @@ import { adminDb, schema as s } from "@/lib/db";
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { createDraftInvoiceForJob, invoiceDeliveredJobs, syncInvoice } from "@/lib/money/invoicing";
 import { computeQuote } from "@/lib/money/quote";
+import { draftReport } from "@/lib/ai/report";
+import { imageSize } from "@/lib/docs/image-size";
 import { generateProposal } from "@/lib/docs/proposal";
 import { createSubCopy } from "@/lib/docs/sub-copy-job";
 import { storageDownloader, storageUploader } from "@/lib/supabase/service";
@@ -394,6 +396,91 @@ export async function makeSubCopy(jobId: string, docId: string, _prev: ActionSta
       return { error: `Not released — the sub copy would still contain: ${r.violations.slice(0, 5).map((v) => `“${v.slice(0, 80)}”`).join("; ")}. Edit the report and try again.` };
     }
     return { ok: true, message: `Sub copy created. Removed ${r.removed.length} item(s): ${r.removed.slice(0, 6).map((x) => x.trim().slice(0, 50)).join(" · ")}${r.removed.length > 6 ? " …" : ""}` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Field data (inputs for report drafting) and AI report drafts (SPEC §4.3, §9.5)
+// ---------------------------------------------------------------------------------------------
+
+const fieldSchema = z.object({
+  areas: z.string().optional().transform((v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean)),
+  observations: z.string().max(50_000).optional(),
+  readings: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+          const [area, moisture, rh, temp, ...note] = l.split("|").map((x) => x.trim());
+          return { area, moisture: moisture || null, rh: rh || null, temp: temp || null, note: note.join(" | ") || null };
+        }),
+    ),
+});
+
+export async function saveFieldData(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const v = fieldSchema.parse(formObject(form));
+    const values = { areas: v.areas, observations: v.observations ?? null, readings: v.readings };
+    await user.db((tx) => tx.insert(s.fieldData).values({ jobId, ...values }).onConflictDoUpdate({ target: s.fieldData.jobId, set: values }));
+    return { ok: true, message: "Field data saved." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function addFieldPhoto(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const file = form.get("photo");
+    const { caption, area } = formObject(form);
+    if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo.");
+    if (!["image/jpeg", "image/png"].includes(file.type)) throw new Error("Photos must be JPEG or PNG.");
+    if (file.size > 15 * 1024 * 1024) throw new Error("Photo is larger than 15 MB.");
+    if (!caption) throw new Error("Add a caption — it goes into the photo log.");
+    const buf = Buffer.from(await file.arrayBuffer());
+    const size = imageSize(buf);
+    const path = `jobs/${jobId}/photos/${randomUUID()}.${file.type === "image/png" ? "png" : "jpg"}`;
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.storage.from("job-files").upload(path, buf, { contentType: file.type });
+    if (error) throw new Error(`Upload failed: ${error.message}`);
+    const photo = { path, caption, area: area ?? null, contentType: file.type, ...(size?.width ? { width: size.width, height: size.height } : {}) };
+    await user.db((tx) =>
+      tx
+        .insert(s.fieldData)
+        .values({ jobId, photos: [photo] })
+        .onConflictDoUpdate({ target: s.fieldData.jobId, set: { photos: sql`${s.fieldData.photos} || ${JSON.stringify([photo])}::jsonb` } }),
+    );
+    return { ok: true, message: "Photo added." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function removeFieldPhoto(jobId: string, index: number) {
+  const user = await requireStaff();
+  await user.db((tx) => tx.update(s.fieldData).set({ photos: sql`${s.fieldData.photos} - ${index}::int` }).where(eq(s.fieldData.jobId, jobId)));
+  revalidatePath(`/jobs/${jobId}`);
+}
+
+export async function draftReportAction(jobId: string, _prev: ActionState): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
+    const [visible] = await user.db((tx) => tx.select({ id: s.jobs.id }).from(s.jobs).where(eq(s.jobs.id, jobId)));
+    if (!visible) throw new Error("Job not found.");
+    const r = await draftReport(adminDb(), jobId, { storage: { ...storageUploader(), ...storageDownloader() }, actorId: user.id });
+    if (r.status !== "drafted") return { error: r.reason };
+    return {
+      ok: true,
+      message: `Report draft added to Documents${r.placeholder ? " (placeholder template)" : ""}. ${r.openQuestions.length ? `${r.openQuestions.length} open question(s) for Jordan — see the review task.` : "No open questions flagged."}`,
+    };
   });
   revalidatePath(`/jobs/${jobId}`);
   return res;
