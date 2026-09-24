@@ -60,3 +60,7 @@ export function fmtDate(d: Date | string | null | undefined, withTime = false): 
 
 export const personName = (c: { firstName?: string | null; lastName?: string | null }) =>
   [c.firstName, c.lastName].filter(Boolean).join(" ") || "Unnamed contact";
+
+/** $1,234.50 — accepts numeric strings from Postgres. */
+export const usd = (v: number | string | null | undefined, cents = true) =>
+  Number(v ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
