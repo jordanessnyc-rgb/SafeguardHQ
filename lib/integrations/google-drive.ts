@@ -116,6 +116,28 @@ export class DriveClient {
     });
   }
 
+  /** Multipart upload of a file into a folder (Drive v3 `uploadType=multipart`). Returns the file id. */
+  async uploadToFolder(folderId: string, name: string, data: Buffer, contentType: string): Promise<string> {
+    const t = await this.auth.getAccessToken();
+    const token = typeof t === "string" ? t : t?.token;
+    if (!token) throw new Error("Google Drive: could not obtain an access token");
+    const boundary = `ess${Date.now().toString(36)}`;
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [folderId] })}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`),
+      data,
+      Buffer.from(`\r\n--${boundary}--`),
+    ]);
+    const res = await this.fetchImpl(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) throw new Error(`Google Drive upload ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    return ((await res.json()) as { id: string }).id;
+  }
+
   /** Recursively copies the *contents* of `templateId` into `destId`. */
   async cloneContents(templateId: string, destId: string, depth = 0): Promise<void> {
     if (depth > 5) throw new Error("Drive template is nested too deeply");

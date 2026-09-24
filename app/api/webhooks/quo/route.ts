@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { verifyWebhook, WebhookVerificationError, type QuoEvent } from "@/lib/integrations/quo";
 import { handleQuoDelivery } from "@/lib/comms/quo-webhook";
 
@@ -8,7 +8,7 @@ import { handleQuoDelivery } from "@/lib/comms/quo-webhook";
  *  2. dedupe on the `webhook-id` delivery id and apply it (lib/comms/quo-webhook.ts),
  *  3. on failure return 500 so Quo retries (~27h).
  */
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   const secret = process.env.QUO_WEBHOOK_SECRET;
   if (!secret) return new NextResponse("Webhook secret not configured", { status: 503 });
 

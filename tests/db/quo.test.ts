@@ -2,7 +2,7 @@
  * Quo webhooks (SPEC §6.1, Phase 2 acceptance: "duplicate webhook deliveries create no duplicate
  * records"; calls/SMS land on the right contact's timeline).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import * as s from "@/db/schema";

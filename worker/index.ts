@@ -1,6 +1,9 @@
 /**
- * Long-running worker (Railway / Fly.io). Phase 1: nightly NYC Open Data refresh for active
- * properties (SPEC §6.5). Phase 2 adds the Titan IMAP listener and integration queues here.
+ * Long-running worker (Railway / Fly.io):
+ *  - nightly NYC Open Data refresh for active properties (SPEC §6.5, pg-boss schedule)
+ *  - Titan IMAP listener → email ingest, EMSL parser (SPEC §6.3)
+ *  - AI triage of inbound email/SMS (SPEC §9.1), every 30s
+ *  - mail health check → SMS alert to Jordan (every 5 min)
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -9,6 +12,31 @@ import { and, isNull, or, sql } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
 import { adminDb, schema as s } from "@/lib/db";
 import { enrichProperty } from "@/lib/properties/enrich";
+import { triagePending } from "@/lib/ai/classify";
+import { driveFromEnv } from "@/lib/integrations/google-drive";
+import { quoFromEnv } from "@/lib/integrations/quo";
+import { titanConfigFromEnv } from "@/lib/integrations/titan-mail";
+import { storageUploader } from "@/lib/supabase/service";
+import { mailHealthCheck } from "./health";
+import { runMailListener } from "./mail";
+
+/** Runs fn every `ms`, never overlapping itself. */
+function every(ms: number, name: string, fn: () => Promise<unknown>) {
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await fn();
+    } catch (e) {
+      console.error(`[${name}]`, (e as Error).message);
+    } finally {
+      running = false;
+    }
+  };
+  void tick();
+  return setInterval(tick, ms);
+}
 
 const Q = {
   nightly: "enrich-active-properties",
@@ -66,8 +94,28 @@ async function main() {
     console.log(`[enrich] ${job.data.propertyId}: ${out.status}, ${out.openCount} open, ${out.newOpenViolations} new`);
   });
 
+  const timers: NodeJS.Timeout[] = [];
+  const abort = new AbortController();
+
+  const titan = titanConfigFromEnv();
+  if (titan) {
+    void runMailListener({ db: adminDb(), cfg: titan, storage: storageUploader(), drive: driveFromEnv() }, abort.signal);
+    const quo = quoFromEnv();
+    timers.push(every(5 * 60_000, "mail-health", () => mailHealthCheck(adminDb(), titan.user, quo)));
+  } else {
+    console.log("[mail] TITAN_USER/TITAN_PASSWORD not set — email listener disabled");
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    timers.push(every(30_000, "triage", () => triagePending(adminDb())));
+  } else {
+    console.log("[triage] ANTHROPIC_API_KEY not set — inbound messages stay PENDING for manual review");
+  }
+
   console.log("Worker started.");
   const stop = async () => {
+    abort.abort();
+    timers.forEach(clearInterval);
     await boss.stop({ graceful: true });
     process.exit(0);
   };

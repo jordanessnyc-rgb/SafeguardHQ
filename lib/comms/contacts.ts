@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, isNull, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import { toE164 } from "@/lib/phone";
 
