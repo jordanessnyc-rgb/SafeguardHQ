@@ -112,3 +112,39 @@ describe("New York time inputs", () => {
     expect(toNyInput(null)).toBe("");
   });
 });
+
+import { hasUnfilledPlaceholder, renderTemplate } from "@/lib/comms/templates";
+
+describe("message templates", () => {
+  const tpl = "Hi {{first_name}}, {{brand_name}} is confirmed for {{scheduled_date}} at {{scheduled_time}} at {{address}}.";
+  it("fills known tokens and reports missing ones", () => {
+    const r = renderTemplate(tpl, { first_name: "Pat", brand_name: "ESS", address: "1 Main St" });
+    expect(r.missing).toEqual(["scheduled_date", "scheduled_time"]);
+  });
+  it("manual compose shows visible placeholders that block sending", () => {
+    const r = renderTemplate(tpl, { first_name: "Pat", brand_name: "ESS", address: "1 Main St" }, { missing: "placeholder" });
+    expect(r.text).toBe("Hi Pat, ESS is confirmed for [scheduled date] at [scheduled time] at 1 Main St.");
+    expect(hasUnfilledPlaceholder(r.text)).toBe("[scheduled date]");
+    expect(hasUnfilledPlaceholder("Hi Pat, see you [Tuesday]")).toBeNull();
+  });
+});
+
+import { titanConfigFromEnv } from "@/lib/integrations/titan-mail";
+
+describe("Titan config", () => {
+  const base = { TITAN_USER: "crm@ess-nyc.com", TITAN_PASSWORD: "x" };
+  it("defaults to Titan's hosts, implicit TLS on 465, Sent append on", () => {
+    expect(titanConfigFromEnv(base as unknown as NodeJS.ProcessEnv)).toMatchObject({ imapHost: "imap.titan.email", smtpHost: "smtp.titan.email", smtpPort: 465, smtpSecure: true, appendToSent: true, allowSelfSigned: false });
+  });
+  it("587 means STARTTLS; any other port implicit TLS unless overridden", () => {
+    expect(titanConfigFromEnv({ ...base, TITAN_SMTP_PORT: "587" } as unknown as NodeJS.ProcessEnv)?.smtpSecure).toBe(false);
+    expect(titanConfigFromEnv({ ...base, TITAN_SMTP_PORT: "3465" } as unknown as NodeJS.ProcessEnv)?.smtpSecure).toBe(true);
+    expect(titanConfigFromEnv({ ...base, TITAN_SMTP_PORT: "2525", TITAN_SMTP_SECURE: "false" } as unknown as NodeJS.ProcessEnv)?.smtpSecure).toBe(false);
+  });
+  it("never allows self-signed certificates in production", () => {
+    expect(titanConfigFromEnv({ ...base, MAIL_ALLOW_SELF_SIGNED_FOR_LOCAL_TESTING: "true", NODE_ENV: "production" } as unknown as NodeJS.ProcessEnv)?.allowSelfSigned).toBe(false);
+  });
+  it("is disabled without credentials", () => {
+    expect(titanConfigFromEnv({} as unknown as NodeJS.ProcessEnv)).toBeNull();
+  });
+});

@@ -9,13 +9,14 @@ import { loadState, processNew } from "@/worker/mail";
 import { mailHealthCheck } from "@/worker/health";
 import { hasTestDb, setupTestDb, type TestDb } from "../helpers/db";
 
-const cfg = { user: "crm@ess-nyc.com", password: "x", imapHost: "h", imapPort: 993, smtpHost: "h", smtpPort: 465, sentFolder: "Sent", appendToSent: false };
+const cfg = { user: "crm@ess-nyc.com", password: "x", imapHost: "h", imapPort: 993, smtpHost: "h", smtpPort: 465, smtpSecure: true, sentFolder: "Sent", appendToSent: false, allowSelfSigned: false };
 const mail = (n: number) =>
   new MailComposer({ from: `p${n}@example.com`, to: cfg.user, subject: `hello ${n}`, text: "hi", messageId: `<w${n}@test>` }).compile().build();
 
 function fakeImap(uidValidity: bigint, uidNext: number, messages: { uid: number; source: Buffer }[]) {
   return {
     mailbox: { uidValidity, uidNext },
+    getMailboxLock: vi.fn(async () => ({ release: () => undefined })),
     fetchAll: vi.fn(async (range: string) => {
       const from = Number(range.split(":")[0]);
       const hits = messages.filter((m) => m.uid >= from);
@@ -71,6 +72,21 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
     expect(sendSms).toHaveBeenCalledWith(expect.objectContaining({ from: "PN1", to: "+19175550000" }));
     expect(await mailHealthCheck(t.db, cfg.user, quo, new Date(now.getTime() + 10 * 60_000))).toBe("suppressed");
     expect(await mailHealthCheck(t.db, cfg.user, quo, new Date(now.getTime() + 61 * 60_000))).toBe("alerted");
+  });
+
+  it("health: no false alarm right after the worker starts (15-minute grace)", async () => {
+    await t.db.update(s.mailSyncState).set({ lastOkAt: null, lastAlertAt: null, lastError: null });
+    const sendSms = vi.fn(async () => ({ id: "AC0" }));
+    const start = new Date();
+    expect(await mailHealthCheck(t.db, cfg.user, { sendSms } as never, new Date(start.getTime() + 60_000), start)).toBe("ok");
+    expect(await mailHealthCheck(t.db, cfg.user, { sendSms } as never, new Date(start.getTime() + 16 * 60_000), start)).toBe("alerted");
+  });
+
+  it("an empty poll still refreshes lastOkAt (keeps the health check quiet on slow days)", async () => {
+    await t.db.update(s.mailSyncState).set({ lastOkAt: new Date(Date.now() - 3600_000) });
+    const st = await loadState(t.db, cfg.user);
+    await processNew(fakeImap(BigInt(Number(st!.uidValidity)), st!.lastUid + 1, []), deps());
+    expect((await loadState(t.db, cfg.user))!.lastOkAt!.getTime()).toBeGreaterThan(Date.now() - 10_000);
   });
 
   it("health: an IMAP auth failure alerts even if the last sync was recent", async () => {

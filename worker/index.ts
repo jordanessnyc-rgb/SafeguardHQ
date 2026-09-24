@@ -101,7 +101,8 @@ async function main() {
   if (titan) {
     void runMailListener({ db: adminDb(), cfg: titan, storage: storageUploader(), drive: driveFromEnv() }, abort.signal);
     const quo = quoFromEnv();
-    timers.push(every(5 * 60_000, "mail-health", () => mailHealthCheck(adminDb(), titan.user, quo)));
+    const startedAt = new Date();
+    timers.push(every(5 * 60_000, "mail-health", () => mailHealthCheck(adminDb(), titan.user, quo, new Date(), startedAt)));
   } else {
     console.log("[mail] TITAN_USER/TITAN_PASSWORD not set — email listener disabled");
   }

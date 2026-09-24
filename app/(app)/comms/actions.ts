@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { schema as s } from "@/lib/db";
+import { adminDb, schema as s } from "@/lib/db";
 import { requireStaff } from "@/lib/auth/session";
 import { formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { approve, createDraft, sendApproved } from "@/lib/comms/outbound";
 import { revealActivity, type SensitiveContent } from "@/lib/comms/sensitive";
-import { renderTemplate } from "@/lib/comms/templates";
+import { hasUnfilledPlaceholder, renderTemplate } from "@/lib/comms/templates";
 import { templateVars } from "@/lib/comms/template-vars";
 import { quoFromEnv } from "@/lib/integrations/quo";
 import { mailSenderFromEnv } from "@/lib/integrations/titan-mail";
@@ -22,7 +22,10 @@ export async function renderTemplateFor(key: string, ids: { contactId?: string; 
     const [tpl] = await tx.select().from(s.messageTemplates).where(eq(s.messageTemplates.key, key));
     if (!tpl) return { text: "", subject: null, missing: [] as string[] };
     const vars = await templateVars(tx, ids);
-    return { ...renderTemplate(tpl.body, vars), subject: tpl.subject ? renderTemplate(tpl.subject, vars).text : null };
+    return {
+      ...renderTemplate(tpl.body, vars, { missing: "placeholder" }),
+      subject: tpl.subject ? renderTemplate(tpl.subject, vars, { missing: "placeholder" }).text : null,
+    };
   });
 }
 
@@ -52,6 +55,8 @@ export async function composeMessage(_prev: ActionState, form: FormData): Promis
   const user = await requireStaff();
   const res = await safeAction(async () => {
     const v = composeSchema.parse(formObject(form));
+    const unfilled = v.intent === "send" && hasUnfilledPlaceholder(`${v.subject ?? ""} ${v.body}`);
+    if (unfilled) throw new Error(`Fill in ${unfilled} before sending (or save as a draft).`);
     const containsPricing = form.get("containsPricing") === "on";
     if (containsPricing && user.role !== "OWNER") throw new Error("Only the owner can send messages that include pricing.");
     const draft = await user.db(async (tx) => {
@@ -74,10 +79,10 @@ export async function composeMessage(_prev: ActionState, form: FormData): Promis
       });
     });
     if (v.intent === "draft") return { ok: true, message: "Saved to the Outbox for approval." };
-    const sent = await user.db(async (tx) => {
-      await approve(tx, draft.id, user.id);
-      return sendApproved(tx, draft.id, deps());
-    });
+    // Approve under the user's RLS (proves they may send it), then send OUTSIDE any transaction —
+    // SMTP/Quo can take seconds and must not hold a database transaction open.
+    await user.db((tx) => approve(tx, draft.id, user.id));
+    const sent = await sendApproved(adminDb(), draft.id, deps());
     return sent.status === "SENT" ? { ok: true, message: "Sent." } : { error: `Not sent: ${sent.error}. It's in the Outbox to retry.` };
   });
   revalidatePath("/outbox");
@@ -90,10 +95,10 @@ export async function approveAndSend(id: string, _prev: ActionState, form: FormD
   const user = await requireStaff();
   const res = await safeAction(async () => {
     const { body, subject } = formObject(form);
-    const sent = await user.db(async (tx) => {
-      await approve(tx, id, user.id, { ...(body ? { body } : {}), ...(subject !== undefined ? { subject } : {}) });
-      return sendApproved(tx, id, deps());
-    });
+    const unfilled = hasUnfilledPlaceholder(`${subject ?? ""} ${body ?? ""}`);
+    if (unfilled) throw new Error(`Fill in ${unfilled} before sending.`);
+    await user.db((tx) => approve(tx, id, user.id, { ...(body ? { body } : {}), ...(subject !== undefined ? { subject } : {}) }));
+    const sent = await sendApproved(adminDb(), id, deps());
     return sent.status === "SENT" ? { ok: true, message: "Sent." } : { error: `Failed: ${sent.error}` };
   });
   revalidatePath("/outbox");

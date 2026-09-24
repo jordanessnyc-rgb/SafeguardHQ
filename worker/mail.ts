@@ -42,8 +42,19 @@ export async function processNew(client: ImapFlow, deps: Deps): Promise<number> 
     return 0;
   }
   // Collect first: running IMAP commands inside a fetch loop deadlocks (imapflow docs).
-  const messages = (await client.fetchAll(`${lastUid + 1}:*`, { uid: true, source: true }, { uid: true })).filter((m) => m.uid > lastUid);
+  const lock = await client.getMailboxLock(FOLDER);
+  let messages: Awaited<ReturnType<ImapFlow["fetchAll"]>>;
+  try {
+    messages = (await client.fetchAll(`${lastUid + 1}:*`, { uid: true, source: true }, { uid: true })).filter((m) => m.uid > lastUid);
+  } finally {
+    lock.release();
+  }
   let n = 0;
+  if (messages.length === 0) {
+    // A successful empty poll still proves the mailbox is reachable (health check reads lastOkAt).
+    await saveState(db, cfg.user, { lastOkAt: new Date(), lastError: null });
+    return 0;
+  }
   for (const msg of messages.sort((a, b) => a.uid - b.uid)) {
     try {
       await db.transaction((tx) => ingestEmail(tx, msg.source as Buffer, { mailbox: cfg.user, storage: deps.storage, drive: deps.drive }));
@@ -80,20 +91,20 @@ export async function runMailListener(deps: Deps, signal?: AbortSignal): Promise
       failures = 0;
       log("[mail] connected to", deps.cfg.imapHost, "as", deps.cfg.user);
 
-      const lock = await client.getMailboxLock(FOLDER);
-      try {
-        let chain: Promise<unknown> = processNew(client, deps);
-        const kick = () => {
-          chain = chain.then(() => processNew(client, deps)).catch((e) => log("[mail] process error", (e as Error).message));
-        };
-        client.on("exists", kick);
-        // Heartbeat: proves the connection is alive for the health check; also catches anything IDLE missed.
-        heartbeat = setInterval(kick, 5 * 60_000);
-        await chain;
-        await Promise.race([closed, new Promise((r) => signal?.addEventListener("abort", r))]);
-      } finally {
-        lock.release();
-      }
+      // Keep INBOX selected but don't hold a lock while waiting: imapflow only auto-IDLEs when the
+      // connection is free, and a long-held lock kept it from ever idling (new mail then waited for
+      // the next poll). Each fetch takes the lock briefly instead (see processNew).
+      await client.mailboxOpen(FOLDER);
+      let chain: Promise<unknown> = processNew(client, deps);
+      const kick = () => {
+        chain = chain.then(() => processNew(client, deps)).catch((e) => log("[mail] process error", (e as Error).message));
+      };
+      client.on("exists", kick);
+      // Safety net every 60s (SPEC: "fall back to polling every 60s"): catches anything IDLE
+      // didn't announce and keeps lastOkAt fresh for the 15-minute health check.
+      heartbeat = setInterval(kick, 60_000);
+      await chain;
+      await Promise.race([closed, new Promise((r) => signal?.addEventListener("abort", r))]);
     } catch (e) {
       failures++;
       const msg = (e as Error & { authenticationFailed?: boolean }).authenticationFailed ? "IMAP authentication failed" : (e as Error).message;

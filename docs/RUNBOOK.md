@@ -36,6 +36,37 @@ The DB suites apply `db/test/supabase-stub.sql` (a minimal `auth.users` + `auth.
    Then paste the folder URLs into Settings.
 7. **Socrata app token:** register at data.cityofnewyork.us → Developer Settings.
 
+## Phase 2 setup (communications)
+1. **Quo**
+   - Workspace Settings → API: create a key and set `QUO_API_KEY`.
+   - Create the webhook with the **2026-03-30** API. Save the returned `key` (whsec_…) as `QUO_WEBHOOK_SECRET`:
+     ```bash
+     curl -X POST https://api.quo.com/webhooks -H "Authorization: $QUO_API_KEY" -H "Quo-Api-Version: 2026-03-30" \
+       -H "Content-Type: application/json" -d '{"url":"https://<crm>/api/webhooks/quo","label":"ESS CRM","events":
+       ["message.received","message.delivered","message.failed","call.completed","call.missed",
+        "call.summary.completed","call.transcript.completed","contact.updated"]}'
+     ```
+   - Settings → Communications: **Import numbers from Quo**. Set each line's key (e.g. `ESS_MAIN`, `GAS_PRO`, `AIRNYC`) and brand, and choose which lines get missed-call text-back. **The key `AIRNYC` makes that line's texts and calls encrypted.**
+   - Turn on "Quo call summaries" only on a Business or Scale plan.
+2. **Titan**
+   - Create `crm@ess-nyc.com`. In Webmail → Settings, turn on **Enable Titan on Other Apps**, and create an app password if 2FA is on.
+   - Set up forwarding/copy from `sales@` (and any other mailboxes) to `crm@`.
+   - Set `TITAN_USER` / `TITAN_PASSWORD` on the **worker** (Railway/Fly) *and* on Vercel (for sending).
+   - EU-hosted Titan accounts and GoDaddy-managed domains use different hosts; set `TITAN_IMAP_HOST` / `TITAN_SMTP_HOST`.
+   - Test sending as `sales@`. If Titan rejects the alias as From, use `crm@` as the default From in Settings → Communications.
+   - After the first send, check Sent in Titan. If there are two copies, set `MAIL_APPEND_TO_SENT=false`.
+3. **Anthropic:** set `ANTHROPIC_API_KEY` on the worker, and set a monthly AI cost cap in Settings.
+4. **Alerts:** in Settings → Communications, set "Alert texts go to" (Jordan's cell) and the line they're sent from.
+
+### Local end-to-end (what Phase 2 was verified against)
+- **Services:** local Supabase (`npx supabase start …`), GreenMail as a stand-in for Titan (`docker run -p 3025:3025 -p 3993:3993 -p 3465:3465 greenmail/standalone`), and a tiny mock of Quo's `/v1/messages` (`QUO_API_BASE=http://127.0.0.1:4010`).
+- **Run with:** `MAIL_ALLOW_SELF_SIGNED_FOR_LOCAL_TESTING=true`, `NODE_TLS_REJECT_UNAUTHORIZED=0` for the worker, and `pnpm dev` (the flag is ignored in production builds).
+- **Measured:**
+  - Quo webhook → timeline: under 0.5s.
+  - Email via IMAP IDLE → timeline: 0.8–1.5s.
+  - EMSL email → sample RESULTS_IN and job moved to Drafting: working.
+  - Duplicate webhook deliveries: no duplicate rows.
+
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.
 - **Refreshing a property's NYC data:** use the property page → "Refresh NYC data". The worker also refreshes nightly.

@@ -11,9 +11,16 @@ import { loadState } from "./mail";
 export const STALE_MS = 15 * 60_000;
 const REALERT_MS = 60 * 60_000;
 
-export async function mailHealthCheck(db: Db, mailbox: string, quo: QuoClient | null, now = new Date()): Promise<"ok" | "alerted" | "suppressed" | "no-channel"> {
+export async function mailHealthCheck(
+  db: Db,
+  mailbox: string,
+  quo: QuoClient | null,
+  now = new Date(),
+  startedAt = new Date(0),
+): Promise<"ok" | "alerted" | "suppressed" | "no-channel"> {
   const state = await loadState(db, mailbox);
-  const lastOk = state?.lastOkAt?.getTime() ?? 0;
+  // Grace period: a worker that just started (fresh deploy, first run) gets 15 minutes to connect.
+  const lastOk = Math.max(state?.lastOkAt?.getTime() ?? 0, startedAt.getTime());
   const authFailed = /authentication/i.test(state?.lastError ?? "");
   if (!authFailed && now.getTime() - lastOk < STALE_MS) return "ok";
   if (state?.lastAlertAt && now.getTime() - state.lastAlertAt.getTime() < REALERT_MS) return "suppressed";

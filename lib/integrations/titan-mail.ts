@@ -20,8 +20,12 @@ export type TitanConfig = {
   imapPort: number;
   smtpHost: string;
   smtpPort: number;
+  /** true = implicit TLS (Titan 465); false = STARTTLS (Titan 587). */
+  smtpSecure: boolean;
   sentFolder: string;
   appendToSent: boolean;
+  /** Local testing against a self-signed mail server (e.g. GreenMail). Never honoured in production. */
+  allowSelfSigned: boolean;
 };
 
 export function titanConfigFromEnv(env = process.env): TitanConfig | null {
@@ -33,8 +37,10 @@ export function titanConfigFromEnv(env = process.env): TitanConfig | null {
     imapPort: Number(env.TITAN_IMAP_PORT ?? 993),
     smtpHost: env.TITAN_SMTP_HOST ?? "smtp.titan.email",
     smtpPort: Number(env.TITAN_SMTP_PORT ?? 465),
+    smtpSecure: env.TITAN_SMTP_SECURE ? env.TITAN_SMTP_SECURE === "true" : Number(env.TITAN_SMTP_PORT ?? 465) !== 587,
     sentFolder: env.TITAN_SENT_FOLDER ?? "Sent",
     appendToSent: (env.MAIL_APPEND_TO_SENT ?? "true") !== "false",
+    allowSelfSigned: env.MAIL_ALLOW_SELF_SIGNED_FOR_LOCAL_TESTING === "true" && env.NODE_ENV !== "production",
   };
 }
 
@@ -44,10 +50,14 @@ export function imapClient(cfg: TitanConfig): ImapFlow {
     port: cfg.imapPort,
     secure: true,
     auth: { user: cfg.user, pass: cfg.password },
+    ...(cfg.allowSelfSigned ? { tls: { rejectUnauthorized: false } } : {}),
     logger: false,
     // IDLE is used automatically when a mailbox is open; if Titan lacks IDLE, imapflow polls
     // with NOOP at this interval (SPEC: "fall back to polling every 60s").
     maxIdleTime: 60_000,
+    // Re-enter IDLE 1s after each command (default 15s) so a message arriving right after a fetch
+    // is announced promptly instead of waiting for the next IDLE cycle.
+    autoIdleDelay: 1_000,
   });
 }
 
@@ -72,9 +82,10 @@ export function titanSender(cfg: TitanConfig): MailSender {
   const transport = nodemailer.createTransport({
     host: cfg.smtpHost,
     port: cfg.smtpPort,
-    secure: cfg.smtpPort === 465,
-    requireTLS: cfg.smtpPort !== 465,
+    secure: cfg.smtpSecure,
+    requireTLS: !cfg.smtpSecure, // STARTTLS is mandatory when not implicit TLS — never send in clear
     auth: { user: cfg.user, pass: cfg.password },
+    ...(cfg.allowSelfSigned ? { tls: { rejectUnauthorized: false } } : {}),
   });
   return {
     async send(msg) {
