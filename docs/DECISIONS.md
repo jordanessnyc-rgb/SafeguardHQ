@@ -243,3 +243,18 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - So pricing, client billing, contacts, consent forms, notes and other subs' jobs can't be reached even with a hand-made query. Tests check every table.
 - **Downloads:** `/portal/documents/[id]` checks the view under the sub's own identity, then mints a 60-second signed link. Storage itself grants SUB nothing.
 - **Routing:** SUB users who reach staff pages are sent to `/portal`.
+
+### Campaign attribution and the web lead form (5d)
+- **Attribution is first-touch.** A contact's `campaign_id` is set only when the contact is created. Leads and jobs made from that first touch carry `jobs.campaign_id`. There are three entry points:
+  1. **QR codes:** `/q/<slug>` counts an anonymous scan (`campaign_events`, with no IP or device data) and redirects to the campaign's landing page with `utm_campaign=<slug>&utm_medium=qr`.
+  2. **Dedicated Quo number:** a brand-new caller or texter on a line that a campaign lists as its `quoNumber` is credited to that campaign.
+  3. **Landing page / web form:** the form's `campaign` field (utm_campaign or QR name) is matched case-insensitively to a campaign.
+- **`/api/leads` (public)** creates or reuses the contact (by email, then phone), resolves the property with GeoSearch when possible (else keeps the typed address), and creates a Lead job, a task, and a **draft** NEW_LEAD_ACK text. Nothing goes out unless `auto_send_sms` is on (rule 6).
+  - **Abuse controls:**
+    - Browsers must come from `LEADS_ALLOWED_ORIGINS`; server-to-server posts need `LEADS_API_KEY`.
+    - A honeypot `website` field.
+    - A 20 KB body limit.
+    - A global cap of 30 submissions per 10 minutes.
+    - The same person resubmitting within 10 minutes is ignored.
+  - **Plain HTML forms** can redirect back to a thank-you page, but only on an allowed origin.
+- **Results:** scans, leads, jobs and won jobs are visible to staff. Revenue (invoice amount, else quote) and cost come from owner-only tables, so under a VA's RLS they are `null`. They're never derived from anything a VA can read.
