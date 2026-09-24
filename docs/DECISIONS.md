@@ -233,3 +233,13 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **Dedupe:** on (source, solicitation number), or on a hash of agency and title when there's no number.
   - **Once per email:** `activities.ai_extracted_at`, limited to the last 3 days.
 - **Keywords** are editable on the Bids page (owner). The defaults cover ESS's services.
+
+### Subcontractor portal (5c)
+- **Enforced in Postgres, not the UI (CLAUDE.md rule 4):**
+  - A SUB user is linked to one subcontractor organization (`profiles.org_id`). The owner sets this in Settings → Team, and a Sub role without an organization is refused.
+  - SUB has **no policy on any table**. Everything it sees comes through two views, filtered by `current_sub_org()`:
+    - **`sub_portal_jobs`:** job number, service, stage, schedule, and the property address — only for jobs whose `sub_org_id` is theirs and that aren't Lost or archived.
+    - **`sub_portal_documents`:** `SUB_COPY` documents that are **not** `contains_pricing`, stored in `job-files`, and **released** (status FINAL or SENT — the owner sets that on the job's document list).
+  - So pricing, client billing, contacts, consent forms, notes and other subs' jobs can't be reached even with a hand-made query. Tests check every table.
+- **Downloads:** `/portal/documents/[id]` checks the view under the sub's own identity, then mints a 60-second signed link. Storage itself grants SUB nothing.
+- **Routing:** SUB users who reach staff pages are sent to `/portal`.

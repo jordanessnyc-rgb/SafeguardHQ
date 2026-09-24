@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,11 +29,12 @@ const DAYS = [
 export default async function SettingsPage() {
   const user = await requireStaff();
   const isOwner = user.role === "OWNER";
-  const { cfg, pipelines, team, checklist } = await user.db(async (tx) => ({
+  const { cfg, pipelines, team, checklist, subOrgs } = await user.db(async (tx) => ({
     cfg: (await tx.select().from(s.settings))[0],
     pipelines: await loadPipelines(tx),
     team: await tx.select().from(s.profiles).orderBy(asc(s.profiles.email)),
     checklist: await tx.select().from(s.airnycChecklistItems).orderBy(asc(s.airnycChecklistItems.stage), asc(s.airnycChecklistItems.position)),
+    subOrgs: await tx.select({ id: s.organizations.id, name: s.organizations.name }).from(s.organizations).where(eq(s.organizations.type, "SUBCONTRACTOR")).orderBy(asc(s.organizations.name)),
   }));
   const airnycStages = pipelines.find((p) => p.key === "AIRNYC")?.stages ?? [];
   const toggle = (name: keyof typeof cfg, text: string, hint?: string) => (
@@ -172,7 +173,11 @@ export default async function SettingsPage() {
                               <option value="OWNER">Owner</option>
                               <option value="VA">VA</option>
                               <option value="FIELD">Field (later)</option>
-                              <option value="SUB">Sub (Phase 5)</option>
+                              <option value="SUB">Sub (portal)</option>
+                            </NativeSelect>
+                            <NativeSelect name="orgId" defaultValue={p.orgId ?? ""} className="h-7 w-36 text-xs" aria-label="Subcontractor organization (Sub only)">
+                              <option value="">— sub org —</option>
+                              {subOrgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                             </NativeSelect>
                             <Button size="xs" variant="ghost" type="submit">Set</Button>
                           </ActionForm>
@@ -191,6 +196,11 @@ export default async function SettingsPage() {
                   <NativeSelect name="role" defaultValue="VA" aria-label="Role">
                     <option value="VA">VA</option>
                     <option value="OWNER">Owner</option>
+                    <option value="SUB">Sub (portal)</option>
+                  </NativeSelect>
+                  <NativeSelect name="orgId" defaultValue="" aria-label="Subcontractor organization" className="sm:col-span-2">
+                    <option value="">— subcontractor org (Sub only) —</option>
+                    {subOrgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                   </NativeSelect>
                   <SubmitButton size="sm" variant="secondary">Send invite</SubmitButton>
                 </ActionForm>

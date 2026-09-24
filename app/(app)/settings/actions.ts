@@ -93,7 +93,8 @@ const role = z.enum(["OWNER", "VA", "FIELD", "SUB"]);
 export async function inviteUser(_prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireOwner();
   return safeAction(async () => {
-    const input = z.object({ email: z.email(), fullName: z.string().max(200).optional(), role }).parse(formObject(form));
+    const input = z.object({ email: z.email(), fullName: z.string().max(200).optional(), role, orgId: z.uuid().optional() }).parse(formObject(form));
+    if (input.role === "SUB" && !input.orgId) throw new Error("Pick the subcontractor's organization.");
     const h = await headers();
     const origin = siteOrigin(h);
     const { data, error } = await supabaseAdmin().auth.admin.inviteUserByEmail(input.email, {
@@ -103,7 +104,7 @@ export async function inviteUser(_prev: ActionState, form: FormData): Promise<Ac
     if (error || !data.user) throw new Error(error?.message ?? "Invite failed");
     // The auth.users trigger created the profile with no role; assign it now (OWNER-only via RLS).
     await user.db((tx) =>
-      tx.update(s.profiles).set({ role: input.role, fullName: input.fullName ?? null }).where(eq(s.profiles.userId, data.user.id)),
+      tx.update(s.profiles).set({ role: input.role, fullName: input.fullName ?? null, orgId: input.role === "SUB" ? input.orgId! : null }).where(eq(s.profiles.userId, data.user.id)),
     );
     revalidatePath("/settings");
     return { ok: true, message: `Invite sent to ${input.email}.` };
@@ -114,6 +115,8 @@ export async function setUserRole(userId: string, _prev: ActionState, form: Form
   const user = await requireOwner();
   return safeAction(async () => {
     const value = form.get("role") ? role.parse(form.get("role")) : null;
+    const orgId = form.get("orgId") ? z.uuid().parse(form.get("orgId")) : null;
+    if (value === "SUB" && !orgId) throw new Error("Pick the subcontractor's organization for a Sub.");
     await user.db(async (tx) => {
       if (value !== "OWNER") {
         const [{ owners }] = await tx
@@ -122,7 +125,7 @@ export async function setUserRole(userId: string, _prev: ActionState, form: Form
           .where(and(eq(s.profiles.role, "OWNER"), ne(s.profiles.userId, userId)));
         if (owners === 0) throw new Error("There must be at least one owner.");
       }
-      await tx.update(s.profiles).set({ role: value }).where(eq(s.profiles.userId, userId));
+      await tx.update(s.profiles).set({ role: value, orgId: value === "SUB" ? orgId : null }).where(eq(s.profiles.userId, userId));
     });
     revalidatePath("/settings");
     return { ok: true, message: "Role updated." };
