@@ -1,6 +1,8 @@
 import { ArrowDownLeft, ArrowUpRight, Mail, MessageSquare, Paperclip, Phone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RevealSensitive } from "@/components/reveal-sensitive";
+import { ActionForm, SubmitButton } from "@/components/forms";
+import { draftAiReply } from "@/app/(app)/comms/actions";
 import { fmtDate, titleCase } from "@/lib/labels";
 import { formatPhone } from "@/lib/phone";
 
@@ -24,7 +26,10 @@ export type TimelineItem = {
   triageCategory?: string | null;
   triageStatus?: string | null;
   sensitive?: boolean;
+  aiClassification?: unknown;
 };
+
+type Extraction = { address: string | null; service_code: string | null; urgency: string; summary: string; follow_ups: { title: string }[] };
 
 const ICON: Record<string, typeof Phone> = { CALL: Phone, SMS: MessageSquare, EMAIL_IN: Mail, EMAIL_OUT: Mail };
 const who = (v?: string | null) => (v ? (v.startsWith("+") ? formatPhone(v) : v) : "");
@@ -32,6 +37,7 @@ const mins = (sec?: number | null) => (sec ? `${Math.floor(sec / 60)}:${String(s
 
 /** Unified activity timeline (SPEC §4.6): calls, texts, emails, notes, stage changes. */
 export function Timeline({ items, viewerIsOwner = false }: { items: TimelineItem[]; viewerIsOwner?: boolean }) {
+  const aiReplies = Boolean(process.env.ANTHROPIC_API_KEY);
   if (items.length === 0) return <p className="text-sm text-muted-foreground">No activity yet.</p>;
   return (
     <ol className="space-y-4 border-l pl-4">
@@ -93,6 +99,26 @@ export function Timeline({ items, viewerIsOwner = false }: { items: TimelineItem
                   ),
                 )}
               </div>
+            )}
+            {(() => {
+              const x = (a.aiClassification as { extraction?: Extraction } | null)?.extraction;
+              if (a.type !== "CALL" || !x || a.sensitive) return null;
+              return (
+                <div className="mt-1 rounded-md bg-muted/60 p-2 text-xs">
+                  <span className="font-medium">AI from the call:</span> {[x.service_code, x.address, x.urgency !== "NORMAL" && x.urgency.toLowerCase()].filter(Boolean).join(" · ") || "no service/address mentioned"}
+                  {x.follow_ups.length > 0 && <span className="text-muted-foreground"> · {x.follow_ups.length} follow-up task{x.follow_ups.length > 1 ? "s" : ""}</span>}
+                </div>
+              );
+            })()}
+            {aiReplies && inbound && (a.type === "SMS" || a.type === "EMAIL_IN") && (
+              <ActionForm action={draftAiReply.bind(null, a.id)} className="mt-1 flex flex-wrap items-center gap-2">
+                <SubmitButton size="xs" variant="outline">Draft reply with AI</SubmitButton>
+                {viewerIsOwner && (
+                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <input type="checkbox" name="includePricing" className="size-3.5 accent-primary" /> include the job&apos;s quote
+                  </label>
+                )}
+              </ActionForm>
             )}
             {a.externalUrl && (
               <a className="text-xs text-primary hover:underline" href={a.externalUrl} target="_blank" rel="noreferrer">

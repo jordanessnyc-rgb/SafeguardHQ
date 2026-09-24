@@ -137,3 +137,23 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **Renewal:** a new expiry date restarts the sequence.
 - **Digest:** now includes licenses and COIs expiring within 60 days, and compliance cycles due within 60 days.
 - **Deferred:** uploading the license or COI file itself. The `file_path` and `coi_path` columns exist, but the upload UI comes with the Phase 4c document work.
+
+## 2026-09-24 — Phase 4b (AI reply drafts & call extraction)
+
+- **API check:** `messages.parse` + `zodOutputFormat` (structured outputs) was re-checked against the current Anthropic TypeScript SDK docs.
+  - **Models:** they stay in config (SPEC §9). Replies use `claude-sonnet-5` (`AI_MODEL_DRAFT`); call extraction uses `claude-haiku-4-5` (`AI_MODEL_CLASSIFY`).
+  - **Thinking:** Sonnet 5 runs adaptive thinking by default, so reply drafts get `max_tokens` 4000.
+- **Reply drafts (§9.2)** are made only on request: the "Draft reply with AI" button on an inbound text or email in any timeline. They always land in the Outbox as `AI_DRAFT` drafts; nothing is sent automatically.
+  - **Context sent:** the contact's last 12 texts/emails/calls, the job (number, service, stage, address, schedule), and Jordan's style notes (Settings → Communications).
+  - **Pricing:** it's added only when the **owner** ticks "include the job's quote". If a VA asks for it, the request is ignored.
+  - **Owner-only drafts:** any draft that mentions money — the owner-approved quote, or a price the model wrote anyway (the detector is deliberately broad) — is saved `contains_pricing`, so RLS hides it from VAs. Pricing can therefore only go out with the owner as approver.
+  - **Placeholders:** the model writes facts it doesn't have as `[inspection date]`. "Approve & send" refuses an AI draft until those are filled in.
+- **Call extraction (§9.3):** the worker runs it on calls with a transcript from the last 3 days, so enabling it doesn't create tasks for stale calls. Each call is extracted once (`activities.ai_extracted_at` claim).
+  - **Follow-ups:** become `CALL_AI` tasks. Quo's own next steps are passed in, so they aren't duplicated.
+  - **Contact details:** the caller's name and email only **fill blanks** on the contact.
+  - **Address and service:** shown on the call. Staff create the property or job; the AI never creates jobs.
+- **AIRnyc (CLAUDE.md rule 5).** Both features use the guarded wrapper: blocked while `airnyc_ai_allowed=false`, and redacted when allowed.
+  - **New rule:** redaction can only remove names it knows (the linked case's member and guardian, and the contact's name). If an AIRnyc message or call has **no** known names, it is **not sent at all**, even when AIRnyc AI is allowed. This was found by a test where an unknown caller's name would otherwise have reached the model.
+  - **Sealed-call output:** extraction on sealed calls stores only urgency and a follow-up count on the row, and its tasks carry no call content.
+  - **Sealed transcripts:** these are flagged when they arrive (`ai_classification.sealedTranscript`), so the worker doesn't have to decrypt calls just to check whether a transcript exists.
+- **Report drafting (§9.5)** is part of 4c, because it writes into the DOCX templates.

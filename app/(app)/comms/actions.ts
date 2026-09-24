@@ -13,6 +13,7 @@ import { templateVars } from "@/lib/comms/template-vars";
 import { quoFromEnv } from "@/lib/integrations/quo";
 import { mailSenderFromEnv } from "@/lib/integrations/titan-mail";
 import { toE164 } from "@/lib/phone";
+import { AI_PLACEHOLDER_RE, draftReply } from "@/lib/ai/draft";
 
 const deps = () => ({ quo: quoFromEnv(), mail: mailSenderFromEnv() });
 
@@ -97,6 +98,9 @@ export async function approveAndSend(id: string, _prev: ActionState, form: FormD
     const { body, subject } = formObject(form);
     const unfilled = hasUnfilledPlaceholder(`${subject ?? ""} ${body ?? ""}`);
     if (unfilled) throw new Error(`Fill in ${unfilled} before sending.`);
+    const [msg] = await user.db((tx) => tx.select({ source: s.outboundMessages.source, body: s.outboundMessages.body, subject: s.outboundMessages.subject }).from(s.outboundMessages).where(eq(s.outboundMessages.id, id)));
+    const aiGap = msg?.source === "AI_DRAFT" ? `${subject ?? msg.subject ?? ""} ${body ?? msg.body}`.match(AI_PLACEHOLDER_RE)?.[0] : null;
+    if (aiGap) return { error: `The AI draft still has ${aiGap} — fill it in before sending.` };
     await user.db((tx) => approve(tx, id, user.id, { ...(body ? { body } : {}), ...(subject !== undefined ? { subject } : {}) }));
     const sent = await sendApproved(adminDb(), id, deps());
     return sent.status === "SENT" ? { ok: true, message: "Sent." } : { error: `Failed: ${sent.error}` };
@@ -148,5 +152,23 @@ export async function reviewActivity(id: string, _prev: ActionState, form: FormD
     return { ok: true, message: "Filed." };
   });
   revalidatePath("/inbox");
+  return res;
+}
+
+/** SPEC §9.2: AI drafts a reply into the Outbox. Prices only when the owner ticks "include quote". */
+export async function draftAiReply(activityId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
+    // Visibility check under the user's RLS first, then the privileged connection for logging/audit.
+    const [a] = await user.db((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(eq(s.activities.id, activityId)));
+    if (!a) throw new Error("Message not found.");
+    const role = user.role === "OWNER" ? "OWNER" : "VA";
+    const r = await draftReply(adminDb(), activityId, { includePricing: form.get("includePricing") === "on", requesterRole: role, actorId: user.id });
+    if (r.status !== "drafted") return { error: r.reason };
+    const gaps = r.missingInfo.length ? ` Fill in: ${r.missingInfo.join(", ")}.` : "";
+    return { ok: true, message: `Draft saved to the Outbox${r.containsPricing ? " (mentions pricing — owner approval only)" : ""}.${gaps}` };
+  });
+  revalidatePath("/outbox");
   return res;
 }

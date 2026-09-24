@@ -168,6 +168,9 @@ export default async function CommsSettingsPage() {
                     <Input name="triageConfidenceThreshold" inputMode="decimal" defaultValue={d.cfg.triageConfidenceThreshold} />
                   </Field>
                 </div>
+                <Field label="How Jordan writes (for AI reply drafts)" hint="Tone, greeting and sign-off, phrases you use or avoid. AI drafts always wait in the Outbox for approval.">
+                  <Textarea name="aiVoiceNotes" rows={3} defaultValue={d.cfg.aiVoiceNotes ?? ""} placeholder="e.g. Friendly but brief. First names. Sign emails 'Best, Jordan'. Never promise same-day results." />
+                </Field>
                 <Field label="AIRnyc sender domains" hint="Email from these domains is stored encrypted even without a case ID. Comma-separated.">
                   <Input name="airnycSenderDomains" defaultValue={d.cfg.airnycSenderDomains.join(", ")} placeholder="airnyc.org" />
                 </Field>

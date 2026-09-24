@@ -89,13 +89,14 @@ const commsSchema = z.object({
     .optional()
     .transform((v) => (v ?? "").split(/[,\s]+/).map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean)),
   triageConfidenceThreshold: z.coerce.number().min(0.3).max(0.99).transform((n) => n.toFixed(2)),
+  aiVoiceNotes: z.string().max(4000).optional(),
 });
 
 export async function saveCommsSettings(_prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireOwner();
   const res = await safeAction(async () => {
     const v = commsSchema.parse({ ...formObject(form), quoSummariesEnabled: form.get("quoSummariesEnabled") });
-    await user.db((tx) => tx.update(s.settings).set({ ...v, healthAlertLineId: v.healthAlertLineId ?? null, updatedBy: user.id }).where(eq(s.settings.id, 1)));
+    await user.db((tx) => tx.update(s.settings).set({ ...v, healthAlertLineId: v.healthAlertLineId ?? null, aiVoiceNotes: v.aiVoiceNotes ?? null, updatedBy: user.id }).where(eq(s.settings.id, 1)));
     return { ok: true, message: "Saved." };
   });
   revalidatePath(PATH);
