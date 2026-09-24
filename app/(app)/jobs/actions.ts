@@ -11,6 +11,10 @@ import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { createDraftInvoiceForJob, invoiceDeliveredJobs, syncInvoice } from "@/lib/money/invoicing";
 import { computeQuote } from "@/lib/money/quote";
 import { draftReport } from "@/lib/ai/report";
+import { docusignConfigFromEnv, docusignFromEnv } from "@/lib/integrations/docusign";
+import { processEnvelope, sendProposalForSignature } from "@/lib/docs/esign";
+import { siteOrigin } from "@/lib/site";
+import { headers } from "next/headers";
 import { imageSize } from "@/lib/docs/image-size";
 import { generateProposal } from "@/lib/docs/proposal";
 import { createSubCopy } from "@/lib/docs/sub-copy-job";
@@ -481,6 +485,46 @@ export async function draftReportAction(jobId: string, _prev: ActionState): Prom
       ok: true,
       message: `Report draft added to Documents${r.placeholder ? " (placeholder template)" : ""}. ${r.openQuestions.length ? `${r.openQuestions.length} open question(s) for Jordan — see the review task.` : "No open questions flagged."}`,
     };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// DocuSign (SPEC §6.7) — OWNER only; sending is the explicit approval (CLAUDE.md rule 6)
+// ---------------------------------------------------------------------------------------------
+
+const signerSchema = z.object({ signerName: z.string().min(1).max(200), signerEmail: z.email() });
+
+export async function sendForSignature(jobId: string, docId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const ds = docusignFromEnv();
+    if (!ds) throw new Error("DocuSign isn't set up on the server (see RUNBOOK).");
+    const v = signerSchema.parse(formObject(form));
+    const cfg = docusignConfigFromEnv()!;
+    const webhookUrl = `${siteOrigin(await headers())}/api/webhooks/docusign`;
+    await sendProposalForSignature(adminDb(), docId, {
+      ds,
+      storage: { ...storageUploader(), ...storageDownloader() },
+      // DocuSign only calls HTTPS listeners; without HMAC keys we can't verify calls, so skip the webhook (use Refresh).
+      webhookUrl: webhookUrl.startsWith("https://") && cfg.hmacKeys.length ? webhookUrl : undefined,
+      signer: { name: v.signerName, email: v.signerEmail },
+    });
+    return { ok: true, message: `Sent to ${v.signerName} for signature.` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function refreshSignature(jobId: string, envelopeId: string, _prev: ActionState): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const ds = docusignFromEnv();
+    if (!ds) throw new Error("DocuSign isn't set up on the server.");
+    const out = await processEnvelope(adminDb(), ds, { ...storageUploader(), ...storageDownloader() }, envelopeId);
+    const msg: Record<string, string> = { signed: "Signed — the signed copy is attached and the job moved to Signed.", "already-signed": "Already signed.", declined: "The client declined.", voided: "The envelope was voided.", pending: "Not signed yet.", "unknown-envelope": "Envelope not found." };
+    return { ok: true, message: msg[out] };
   });
   revalidatePath(`/jobs/${jobId}`);
   return res;

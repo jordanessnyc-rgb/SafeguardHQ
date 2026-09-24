@@ -20,27 +20,30 @@ import { schema as s } from "@/lib/db";
 import { loadJobOptions } from "@/lib/jobs/options";
 import { BRAND_LABELS, fmtDate, label, personName, SERVICE_LABELS, titleCase, usd } from "@/lib/labels";
 import { reportHeld } from "@/lib/money/invoicing";
+import { docusignConfigFromEnv } from "@/lib/integrations/docusign";
 import { stagesFor } from "@/lib/pipeline/config";
 import { checkStageTransition, daysInStage, isStale } from "@/lib/pipeline/rules";
 import {
   addDocument,
+  addFieldPhoto,
   addJobNote,
   addSample,
-  archiveJob,
-  createJobDriveFolder,
   addSubQuote,
+  archiveJob,
   buildQuote,
-  addFieldPhoto,
+  createJobDriveFolder,
   createJobInvoice,
   draftReportAction,
   generateProposalDoc,
-  removeFieldPhoto,
-  saveFieldData,
   makeSubCopy,
   moveJobStage,
-  selectSubQuote,
   refreshJobInvoice,
+  refreshSignature,
+  removeFieldPhoto,
+  saveFieldData,
   saveFinancials,
+  selectSubQuote,
+  sendForSignature,
   setDocumentStatus,
   setSampleStatus,
   updateJob,
@@ -102,6 +105,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
   if (!data) notFound();
   const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, field, compose } = data;
   const aiEnabled = Boolean(process.env.ANTHROPIC_API_KEY);
+  const docusignReady = Boolean(docusignConfigFromEnv());
 
   const current = stages.find((st) => st.key === job.stage);
   const stale = !current?.isTerminal && isStale(job.stageEnteredAt, current?.staleAfterDays ?? null);
@@ -356,6 +360,19 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
                   )}{" "}
                   <span className="text-xs text-muted-foreground">v{d.version}</span>
                   {d.containsPricing && <Badge variant="outline" className="ml-1">$ owner only</Badge>}
+                  {isOwner && d.kind === "PROPOSAL" && d.docusignStatus && <Badge variant={d.docusignStatus === "completed" ? "default" : "secondary"} className="ml-1">e-sign: {d.docusignStatus}</Badge>}
+                  {isOwner && docusignReady && d.kind === "PROPOSAL" && d.docusignEnvelopeId && ["sent", "delivered"].includes(d.docusignStatus ?? "") && (
+                    <ActionForm action={refreshSignature.bind(null, id, d.docusignEnvelopeId)} className="mt-1 flex flex-col items-start gap-1">
+                      <SubmitButton size="xs" variant="ghost">Check signature status</SubmitButton>
+                    </ActionForm>
+                  )}
+                  {isOwner && docusignReady && d.kind === "PROPOSAL" && d.storagePath?.toLowerCase().endsWith(".docx") && (!d.docusignStatus || ["declined", "voided"].includes(d.docusignStatus)) && (
+                    <ActionForm action={sendForSignature.bind(null, id, d.id)} className="mt-1 flex flex-wrap items-center gap-1">
+                      <Input name="signerName" defaultValue={contact ? personName(contact) : ""} placeholder="Signer name" className="h-7 w-36 text-xs" aria-label="Signer name" />
+                      <Input name="signerEmail" type="email" defaultValue={contact?.emails[0] ?? org?.email ?? ""} placeholder="Signer email" className="h-7 w-48 text-xs" aria-label="Signer email" />
+                      <SubmitButton size="xs" variant="outline">Send for signature</SubmitButton>
+                    </ActionForm>
+                  )}
                   {isOwner && d.kind === "REPORT" && d.storagePath?.toLowerCase().endsWith(".docx") && (
                     <ActionForm action={makeSubCopy.bind(null, id, d.id)} className="mt-1 flex flex-col items-start gap-1">
                       <SubmitButton size="xs" variant="outline">Make sub copy</SubmitButton>

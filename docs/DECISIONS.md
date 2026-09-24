@@ -181,3 +181,26 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **The output:** a DRAFT report document carrying an "AI DRAFT — not for release" notice, a skipped section left visibly as `[Jordan: section not drafted]`, and an owner review task listing the open questions.
   - **AIRnyc:** jobs are gated like the other AI features, including the no-known-names block.
 - **Deferred:** uploading license and COI files; Drive copies of generated drafts (drafts stay in the CRM until Jordan finalizes them); FreshBooks estimates from signed proposals (optional in §6.2, and naturally follows DocuSign in 4d).
+
+## 2026-09-24 — Phase 4d (DocuSign, Titan calendar)
+
+### API verification
+| Item | Spec said | Docs said (checked 2026-09-24) | What we did |
+|---|---|---|---|
+| DocuSign auth | OAuth | For one system account, DocuSign recommends **JWT Grant**: no refresh tokens, 1-hour access tokens, one-time consent with scope `signature impersonation`. Authorization Code refresh tokens rotate and last about 30 days (with `extended`). | JWT Grant: an RSA key in env and the token cached in memory. Settings → "DocuSign consent" opens the one-time consent page. |
+| Hosts | — | `account-d.docusign.com` (demo) and `account.docusign.com` (production, only after the **Go-Live review**, which needs a paid account). The API host comes from `userinfo` `base_uri`. | `DOCUSIGN_ENV` selects the host. The base URI is cached per process. |
+| Envelope | "send proposals for signature" | `.docx` is accepted and converted to PDF. `status:"sent"` sends it. Tabs can be placed by anchor text. `emailSubject` is at most 100 characters. | The proposal DOCX is sent as-is. Signature and date tabs anchor on hidden `\ess_sign\` and `\ess_date\` markers in the template. |
+| Webhook | "envelope completed" | Envelope-level `eventNotification` (JSON SIM) needs `eventData.version:"restv2.1"`. **`eventData.format` is reserved** — not sent. HMAC works only after Connect keys are created in eSignature Admin (**not via API**). Listeners must be HTTPS, answer 200 within 5 s, and expect retries (5 min … then daily for 15 days). | The webhook is attached only when the site is HTTPS **and** HMAC keys are configured. Without them there is no unverifiable listener; use "Check signature status". The route acknowledges immediately and processes after the response (`after()`). The worker retries unprocessed deliveries for 3 days. |
+| Dedupe | "dedupe on delivery ID" (rule 7) | **Connect sends no delivery ID**, and there is no ordering guarantee. | Deviation from rule 7, as with FreshBooks: dedupe on SHA-256 of the raw body, and every delivery **re-reads the envelope** (`GET /envelopes/{id}`). The signed copy is attached exactly once, claimed on `documents.signed_document_id`. A late "completed" while DocuSign still says "delivered" changes nothing. |
+| Signed file | "attach signed PDF" | `GET …/documents/combined?certificate=true` returns one PDF including the certificate of completion. | Stored in the owner-only bucket as a new `PROPOSAL`/`SIGNED` document. The job moves to Signed from Lead, Qualified or Proposal Sent. |
+| Polling | — | At most one status GET per envelope every 15 minutes, or Go-Live review may fail. | No automatic polling. The manual "Check signature status" button calls it only on request. |
+| Titan CalDAV | "confirm the CalDAV URL in Titan settings" | Titan's help center ("Configure CalDAV") gives `https://dav.titan.email`. EU accounts use `dav-eu.titan.email`; GoDaddy "Professional Email" uses `dav.myprofessionalmail.com`. Auth is HTTP Basic with the mailbox and its password (an app password if 2FA is on), with "Enable Titan on Other Apps" turned on. Collections are `/principals/<email>/calendar/<id>/`, and `/.well-known/caldav` is 404. There is no REST calendar API and no CardDAV. The URL is **not** shown in Titan settings. | Discovery starts at `/principals/` (tsdav), or the collection is pinned with `TITAN_CALDAV_CALENDAR_URL`. Events are written with `PUT <collection>/ess-<jobId>.ics`, an idempotent upsert. **Not yet verified with an authenticated write against Jordan's mailbox** — do that once on setup (RUNBOOK). |
+
+### Behaviour
+- **Sending for signature** is an explicit owner action per proposal (the approval under rule 6). The signer's name and email default to the job's contact. The job moves to Proposal Sent, and the timeline records the send.
+- **Declined or voided** envelopes create one owner task, and the proposal can be sent again.
+- **Titan calendar:** every scheduled, open job has one event. The UID is the job, the duration is 2 hours, and the location is the address. The description has the service, job number, client and phone, plus a CRM link.
+  - **No attendees or organizer**, so Titan never emails anyone.
+  - **AIRnyc jobs** show only the case reference and address; no member name or phone.
+  - **Updates:** an event is rewritten only when its content changes (hash), with SEQUENCE bumped. It is deleted when the job is unscheduled, Lost or archived.
+  - **Errors** are kept on the job (`calendar_error`).

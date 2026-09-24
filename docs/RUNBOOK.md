@@ -105,7 +105,18 @@ Verified in the browser on 2026-09-24:
      - Photos: `{@photo_log}`, alone in its paragraph.
 2. **Pricing.** Go to Settings → Pricing and enter each service's base price, included sq ft and samples, per-unit rates, minimum and default scope. It is owner-only.
 3. **Compliance.** Go to Compliance → Cycle rules and enter each service's cycle and lead time. Then fill in ESS license numbers and expiry dates, and each subcontractor's COI date on its organization page.
-4. **AI.** Go to Settings → Communications → "How Jordan writes" and describe your tone. Reply drafts, call extraction and report drafts need `ANTHROPIC_API_KEY`; the model names are in `AI_MODEL_*`.
+4. **DocuSign.**
+   - **App setup:** in the DocuSign developer account (Apps and Keys), create an integration key and add an RSA keypair. Set `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_USER_ID` (the sending user's GUID) and `DOCUSIGN_PRIVATE_KEY`.
+   - **Consent:** register the redirect URI `https://<crm>/settings?docusign=consented`, then click Settings → **DocuSign consent** once while logged in to DocuSign as that user.
+   - **Webhooks:** in eSignature Admin → Connect → Connect Keys, add a secret and put it in `DOCUSIGN_HMAC_KEYS`. Without it, check signatures with the job page button instead.
+   - **Your own template:** a real proposal template needs the hidden anchors `\ess_sign\` and `\ess_date\` (white, tiny text) where the client signs and dates.
+   - **Production:** requires DocuSign's Go-Live review (a paid account). Afterwards, set `DOCUSIGN_ENV=production` and re-add the secret, redirect URI and HMAC key in production.
+5. **Titan calendar (worker).**
+   - **Enable it:** set `TITAN_CALDAV_ENABLED=true`. It uses `TITAN_USER`/`TITAN_PASSWORD` unless `TITAN_CALDAV_USERNAME`/`_PASSWORD` are set; use an app password if 2FA is on.
+   - **Host:** `dav.titan.email` by default. EU-hosted accounts use `dav-eu.titan.email`; mailboxes bought through GoDaddy use `dav.myprofessionalmail.com`.
+   - **Pick a calendar:** pin one with `TITAN_CALDAV_CALENDAR_URL`, or choose one by name with `TITAN_CALDAV_CALENDAR_NAME`.
+   - **First run:** schedule a test job and confirm the event appears in Titan within 5 minutes.
+6. **AI.** Go to Settings → Communications → "How Jordan writes" and describe your tone. Reply drafts, call extraction and report drafts need `ANTHROPIC_API_KEY`; the model names are in `AI_MODEL_*`.
 
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.

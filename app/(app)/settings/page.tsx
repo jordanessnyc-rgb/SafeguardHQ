@@ -56,6 +56,10 @@ export default async function SettingsPage() {
             <Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>
             {isOwner && <Link href="/settings/freshbooks" className={buttonVariants({ variant: "outline" })}>FreshBooks →</Link>}
             {isOwner && <Link href="/settings/pricing" className={buttonVariants({ variant: "outline" })}>Pricing →</Link>}
+            {isOwner && process.env.DOCUSIGN_INTEGRATION_KEY && (
+              // Plain <a>: a route handler that redirects to DocuSign's one-time consent page.
+              <a href="/api/docusign/consent" className={buttonVariants({ variant: "outline" })}>DocuSign consent</a>
+            )}
           </div>
         }
       />
