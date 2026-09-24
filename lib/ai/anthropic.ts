@@ -91,7 +91,12 @@ export async function guardedParse<Schema extends z.ZodType>(
     await log(base);
     return { status: "ok", output: unredact(res.parsed_output, map), model: opts.model, costUsd: cost };
   } catch (e) {
-    const msg = e instanceof Anthropic.APIError ? `API ${e.status}: ${e.message}` : (e as Error).message;
+    const msg =
+      e instanceof Anthropic.APIConnectionError
+        ? `Couldn't reach the AI service (${e.message}). Try again shortly.`
+        : e instanceof Anthropic.APIError
+          ? `API ${e.status}: ${e.message}`
+          : (e as Error).message;
     await log({ error: msg.slice(0, 500) });
     return { status: "error", error: msg };
   }

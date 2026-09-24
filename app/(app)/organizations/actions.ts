@@ -55,3 +55,38 @@ export async function archiveOrganization(id: string) {
   await user.db((tx) => tx.update(s.organizations).set({ archivedAt: new Date() }).where(eq(s.organizations.id, id)));
   redirect("/organizations");
 }
+
+const subSchema = z.object({
+  trades: z.string().optional().transform((v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean)),
+  licenseNumbers: z
+    .string()
+    .optional()
+    .transform((v, ctx) =>
+      Object.fromEntries(
+        (v ?? "")
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((l) => {
+            const i = l.indexOf(":");
+            if (i < 1) ctx.addIssue({ code: "custom", message: `License line "${l}" should look like: EPA firm: NAT-12345` });
+            return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+          }),
+      ),
+    ),
+  insuranceExpires: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+/** Sub details — no rates here (those live in sub_costs, OWNER only). Staff can keep COIs current. */
+export async function saveSubProfile(orgId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const v = subSchema.parse(formObject(form));
+    const values = { trades: v.trades, licenseNumbers: v.licenseNumbers, insuranceExpires: v.insuranceExpires ?? null, notes: v.notes ?? null };
+    await user.db((tx) => tx.insert(s.subProfiles).values({ orgId, ...values }).onConflictDoUpdate({ target: s.subProfiles.orgId, set: values }));
+    return { ok: true, message: "Saved." };
+  });
+  revalidatePath(`/organizations/${orgId}`);
+  return res;
+}

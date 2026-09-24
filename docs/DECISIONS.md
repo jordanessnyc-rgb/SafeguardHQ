@@ -121,3 +121,86 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
 ### Deferred
 - FreshBooks estimates from signed proposals (optional in §6.2; proposals are Phase 4).
 - Pushing CRM contact edits back to FreshBooks clients (only the link is kept).
+
+## 2026-09-24 — Phase 4a (Compliance calendar & credential alerts)
+
+- **No legal cycle is built in (SPEC §6.6).** `compliance_rules` starts empty, and Jordan enters each service's cycle on the Compliance page: months, lead time, notes. A rule with no month count means "set this job's next date by hand". In that case the worker creates an owner task asking for the date.
+- **When a date is computed:** a job moving to **Closed** gets `next_cycle_due` = the inspection date + the rule's months, clamped to the end of the month.
+  - **Inspection date:** field-complete, else delivered, else stage entry, taken as the New York date.
+  - **Outreach task:** one per job, at 9 AM New York time, `lead_time_days` before the due date.
+  - **Manual dates win:** a date already entered by hand is kept.
+- **Once per job, and retroactive.** `jobs.cycle_scheduled_at` is claimed atomically before any task is created. Jobs whose service has no rule are left unmarked, so adding a rule later picks up jobs that were already closed. Their outreach tasks fall due immediately if the lead time has already passed.
+- **Licenses:** the `credentials` table is seeded with the three licenses SPEC §4.8 names, with number and expiry left blank for Jordan. Only the owner edits them; staff can read them.
+- **Subcontractor profiles:** `sub_profiles` holds trades, license numbers and the COI date. There are no rates here — they stay in `sub_costs`, which only the owner can see. Staff can edit these fields, because COIs arrive by email and a VA files them.
+- **Expiry alerts:** at 60, 30 and 7 days, plus once on expiry. Each alert is recorded in `expiry_alerts` per (subject, expiry date, threshold).
+  - **Late entry:** a date entered with 5 days left raises only the 7-day alert, not three at once.
+  - **Renewal:** a new expiry date restarts the sequence.
+- **Digest:** now includes licenses and COIs expiring within 60 days, and compliance cycles due within 60 days.
+- **Deferred:** uploading the license or COI file itself. The `file_path` and `coi_path` columns exist, but the upload UI comes with the Phase 4c document work.
+
+## 2026-09-24 — Phase 4b (AI reply drafts & call extraction)
+
+- **API check:** `messages.parse` + `zodOutputFormat` (structured outputs) was re-checked against the current Anthropic TypeScript SDK docs.
+  - **Models:** they stay in config (SPEC §9). Replies use `claude-sonnet-5` (`AI_MODEL_DRAFT`); call extraction uses `claude-haiku-4-5` (`AI_MODEL_CLASSIFY`).
+  - **Thinking:** Sonnet 5 runs adaptive thinking by default, so reply drafts get `max_tokens` 4000.
+- **Reply drafts (§9.2)** are made only on request: the "Draft reply with AI" button on an inbound text or email in any timeline. They always land in the Outbox as `AI_DRAFT` drafts; nothing is sent automatically.
+  - **Context sent:** the contact's last 12 texts/emails/calls, the job (number, service, stage, address, schedule), and Jordan's style notes (Settings → Communications).
+  - **Pricing:** it's added only when the **owner** ticks "include the job's quote". If a VA asks for it, the request is ignored.
+  - **Owner-only drafts:** any draft that mentions money — the owner-approved quote, or a price the model wrote anyway (the detector is deliberately broad) — is saved `contains_pricing`, so RLS hides it from VAs. Pricing can therefore only go out with the owner as approver.
+  - **Placeholders:** the model writes facts it doesn't have as `[inspection date]`. "Approve & send" refuses an AI draft until those are filled in.
+- **Call extraction (§9.3):** the worker runs it on calls with a transcript from the last 3 days, so enabling it doesn't create tasks for stale calls. Each call is extracted once (`activities.ai_extracted_at` claim).
+  - **Follow-ups:** become `CALL_AI` tasks. Quo's own next steps are passed in, so they aren't duplicated.
+  - **Contact details:** the caller's name and email only **fill blanks** on the contact.
+  - **Address and service:** shown on the call. Staff create the property or job; the AI never creates jobs.
+- **AIRnyc (CLAUDE.md rule 5).** Both features use the guarded wrapper: blocked while `airnyc_ai_allowed=false`, and redacted when allowed.
+  - **New rule:** redaction can only remove names it knows (the linked case's member and guardian, and the contact's name). If an AIRnyc message or call has **no** known names, it is **not sent at all**, even when AIRnyc AI is allowed. This was found by a test where an unknown caller's name would otherwise have reached the model.
+  - **Sealed-call output:** extraction on sealed calls stores only urgency and a follow-up count on the row, and its tasks carry no call content.
+  - **Sealed transcripts:** these are flagged when they arrive (`ai_classification.sealedTranscript`), so the worker doesn't have to decrypt calls just to check whether a transcript exists.
+- **Report drafting (§9.5)** is part of 4c, because it writes into the DOCX templates.
+
+## 2026-09-24 — Phase 4c (Documents: templates, quote builder, sub copies, report drafting)
+
+- **Templates:** docxtemplater 3.71 with PizZip.
+  - **Which file is used:** Jordan's files in `/templates` (`ESS_Proposal.docx`, `ESS_Report.docx`) win. Until they exist, generated **placeholder** templates in `/templates/placeholder` are used. These carry a red "PLACEHOLDER TEMPLATE" banner, and bracketed slots for ESS's terms, limitations language and license numbers; no legal wording was invented. The tags they use are listed in the RUNBOOK.
+  - **Missing values** render as a visible `[tag]`.
+  - **Photos:** docxtemplater's image module is paid, so photos are embedded by a small helper. It adds the media, relationships and content types, and fills a `{@photo_log}` tag.
+- **Quote builder (§10):**
+  - **Pricing rules:** `pricing_rules`, one per service, owner-only and audited. A rule sets the base price, an included sq ft plus a per-sq-ft rate above it, included samples plus a per-sample rate above them, a minimum, and the default proposal scope. The rules start **empty**, and Jordan enters his prices on Settings → Pricing. With no rule, only lines entered by hand are priced.
+  - **Building a quote** replaces the job's line items and quoted total; the inputs are kept in `job_financials.quote_inputs`.
+  - **Sub quotes:** compared side by side from `sub_costs` (owner-only), with ESS margin per option. "Use this sub" sets the job's subcontractor and sub cost.
+- **Proposal:** a Word file from the ESS template, with a **client-signature-only** block. It's stored in the owner-only `job-files-pricing` bucket, marked `contains_pricing`, and not copied to Drive.
+- **Sub copy (§10):** made from a Word report and applied to the WordprocessingML itself.
+  - **Removed:** whole sections under headings about price, fees, costs, invoices, payment, funding, terms, signatures or consent, plus single lines and table rows that mention money, funding, deposits, Medicaid/SCN, signatures or consent. Header and footer lines are filtered too.
+  - **Kept:** photos and everything else.
+  - **Release check:** the result's full text, including footnotes, is scanned for `$`, price, cost, invoice and funding. **Any hit means nothing is saved,** and Jordan sees the offending lines. Removing too much is the chosen failure mode.
+  - **Bug found in testing:** text from adjacent table cells was run together, so "Fee" + "Amount" read as "FeeAmount" and escaped word matching. Paragraphs are now space-separated.
+- **Field data:** a card on the job page for areas, observations, readings and photos with captions. Photos are JPEG/PNG up to 15 MB, stored in `job-files`, and served through signed links. It's mobile-friendly, including the camera capture hint.
+- **Report drafting (§9.5):** "Draft report with AI" uses `claude-opus-5` (`AI_MODEL_REPORT`).
+  - **What the model gets:** field data, photo captions and sample data — never prices or the client's name.
+  - **What it writes:** five fixed sections (summary, scope, observations, lab results, recommendations). It must not invent facts or state legal requirements; gaps are marked `[Jordan: …]`.
+  - **The output:** a DRAFT report document carrying an "AI DRAFT — not for release" notice, a skipped section left visibly as `[Jordan: section not drafted]`, and an owner review task listing the open questions.
+  - **AIRnyc:** jobs are gated like the other AI features, including the no-known-names block.
+- **Deferred:** uploading license and COI files; Drive copies of generated drafts (drafts stay in the CRM until Jordan finalizes them); FreshBooks estimates from signed proposals (optional in §6.2, and naturally follows DocuSign in 4d).
+
+## 2026-09-24 — Phase 4d (DocuSign, Titan calendar)
+
+### API verification
+| Item | Spec said | Docs said (checked 2026-09-24) | What we did |
+|---|---|---|---|
+| DocuSign auth | OAuth | For one system account, DocuSign recommends **JWT Grant**: no refresh tokens, 1-hour access tokens, one-time consent with scope `signature impersonation`. Authorization Code refresh tokens rotate and last about 30 days (with `extended`). | JWT Grant: an RSA key in env and the token cached in memory. Settings → "DocuSign consent" opens the one-time consent page. |
+| Hosts | — | `account-d.docusign.com` (demo) and `account.docusign.com` (production, only after the **Go-Live review**, which needs a paid account). The API host comes from `userinfo` `base_uri`. | `DOCUSIGN_ENV` selects the host. The base URI is cached per process. |
+| Envelope | "send proposals for signature" | `.docx` is accepted and converted to PDF. `status:"sent"` sends it. Tabs can be placed by anchor text. `emailSubject` is at most 100 characters. | The proposal DOCX is sent as-is. Signature and date tabs anchor on hidden `\ess_sign\` and `\ess_date\` markers in the template. |
+| Webhook | "envelope completed" | Envelope-level `eventNotification` (JSON SIM) needs `eventData.version:"restv2.1"`. **`eventData.format` is reserved** — not sent. HMAC works only after Connect keys are created in eSignature Admin (**not via API**). Listeners must be HTTPS, answer 200 within 5 s, and expect retries (5 min … then daily for 15 days). | The webhook is attached only when the site is HTTPS **and** HMAC keys are configured. Without them there is no unverifiable listener; use "Check signature status". The route acknowledges immediately and processes after the response (`after()`). The worker retries unprocessed deliveries for 3 days. |
+| Dedupe | "dedupe on delivery ID" (rule 7) | **Connect sends no delivery ID**, and there is no ordering guarantee. | Deviation from rule 7, as with FreshBooks: dedupe on SHA-256 of the raw body, and every delivery **re-reads the envelope** (`GET /envelopes/{id}`). The signed copy is attached exactly once, claimed on `documents.signed_document_id`. A late "completed" while DocuSign still says "delivered" changes nothing. |
+| Signed file | "attach signed PDF" | `GET …/documents/combined?certificate=true` returns one PDF including the certificate of completion. | Stored in the owner-only bucket as a new `PROPOSAL`/`SIGNED` document. The job moves to Signed from Lead, Qualified or Proposal Sent. |
+| Polling | — | At most one status GET per envelope every 15 minutes, or Go-Live review may fail. | No automatic polling. The manual "Check signature status" button calls it only on request. |
+| Titan CalDAV | "confirm the CalDAV URL in Titan settings" | Titan's help center ("Configure CalDAV") gives `https://dav.titan.email`. EU accounts use `dav-eu.titan.email`; GoDaddy "Professional Email" uses `dav.myprofessionalmail.com`. Auth is HTTP Basic with the mailbox and its password (an app password if 2FA is on), with "Enable Titan on Other Apps" turned on. Collections are `/principals/<email>/calendar/<id>/`, and `/.well-known/caldav` is 404. There is no REST calendar API and no CardDAV. The URL is **not** shown in Titan settings. | Discovery starts at `/principals/` (tsdav), or the collection is pinned with `TITAN_CALDAV_CALENDAR_URL`. Events are written with `PUT <collection>/ess-<jobId>.ics`, an idempotent upsert. **Not yet verified with an authenticated write against Jordan's mailbox** — do that once on setup (RUNBOOK). |
+
+### Behaviour
+- **Sending for signature** is an explicit owner action per proposal (the approval under rule 6). The signer's name and email default to the job's contact. The job moves to Proposal Sent, and the timeline records the send.
+- **Declined or voided** envelopes create one owner task, and the proposal can be sent again.
+- **Titan calendar:** every scheduled, open job has one event. The UID is the job, the duration is 2 hours, and the location is the address. The description has the service, job number, client and phone, plus a CRM link.
+  - **No attendees or organizer**, so Titan never emails anyone.
+  - **AIRnyc jobs** show only the case reference and address; no member name or phone.
+  - **Updates:** an event is rewritten only when its content changes (hash), with SEQUENCE bumped. It is deleted when the job is unscheduled, Lost or archived.
+  - **Errors** are kept on the job (`calendar_error`).

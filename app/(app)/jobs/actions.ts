@@ -9,6 +9,17 @@ import { z } from "zod";
 import { adminDb, schema as s } from "@/lib/db";
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { createDraftInvoiceForJob, invoiceDeliveredJobs, syncInvoice } from "@/lib/money/invoicing";
+import { computeQuote } from "@/lib/money/quote";
+import { draftReport } from "@/lib/ai/report";
+import { docusignConfigFromEnv, docusignFromEnv } from "@/lib/integrations/docusign";
+import { processEnvelope, sendProposalForSignature } from "@/lib/docs/esign";
+import { siteOrigin } from "@/lib/site";
+import { headers } from "next/headers";
+import { imageSize } from "@/lib/docs/image-size";
+import { generateProposal } from "@/lib/docs/proposal";
+import { createSubCopy } from "@/lib/docs/sub-copy-job";
+import { storageDownloader, storageUploader } from "@/lib/supabase/service";
+import { label, SERVICE_LABELS } from "@/lib/labels";
 import { requireOwner, requireStaff } from "@/lib/auth/session";
 import { checkbox, formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { pipelineForService } from "@/lib/pipeline/config";
@@ -35,6 +46,7 @@ const jobSchema = z.object({
   assignedTo: optionalUuid,
   subOrgId: optionalUuid,
   hpdViolationRef: z.string().max(100).optional(),
+  nextCycleDue: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(5000).optional(),
 });
 
@@ -300,6 +312,219 @@ export async function saveFinancials(jobId: string, _prev: ActionState, form: Fo
       tx.insert(s.jobFinancials).values({ jobId, ...values }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: values }),
     );
     return { ok: true, message: "Financials saved." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quote builder, sub quotes, proposals and sub copies (SPEC §10) — OWNER only
+// ---------------------------------------------------------------------------------------------
+
+const quoteSchema = z.object({
+  sqft: z.coerce.number().int().min(0).max(10_000_000).optional(),
+  samples: z.coerce.number().int().min(0).max(1000).optional(),
+  extras: lineItems,
+  scope: z.string().max(5000).optional(),
+  validDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+/** Prices the job from Jordan's rule for its service; replaces the job's line items and quoted total. */
+export async function buildQuote(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const v = quoteSchema.parse(formObject(form));
+    const inputs = { sqft: v.sqft ?? null, samples: v.samples ?? null, extras: v.extras, scope: v.scope ?? null, validDays: v.validDays ?? null };
+    const note = await user.db(async (tx) => {
+      const [job] = await tx.select({ serviceCode: s.jobs.serviceCode }).from(s.jobs).where(eq(s.jobs.id, jobId));
+      if (!job) throw new Error("Job not found.");
+      const [rule] = await tx.select().from(s.pricingRules).where(and(eq(s.pricingRules.serviceCode, job.serviceCode), eq(s.pricingRules.active, true)));
+      const q = computeQuote(label(SERVICE_LABELS, job.serviceCode), rule ?? null, inputs);
+      if (!q.lines.length) throw new Error("Nothing to price: add a pricing rule for this service (Settings → Pricing) or extra lines.");
+      const values = { lineItems: q.lines, quotedAmount: q.total.toFixed(2), quoteInputs: inputs };
+      await tx.insert(s.jobFinancials).values({ jobId, ...values }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: values });
+      return q.notes.join(" ");
+    });
+    return { ok: true, message: `Quote updated.${note ? ` ${note}` : ""}` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function generateProposalDoc(jobId: string, _prev: ActionState): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const r = await generateProposal(adminDb(), jobId, storageUploader());
+    return { ok: true, message: `Proposal created (Documents → Proposal).${r.placeholder ? " Uses the PLACEHOLDER template until ESS's real one is added." : ""}` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+const subQuoteSchema = z.object({
+  subOrgId: z.uuid(),
+  amount: money.refine((v) => v !== undefined, "Enter the sub's price"),
+  description: z.string().max(500).optional(),
+});
+
+export async function addSubQuote(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const v = subQuoteSchema.parse(formObject(form));
+    await user.db((tx) => tx.insert(s.subCosts).values({ jobId, subOrgId: v.subOrgId, amount: v.amount!, description: v.description ?? null }));
+    return { ok: true, message: "Sub quote added." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+/** Chooses a sub quote: the job's sub + sub cost follow it. */
+export async function selectSubQuote(jobId: string, subCostId: string) {
+  const user = await requireOwner();
+  await user.db(async (tx) => {
+    const [q] = await tx.select().from(s.subCosts).where(and(eq(s.subCosts.id, subCostId), eq(s.subCosts.jobId, jobId)));
+    if (!q) return;
+    await tx.update(s.subCosts).set({ selected: false }).where(eq(s.subCosts.jobId, jobId));
+    await tx.update(s.subCosts).set({ selected: true }).where(eq(s.subCosts.id, subCostId));
+    await tx.update(s.jobs).set({ subOrgId: q.subOrgId }).where(eq(s.jobs.id, jobId));
+    await tx.insert(s.jobFinancials).values({ jobId, subCost: q.amount }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: { subCost: q.amount } });
+  });
+  revalidatePath(`/jobs/${jobId}`);
+}
+
+export async function makeSubCopy(jobId: string, docId: string, _prev: ActionState): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const r = await createSubCopy(adminDb(), docId, { ...storageUploader(), ...storageDownloader() });
+    if (r.status === "blocked") {
+      return { error: `Not released — the sub copy would still contain: ${r.violations.slice(0, 5).map((v) => `“${v.slice(0, 80)}”`).join("; ")}. Edit the report and try again.` };
+    }
+    return { ok: true, message: `Sub copy created. Removed ${r.removed.length} item(s): ${r.removed.slice(0, 6).map((x) => x.trim().slice(0, 50)).join(" · ")}${r.removed.length > 6 ? " …" : ""}` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Field data (inputs for report drafting) and AI report drafts (SPEC §4.3, §9.5)
+// ---------------------------------------------------------------------------------------------
+
+const fieldSchema = z.object({
+  areas: z.string().optional().transform((v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean)),
+  observations: z.string().max(50_000).optional(),
+  readings: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+          const [area, moisture, rh, temp, ...note] = l.split("|").map((x) => x.trim());
+          return { area, moisture: moisture || null, rh: rh || null, temp: temp || null, note: note.join(" | ") || null };
+        }),
+    ),
+});
+
+export async function saveFieldData(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const v = fieldSchema.parse(formObject(form));
+    const values = { areas: v.areas, observations: v.observations ?? null, readings: v.readings };
+    await user.db((tx) => tx.insert(s.fieldData).values({ jobId, ...values }).onConflictDoUpdate({ target: s.fieldData.jobId, set: values }));
+    return { ok: true, message: "Field data saved." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function addFieldPhoto(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const file = form.get("photo");
+    const { caption, area } = formObject(form);
+    if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo.");
+    if (!["image/jpeg", "image/png"].includes(file.type)) throw new Error("Photos must be JPEG or PNG.");
+    if (file.size > 15 * 1024 * 1024) throw new Error("Photo is larger than 15 MB.");
+    if (!caption) throw new Error("Add a caption — it goes into the photo log.");
+    const buf = Buffer.from(await file.arrayBuffer());
+    const size = imageSize(buf);
+    const path = `jobs/${jobId}/photos/${randomUUID()}.${file.type === "image/png" ? "png" : "jpg"}`;
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.storage.from("job-files").upload(path, buf, { contentType: file.type });
+    if (error) throw new Error(`Upload failed: ${error.message}`);
+    const photo = { path, caption, area: area ?? null, contentType: file.type, ...(size?.width ? { width: size.width, height: size.height } : {}) };
+    await user.db((tx) =>
+      tx
+        .insert(s.fieldData)
+        .values({ jobId, photos: [photo] })
+        .onConflictDoUpdate({ target: s.fieldData.jobId, set: { photos: sql`${s.fieldData.photos} || ${JSON.stringify([photo])}::jsonb` } }),
+    );
+    return { ok: true, message: "Photo added." };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function removeFieldPhoto(jobId: string, index: number) {
+  const user = await requireStaff();
+  await user.db((tx) => tx.update(s.fieldData).set({ photos: sql`${s.fieldData.photos} - ${index}::int` }).where(eq(s.fieldData.jobId, jobId)));
+  revalidatePath(`/jobs/${jobId}`);
+}
+
+export async function draftReportAction(jobId: string, _prev: ActionState): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
+    const [visible] = await user.db((tx) => tx.select({ id: s.jobs.id }).from(s.jobs).where(eq(s.jobs.id, jobId)));
+    if (!visible) throw new Error("Job not found.");
+    const r = await draftReport(adminDb(), jobId, { storage: { ...storageUploader(), ...storageDownloader() }, actorId: user.id });
+    if (r.status !== "drafted") return { error: r.reason };
+    return {
+      ok: true,
+      message: `Report draft added to Documents${r.placeholder ? " (placeholder template)" : ""}. ${r.openQuestions.length ? `${r.openQuestions.length} open question(s) for Jordan — see the review task.` : "No open questions flagged."}`,
+    };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// DocuSign (SPEC §6.7) — OWNER only; sending is the explicit approval (CLAUDE.md rule 6)
+// ---------------------------------------------------------------------------------------------
+
+const signerSchema = z.object({ signerName: z.string().min(1).max(200), signerEmail: z.email() });
+
+export async function sendForSignature(jobId: string, docId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const ds = docusignFromEnv();
+    if (!ds) throw new Error("DocuSign isn't set up on the server (see RUNBOOK).");
+    const v = signerSchema.parse(formObject(form));
+    const cfg = docusignConfigFromEnv()!;
+    const webhookUrl = `${siteOrigin(await headers())}/api/webhooks/docusign`;
+    await sendProposalForSignature(adminDb(), docId, {
+      ds,
+      storage: { ...storageUploader(), ...storageDownloader() },
+      // DocuSign only calls HTTPS listeners; without HMAC keys we can't verify calls, so skip the webhook (use Refresh).
+      webhookUrl: webhookUrl.startsWith("https://") && cfg.hmacKeys.length ? webhookUrl : undefined,
+      signer: { name: v.signerName, email: v.signerEmail },
+    });
+    return { ok: true, message: `Sent to ${v.signerName} for signature.` };
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  return res;
+}
+
+export async function refreshSignature(jobId: string, envelopeId: string, _prev: ActionState): Promise<ActionState> {
+  await requireOwner();
+  const res = await safeAction(async () => {
+    const ds = docusignFromEnv();
+    if (!ds) throw new Error("DocuSign isn't set up on the server.");
+    const out = await processEnvelope(adminDb(), ds, { ...storageUploader(), ...storageDownloader() }, envelopeId);
+    const msg: Record<string, string> = { signed: "Signed — the signed copy is attached and the job moved to Signed.", "already-signed": "Already signed.", declined: "The client declined.", voided: "The envelope was voided.", pending: "Not signed yet.", "unknown-envelope": "Envelope not found." };
+    return { ok: true, message: msg[out] };
   });
   revalidatePath(`/jobs/${jobId}`);
   return res;

@@ -20,6 +20,7 @@ import {
   text,
   time,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -141,6 +142,7 @@ export const taskSourceEnum = pgEnum("task_source", [
   "QUO_NEXT_STEP",
   "EMAIL_AI",
   "SYSTEM_RULE",
+  "CALL_AI",
 ]);
 
 export const campaignChannelEnum = pgEnum("campaign_channel", [
@@ -442,6 +444,12 @@ export const jobs = pgTable(
     hpdViolationRef: text("hpd_violation_ref"),
     airnycCaseId: uuid("airnyc_case_id"),
     nextCycleDue: date("next_cycle_due"),
+    // Set when the compliance worker has scheduled this job's next cycle (SPEC §6.6), so it runs once.
+    cycleScheduledAt: timestamp("cycle_scheduled_at", { withTimezone: true }),
+    // Titan calendar sync (SPEC §6.3): hash of the last event written; null = not on the calendar.
+    calendarHash: text("calendar_hash"),
+    calendarSequence: integer("calendar_sequence").notNull().default(0),
+    calendarError: text("calendar_error"),
     notes: text("notes"),
   },
   (t) => [
@@ -487,6 +495,8 @@ export const jobFinancials = pgTable("job_financials", {
   ),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Quote builder inputs (SPEC §10) — the lines above are computed from these + pricing_rules.
+  quoteInputs: jsonb("quote_inputs").$type<QuoteInputs>(),
 });
 
 // OWNER only. Filled by FreshBooks sync in Phase 3; created now so RLS is in place from day one.
@@ -521,6 +531,8 @@ export const subCosts = pgTable("sub_costs", {
   description: text("description"),
   amount: numeric("amount", { precision: 12, scale: 2 }),
   rates: jsonb("rates"),
+  // Quote comparison (SPEC §10): the sub quote chosen for the job.
+  selected: boolean("selected").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -531,9 +543,9 @@ export const fieldData = pgTable("field_data", {
     .notNull()
     .unique()
     .references(() => jobs.id, { onDelete: "cascade" }),
-  readings: jsonb("readings").notNull().default(sql`'[]'::jsonb`),
+  readings: jsonb("readings").$type<FieldReading[]>().notNull().default(sql`'[]'::jsonb`),
   observations: text("observations"),
-  photos: jsonb("photos").notNull().default(sql`'[]'::jsonb`),
+  photos: jsonb("photos").$type<FieldPhoto[]>().notNull().default(sql`'[]'::jsonb`),
   areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
 });
 
@@ -585,6 +597,10 @@ export const documents = pgTable(
     status: documentStatusEnum("status").notNull().default("DRAFT"),
     // Never exposed to SUB/VA if true (enforced in RLS and in storage bucket choice).
     containsPricing: boolean("contains_pricing").notNull().default(false),
+    // DocuSign (SPEC §6.7): the envelope this proposal was sent in, and its last known status.
+    docusignEnvelopeId: text("docusign_envelope_id"),
+    docusignStatus: text("docusign_status"),
+    signedDocumentId: uuid("signed_document_id"),
   },
   (t) => [index("documents_job_idx").on(t.jobId)],
 );
@@ -704,6 +720,8 @@ export const activities = pgTable(
     attachments: jsonb("attachments").$type<{ filename: string; contentType: string; size: number; storageBucket: string; storagePath: string; documentId?: string; ownerOnly?: boolean }[]>(),
     callStatus: text("call_status"),
     durationSeconds: integer("duration_seconds"),
+    // Set once AI call extraction (SPEC §9.3) has run on this call's transcript.
+    aiExtractedAt: timestamp("ai_extracted_at", { withTimezone: true }),
     triageStatus: triageStatusEnum("triage_status"),
     triageCategory: text("triage_category"),
     // AIRnyc-linked content is stored encrypted here instead of subject/body/transcript (CLAUDE.md rule 5).
@@ -778,6 +796,8 @@ export const settings = pgTable("settings", {
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestSmsEnabled: boolean("digest_sms_enabled").notNull().default(true),
   invoicePaymentTermsDays: integer("invoice_payment_terms_days").notNull().default(30),
+  // Jordan's notes on how he writes (tone, sign-off, phrases) — fed to AI reply drafts (SPEC §9.2).
+  aiVoiceNotes: text("ai_voice_notes"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });
@@ -820,7 +840,7 @@ export const webhookDeliveries = pgTable(
   "webhook_deliveries",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    provider: text("provider").notNull(), // QUO | FRESHBOOKS | AIRNYC
+    provider: text("provider").notNull(), // QUO | FRESHBOOKS | AIRNYC | DOCUSIGN
     deliveryId: text("delivery_id").notNull(),
     eventType: text("event_type"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
@@ -979,3 +999,87 @@ export const digestRuns = pgTable("digest_runs", {
   summary: jsonb("summary"),
   error: text("error"),
 });
+
+// ---------------------------------------------------------------------------
+// Phase 4a — compliance calendar & credentials (SPEC §6.6, §4.8, §10)
+// ---------------------------------------------------------------------------
+
+/** Entered and maintained by Jordan — legal cycles are never hard-coded (SPEC §6.6). */
+export const complianceRules = pgTable("compliance_rules", {
+  ...baseColumns(),
+  serviceCode: serviceCodeEnum("service_code").notNull().unique(),
+  // null → no automatic date; the worker asks for the next cycle to be set by hand.
+  cycleMonths: integer("cycle_months"),
+  leadTimeDays: integer("lead_time_days").notNull().default(60),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+});
+
+/** ESS's own licenses and certifications. */
+export const credentials = pgTable("credentials", {
+  ...baseColumns(),
+  name: text("name").notNull(),
+  number: text("number"),
+  issuer: text("issuer"),
+  expiresAt: date("expires_at"),
+  filePath: text("file_path"),
+  notes: text("notes"),
+});
+
+/** Subcontractor details (rates live in sub_costs, OWNER only — see DECISIONS.md). */
+export const subProfiles = pgTable("sub_profiles", {
+  orgId: uuid("org_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  trades: text("trades").array().notNull().default(sql`'{}'::text[]`),
+  licenseNumbers: jsonb("license_numbers").$type<Record<string, string>>().notNull().default({}),
+  insuranceExpires: date("insurance_expires"),
+  coiPath: text("coi_path"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const expirySubjectEnum = pgEnum("expiry_subject", ["CREDENTIAL", "SUB_COI"]);
+
+/** One row per alert raised (60/30/7 days, and expired), so each fires once per expiry date. */
+export const expiryAlerts = pgTable(
+  "expiry_alerts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    subjectType: expirySubjectEnum("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    expiresOn: date("expires_on").notNull(),
+    thresholdDays: integer("threshold_days").notNull(),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("expiry_alerts_once").on(t.subjectType, t.subjectId, t.expiresOn, t.thresholdDays)],
+);
+
+/** Quote builder inputs, per job (OWNER only via job_financials). */
+export type QuoteInputs = {
+  sqft?: number | null;
+  samples?: number | null;
+  extras?: { description: string; quantity: number; unitPrice: number }[];
+  scope?: string | null;
+  validDays?: number | null;
+};
+
+/** Jordan's pricing rules per service (SPEC §10). OWNER only — never visible to VAs or subs. */
+export const pricingRules = pgTable("pricing_rules", {
+  ...baseColumns(),
+  serviceCode: serviceCodeEnum("service_code").notNull().unique(),
+  baseAmount: numeric("base_amount", { precision: 12, scale: 2 }).notNull(),
+  includedSqft: integer("included_sqft").notNull().default(0),
+  perSqft: numeric("per_sqft", { precision: 12, scale: 4 }),
+  includedSamples: integer("included_samples").notNull().default(0),
+  perSample: numeric("per_sample", { precision: 12, scale: 2 }),
+  minimumAmount: numeric("minimum_amount", { precision: 12, scale: 2 }),
+  defaultScope: text("default_scope"),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+});
+
+export type FieldReading = { area: string; moisture?: string | null; rh?: string | null; temp?: string | null; note?: string | null };
+export type FieldPhoto = { path: string; caption: string; area?: string | null; contentType: string; width?: number; height?: number };

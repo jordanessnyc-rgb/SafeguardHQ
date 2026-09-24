@@ -13,20 +13,11 @@ import { label, personName, SERVICE_LABELS } from "@/lib/labels";
 import { createDraft } from "@/lib/comms/outbound";
 import { renderTemplate, BRAND_INFO } from "@/lib/comms/templates";
 import { nyDate } from "./digest";
+import { ownerTask } from "@/lib/tasks";
 
 type LineItem = { description: string; quantity: number; unitPrice: number };
 
 const money = (v: { amount?: string } | undefined | null) => (v?.amount != null ? Number(v.amount).toFixed(2) : null);
-
-async function ownerIds(db: Db) {
-  const rows = await db.select({ id: s.profiles.userId }).from(s.profiles).where(eq(s.profiles.role, "OWNER"));
-  return rows.length ? rows.map((r) => r.id) : [null];
-}
-
-async function ownerTask(db: Db, t: { title: string; description?: string; jobId?: string | null; contactId?: string | null }) {
-  const owners = await ownerIds(db);
-  await db.insert(s.tasks).values(owners.map((assignee) => ({ ...t, assignee, source: "SYSTEM_RULE" as const, dueAt: new Date(Date.now() + 24 * 3600_000) })));
-}
 
 /** The CRM's billing party for a job → FreshBooks client id (links or creates, never duplicates by email). */
 export async function ensureFreshbooksClient(db: Db, fb: FreshBooksClient, job: { clientOrgId: string | null; clientContactId: string | null }): Promise<string> {

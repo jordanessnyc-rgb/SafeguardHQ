@@ -21,3 +21,16 @@ export function storageUploader(): Uploader {
     },
   };
 }
+
+export type Downloader = { download(bucket: string, path: string): Promise<Buffer> };
+
+export function storageDownloader(): Downloader {
+  const sb = supabaseService();
+  return {
+    async download(bucket, path) {
+      const { data, error } = await sb.storage.from(bucket).download(path);
+      if (error || !data) throw new Error(`Storage download failed (${bucket}/${path}): ${error?.message ?? "no data"}`);
+      return Buffer.from(await data.arrayBuffer());
+    },
+  };
+}

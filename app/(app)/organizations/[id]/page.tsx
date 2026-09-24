@@ -4,12 +4,15 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ActionForm, SubmitButton } from "@/components/forms";
+import { ActionForm, Field, SubmitButton } from "@/components/forms";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { daysUntil } from "@/lib/compliance/expiry";
 import { PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
-import { label, ORG_TYPE_LABELS, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
-import { archiveOrganization, updateOrganization } from "../actions";
+import { fmtDate, label, ORG_TYPE_LABELS, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
+import { archiveOrganization, saveSubProfile, updateOrganization } from "../actions";
 import { OrgFields } from "../org-fields";
 
 export default async function OrganizationPage({ params }: PageProps<"/organizations/[id]">) {
@@ -26,10 +29,12 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
       .where(and(eq(s.jobs.clientOrgId, id), isNull(s.jobs.archivedAt)))
       .orderBy(desc(s.jobs.createdAt));
     const managed = await tx.select().from(s.properties).where(and(eq(s.properties.managementOrgId, id), isNull(s.properties.archivedAt)));
-    return { org, contacts, jobs, managed };
+    const [sub] = org.type === "SUBCONTRACTOR" ? await tx.select().from(s.subProfiles).where(eq(s.subProfiles.orgId, id)) : [];
+    return { org, contacts, jobs, managed, sub };
   });
   if (!data) notFound();
-  const { org, contacts, jobs, managed } = data;
+  const { org, contacts, jobs, managed, sub } = data;
+  const coiDays = sub?.insuranceExpires ? daysUntil(sub.insuranceExpires, new Date()) : null;
 
   return (
     <>
@@ -77,6 +82,35 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
           </CardContent>
         </Card>
       </div>
+      {org.type === "SUBCONTRACTOR" && (
+        <Card className="mt-4 max-w-2xl">
+          <CardHeader>
+            <CardTitle>Subcontractor details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {coiDays !== null && coiDays <= 60 && (
+              <p className={`mb-3 text-sm ${coiDays < 0 ? "text-destructive" : "text-amber-700 dark:text-amber-400"}`}>
+                {coiDays < 0 ? `Insurance expired ${fmtDate(sub!.insuranceExpires)} — get a current COI before assigning work.` : `Insurance expires in ${coiDays} days (${fmtDate(sub!.insuranceExpires)}).`}
+              </p>
+            )}
+            <ActionForm action={saveSubProfile.bind(null, id)} className="grid gap-3 sm:grid-cols-2">
+              <Field label="Trades" hint="Comma-separated, e.g. mold remediation, lead abatement">
+                <Input name="trades" defaultValue={sub?.trades.join(", ") ?? ""} />
+              </Field>
+              <Field label="Insurance (COI) expires" hint="Alerts at 60 / 30 / 7 days and on expiry.">
+                <Input name="insuranceExpires" type="date" defaultValue={sub?.insuranceExpires ?? ""} />
+              </Field>
+              <Field label="License numbers" hint="One per line — Name: number" className="sm:col-span-2">
+                <Textarea name="licenseNumbers" rows={3} defaultValue={Object.entries(sub?.licenseNumbers ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n")} />
+              </Field>
+              <Field label="Notes" className="sm:col-span-2">
+                <Textarea name="notes" rows={2} defaultValue={sub?.notes ?? ""} />
+              </Field>
+              <div><SubmitButton size="sm">Save sub details</SubmitButton></div>
+            </ActionForm>
+          </CardContent>
+        </Card>
+      )}
       <Card className="mt-4 max-w-2xl">
         <CardHeader><CardTitle>Edit</CardTitle></CardHeader>
         <CardContent className="space-y-4">

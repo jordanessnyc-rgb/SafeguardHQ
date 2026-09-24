@@ -2,9 +2,8 @@
  * Daily digest (SPEC §9.7): weekday morning email + short SMS to Jordan. Internal only — goes to
  * settings.digest_recipients and the owner's alert phone, never to clients.
  *
- * Sections available now: stale jobs, lab results waiting, unpaid invoices by age, going-cold
- * leads, overdue tasks. Bids (Phase 5), license/COI expirations and compliance cycles (Phase 4)
- * join when those modules exist.
+ * Sections: stale jobs, lab results waiting, unpaid invoices by age, going-cold leads, expiring
+ * licenses/COIs, compliance cycles coming due, overdue tasks. Bids join in Phase 5.
  */
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
@@ -12,7 +11,9 @@ import type { MailSender } from "@/lib/comms/outbound";
 import type { QuoClient } from "@/lib/integrations/quo";
 import { fmtDate, personName } from "@/lib/labels";
 import { daysInStage, isStale } from "@/lib/pipeline/rules";
-import { TZ } from "@/lib/time";
+import { nyDate, TZ } from "@/lib/time";
+import { expiringItems, type Expiring } from "@/lib/compliance/expiry";
+import { addDays, upcomingCycles, type UpcomingCycle } from "@/lib/compliance/cycles";
 import { arAging, type AgingBucket } from "./reports";
 
 type Conn = Db | Tx;
@@ -23,12 +24,12 @@ export type Digest = {
   labWaiting: { jobNumber: string; samples: number; stage: string }[];
   unpaid: { total: number; byBucket: Record<AgingBucket, number>; worst: { invoiceNumber: string | null; client: string | null; outstanding: number; bucket: string }[] };
   goingCold: { name: string; phoneOrEmail: string | null; lastInbound: Date; channel: string }[];
+  expiring: Expiring[];
+  cyclesDue: UpcomingCycle[];
   overdueTasks: number;
 };
 
-export function nyDate(d: Date): string {
-  return d.toLocaleDateString("en-CA", { timeZone: TZ });
-}
+export { nyDate } from "@/lib/time";
 
 export async function buildDigest(conn: Conn, now = new Date()): Promise<Digest> {
   // --- stale jobs ---
@@ -109,6 +110,8 @@ export async function buildDigest(conn: Conn, now = new Date()): Promise<Digest>
       lastInbound: new Date(r.last_in),
       channel: r.channel,
     })),
+    expiring: await expiringItems(conn, now, 60),
+    cyclesDue: await upcomingCycles(conn, nyDate(now), addDays(nyDate(now), 60)),
     overdueTasks: overdue,
   };
 }
@@ -136,6 +139,16 @@ export function renderDigestText(d: Digest, appUrl = process.env.NEXT_PUBLIC_SIT
     d.goingCold.map((g) => `${g.name}${g.phoneOrEmail ? ` (${g.phoneOrEmail})` : ""} — last ${g.channel === "EMAIL_IN" ? "email" : g.channel.toLowerCase()} ${fmtDate(g.lastInbound, true)}, no reply yet`),
     "None — every inbound lead has had a reply.",
   );
+  section(
+    `LICENSES & INSURANCE EXPIRING (${d.expiring.length})`,
+    d.expiring.map((e) => `${e.name} — ${e.daysLeft < 0 ? `EXPIRED ${e.expiresOn}` : `${e.expiresOn} (${e.daysLeft} days)`}`),
+    "Nothing expires in the next 60 days.",
+  );
+  section(
+    `COMPLIANCE CYCLES DUE IN 60 DAYS (${d.cyclesDue.length})`,
+    d.cyclesDue.slice(0, 20).map((c) => `${c.due} — ${c.serviceCode} — ${c.client ?? "no client"}${c.address ? `, ${c.address}` : ""} (last job ${c.jobNumber})`),
+    "None.",
+  );
   lines.push(`OVERDUE TASKS: ${d.overdueTasks}`, "");
   if (appUrl) lines.push(`Open the CRM: ${appUrl}`);
   return { subject: `ESS digest ${d.date}: ${d.staleJobs.length} stale · ${d.labWaiting.length} lab · ${usd(d.unpaid.total)} unpaid · ${d.goingCold.length} cold leads`, text: lines.join("\n") };
@@ -149,6 +162,7 @@ export function renderDigestSms(d: Digest): string {
     `${d.labWaiting.length} lab results to review`,
     `${usd(d.unpaid.total)} unpaid${over90 ? ` (${usd(over90)} 90+ days)` : ""}`,
     `${d.goingCold.length} cold leads`,
+    ...(d.expiring.length ? [`${d.expiring.length} licenses/COIs expiring`] : []),
     `${d.overdueTasks} overdue tasks`,
   ].join(" · ").replace(":·", ":");
 }

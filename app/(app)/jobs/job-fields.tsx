@@ -25,6 +25,7 @@ type Job = Partial<{
   assignedTo: string | null;
   subOrgId: string | null;
   hpdViolationRef: string | null;
+  nextCycleDue: string | null;
   notes: string | null;
 }>;
 
@@ -93,6 +94,11 @@ export function JobFields({ job = {}, options, editing = false }: { job?: Job; o
       <Field label="HPD violation ref">
         <Input name="hpdViolationRef" defaultValue={job.hpdViolationRef ?? ""} />
       </Field>
+      {editing && (
+        <Field label="Next compliance cycle due" hint="Filled in when the job is Closed (Compliance rules); set it here to override.">
+          <Input name="nextCycleDue" type="date" defaultValue={job.nextCycleDue ?? ""} />
+        </Field>
+      )}
       <Field label="Short description" className="sm:col-span-2">
         <Input name="title" defaultValue={job.title ?? ""} placeholder="e.g. Bathroom + bedroom 2 mold, tenant complaint" />
       </Field>
