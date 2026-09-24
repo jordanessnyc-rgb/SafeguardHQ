@@ -149,6 +149,15 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       expect(fake.emailed.at(-1)!.recipients).toEqual([org.email]);
       await t.db.update(s.settings).set({ autoCreateInvoice: false });
     });
+
+    it("the automatic loop skips jobs delivered before FreshBooks was connected (may already be billed)", async () => {
+      const { job } = await deliveredJob({ quotedAmount: "700.00" });
+      await t.db.update(s.jobs).set({ deliveredAt: new Date("2020-01-01T12:00:00Z") }).where(eq(s.jobs.id, job.id));
+      await invoiceDeliveredJobs(t.db, fb, 100);
+      const [fin] = await t.db.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, job.id));
+      expect(fin.freshbooksInvoiceId).toBeNull();
+      expect((await createDraftInvoiceForJob(t.db, fb, job.id)).status).toBe("created"); // manual button still works
+    });
   });
 
   describe("webhooks", () => {

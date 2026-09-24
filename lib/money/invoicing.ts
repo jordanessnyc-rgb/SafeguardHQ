@@ -6,7 +6,7 @@
  *    Sent → job Invoiced; fully paid → job Paid, review-request draft + task, held report released.
  * Everything runs on the privileged connection (worker/webhooks) and is idempotent.
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { schema as s, type Db } from "@/lib/db";
 import type { FbInvoice, FbPayment, FreshBooksClient } from "@/lib/integrations/freshbooks";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
@@ -245,8 +245,14 @@ export async function syncPayment(db: Db, fb: FreshBooksClient, paymentId: strin
   return invoiceId ? syncInvoice(db, fb, invoiceId) : null;
 }
 
-/** Worker loop: every Delivered job without an invoice gets a draft (errors surface once as a task). */
+/**
+ * Worker loop: every Delivered job without an invoice gets a draft (errors surface once as a task).
+ * Only jobs delivered after FreshBooks was connected: older jobs may already have been billed by hand,
+ * so those get a draft only when someone clicks "Create draft invoice" on the job.
+ */
 export async function invoiceDeliveredJobs(db: Db, fb: FreshBooksClient, limit = 10) {
+  const [conn] = await db.select({ since: s.freshbooksConnection.createdAt }).from(s.freshbooksConnection);
+  if (!conn) return [];
   const due = await db
     .select({ id: s.jobs.id })
     .from(s.jobs)
@@ -256,6 +262,7 @@ export async function invoiceDeliveredJobs(db: Db, fb: FreshBooksClient, limit =
         inArray(s.jobs.stage, ["DELIVERED"]),
         isNull(s.jobs.archivedAt),
         isNull(s.jobFinancials.freshbooksInvoiceId),
+        gte(s.jobs.deliveredAt, conn.since),
         // Failed attempts wait for a human fix (they get a task), but are retried hourly.
         sql`(${s.jobFinancials.invoiceError} is null or ${s.jobFinancials.updatedAt} < now() - interval '1 hour')`,
       ),
