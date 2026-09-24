@@ -64,7 +64,7 @@ export type AddressCandidate = {
 };
 
 type GeoFeature = {
-  geometry?: { coordinates?: [number, number] };
+  geometry?: { coordinates?: number[] };
   properties?: {
     label?: string;
     name?: string;

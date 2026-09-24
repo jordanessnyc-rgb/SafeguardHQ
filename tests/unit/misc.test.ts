@@ -98,3 +98,17 @@ describe("DriveClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+import { fromNyInput, toNyInput } from "@/lib/time";
+
+describe("New York time inputs", () => {
+  it("interprets form values as New York wall-clock time (EDT and EST)", () => {
+    expect(fromNyInput("2026-10-01T10:00").toISOString()).toBe("2026-10-01T14:00:00.000Z");
+    expect(fromNyInput("2026-12-01T10:00").toISOString()).toBe("2026-12-01T15:00:00.000Z");
+    expect(fromNyInput("2026-12-01").toISOString()).toBe("2026-12-01T22:00:00.000Z"); // default 5pm
+  });
+  it("round-trips", () => {
+    expect(toNyInput(fromNyInput("2026-03-08T09:30"))).toBe("2026-03-08T09:30");
+    expect(toNyInput(null)).toBe("");
+  });
+});
