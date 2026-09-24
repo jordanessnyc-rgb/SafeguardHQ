@@ -287,9 +287,10 @@ async function onTranscript(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
     .where(and(eq(s.activities.type, "CALL"), eq(s.activities.externalId, r.callId)))
     .for("update");
   const seal = before?.sensitive || (await lineFor(conn, event.data.context))?.lineKey === AIRNYC_LINE;
-  const content = seal ? mergeSealed(before?.sensitiveEnc ?? null, { transcript }) : { transcript };
+  // A sealed (AIRnyc) transcript isn't visible without decrypting, so mark its arrival for the
+  // AI call-extraction worker (SPEC §9.3), which picks up calls with a transcript.
+  const content = seal ? { ...mergeSealed(before?.sensitiveEnc ?? null, { transcript }), aiClassification: { sealedTranscript: true } } : { transcript };
   const row = await upsertCall(conn, r.callId, { ...content, raw: seal ? null : ({ transcript: event } as Record<string, unknown>) }, content);
-  // AI call extraction (SPEC §9.3) lands in Phase 4; the transcript is stored and searchable now.
   return { handled: true, activityId: row.id };
 }
 

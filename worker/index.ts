@@ -2,7 +2,7 @@
  * Long-running worker (Railway / Fly.io):
  *  - nightly NYC Open Data refresh for active properties (SPEC §6.5, pg-boss schedule)
  *  - Titan IMAP listener → email ingest, EMSL parser (SPEC §6.3)
- *  - AI triage of inbound email/SMS (SPEC §9.1), every 30s
+ *  - AI triage of inbound email/SMS (SPEC §9.1), every 30s; AI call extraction (SPEC §9.3), every minute
  *  - mail health check → SMS alert to Jordan (every 5 min)
  *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2)
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
@@ -16,6 +16,7 @@ import { PgBoss } from "pg-boss";
 import { adminDb, schema as s } from "@/lib/db";
 import { enrichProperty } from "@/lib/properties/enrich";
 import { triagePending } from "@/lib/ai/classify";
+import { extractPendingCalls } from "@/lib/ai/call-extract";
 import { driveFromEnv } from "@/lib/integrations/google-drive";
 import { quoFromEnv } from "@/lib/integrations/quo";
 import { mailSenderFromEnv, titanConfigFromEnv } from "@/lib/integrations/titan-mail";
@@ -117,6 +118,7 @@ async function main() {
 
   if (process.env.ANTHROPIC_API_KEY) {
     timers.push(every(30_000, "triage", () => triagePending(adminDb())));
+    timers.push(every(60_000, "call-extract", () => extractPendingCalls(adminDb())));
   } else {
     console.log("[triage] ANTHROPIC_API_KEY not set — inbound messages stay PENDING for manual review");
   }

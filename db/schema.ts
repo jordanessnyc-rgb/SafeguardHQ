@@ -142,6 +142,7 @@ export const taskSourceEnum = pgEnum("task_source", [
   "QUO_NEXT_STEP",
   "EMAIL_AI",
   "SYSTEM_RULE",
+  "CALL_AI",
 ]);
 
 export const campaignChannelEnum = pgEnum("campaign_channel", [
@@ -707,6 +708,8 @@ export const activities = pgTable(
     attachments: jsonb("attachments").$type<{ filename: string; contentType: string; size: number; storageBucket: string; storagePath: string; documentId?: string; ownerOnly?: boolean }[]>(),
     callStatus: text("call_status"),
     durationSeconds: integer("duration_seconds"),
+    // Set once AI call extraction (SPEC §9.3) has run on this call's transcript.
+    aiExtractedAt: timestamp("ai_extracted_at", { withTimezone: true }),
     triageStatus: triageStatusEnum("triage_status"),
     triageCategory: text("triage_category"),
     // AIRnyc-linked content is stored encrypted here instead of subject/body/transcript (CLAUDE.md rule 5).
@@ -781,6 +784,8 @@ export const settings = pgTable("settings", {
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestSmsEnabled: boolean("digest_sms_enabled").notNull().default(true),
   invoicePaymentTermsDays: integer("invoice_payment_terms_days").notNull().default(30),
+  // Jordan's notes on how he writes (tone, sign-off, phrases) — fed to AI reply drafts (SPEC §9.2).
+  aiVoiceNotes: text("ai_voice_notes"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });

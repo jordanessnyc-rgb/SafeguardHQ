@@ -71,6 +71,13 @@
       "when": 1790277845283,
       "tag": "0009_compliance_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790278417396,
+      "tag": "0010_ai_drafting",
+      "breakpoints": true
     }
   ]
 }
