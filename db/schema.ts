@@ -588,6 +588,7 @@ export const documents = pgTable(
     ...baseColumns(),
     jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
     airnycCaseId: uuid("airnyc_case_id"),
+    bidId: uuid("bid_id"),
     kind: documentKindEnum("kind").notNull(),
     title: text("title"),
     version: integer("version").notNull().default(1),
@@ -1083,3 +1084,55 @@ export const pricingRules = pgTable("pricing_rules", {
 
 export type FieldReading = { area: string; moisture?: string | null; rh?: string | null; temp?: string | null; note?: string | null };
 export type FieldPhoto = { path: string; caption: string; area?: string | null; contentType: string; width?: number; height?: number };
+
+// ---------------------------------------------------------------------------
+// Phase 5 — government bids (SPEC §8, §9.6)
+// ---------------------------------------------------------------------------
+
+export const bidTypeEnum = pgEnum("bid_type", ["RFP", "RFQ", "RFB", "IFB", "OTHER"]);
+export const bidRoleEnum = pgEnum("bid_role", ["PRIME", "SUB"]);
+export const bidStatusEnum = pgEnum("bid_status", ["WATCHING", "GO_NO_GO", "DRAFTING", "SUBMITTED", "AWARDED", "LOST", "NO_BID"]);
+export const bidSourceEnum = pgEnum("bid_source", ["MANUAL", "NYSCR", "CITY_RECORD", "PASSPORT", "COUNTY", "EMAIL"]);
+
+export type GoNoGo = {
+  recommendation: "GO" | "NO_GO" | "REVIEW";
+  summary: string;
+  checklist: { item: string; status: "MET" | "GAP" | "UNKNOWN"; note: string }[];
+  submission: string[];
+  model?: string;
+  at?: string;
+};
+
+export const bids = pgTable(
+  "bids",
+  {
+    ...baseColumns(),
+    agency: text("agency"),
+    solicitationNumber: text("solicitation_number"),
+    title: text("title").notNull(),
+    type: bidTypeEnum("type").notNull().default("OTHER"),
+    primeEntity: text("prime_entity").notNull().default("ESS"),
+    role: bidRoleEnum("role").notNull().default("PRIME"),
+    questionsDue: timestamp("questions_due", { withTimezone: true }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    openingAt: timestamp("opening_at", { withTimezone: true }),
+    siteVisitAt: timestamp("site_visit_at", { withTimezone: true }),
+    buyerName: text("buyer_name"),
+    buyerEmail: text("buyer_email"),
+    buyerPhone: text("buyer_phone"),
+    requiredCerts: text("required_certs").array().notNull().default(sql`'{}'::text[]`),
+    certGaps: text("cert_gaps").array().notNull().default(sql`'{}'::text[]`),
+    insuranceRequirements: text("insurance_requirements"),
+    scope: text("scope"),
+    status: bidStatusEnum("status").notNull().default("WATCHING"),
+    source: bidSourceEnum("source").notNull().default("MANUAL"),
+    sourceUrl: text("source_url"),
+    externalId: text("external_id"),
+    goNoGo: jsonb("go_no_go").$type<GoNoGo>(),
+    decision: text("decision"), // GO | NO_GO (a person's call; the AI only recommends)
+    decidedBy: uuid("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    notes: text("notes"),
+  },
+  (t) => [uniqueIndex("bids_source_external_uq").on(t.source, t.externalId), index("bids_due_idx").on(t.dueAt)],
+);

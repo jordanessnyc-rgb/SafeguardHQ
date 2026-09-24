@@ -41,6 +41,8 @@ export async function guardedParse<Schema extends z.ZodType>(
     jobId?: string | null;
     activityId?: string | null;
     maxTokens?: number;
+    /** PDFs sent as document blocks (e.g. an RFP). Never allowed on AIRnyc-linked calls: PDFs can't be redacted. */
+    pdfs?: { base64: string; title?: string }[];
   },
   api: AnthropicLike = anthropic(),
 ): Promise<GuardedResult<z.infer<Schema>>> {
@@ -54,6 +56,10 @@ export async function guardedParse<Schema extends z.ZodType>(
       ...v,
     });
 
+  if (opts.airnycLinked && opts.pdfs?.length) {
+    await log({ blocked: "airnyc_pdf_unredactable" });
+    return { status: "blocked", reason: "AIRnyc-linked documents can't be redacted, so they are never sent to AI." };
+  }
   const [cfg] = await conn.select().from(s.settings);
   if (opts.airnycLinked && !cfg?.airnycAiAllowed) {
     await log({ blocked: "airnyc_ai_allowed=false" });
@@ -78,7 +84,15 @@ export async function guardedParse<Schema extends z.ZodType>(
       model: opts.model,
       max_tokens: opts.maxTokens ?? 1024,
       system: opts.system,
-      messages: [{ role: "user", content: userText }],
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...(opts.pdfs ?? []).map((d) => ({ type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: d.base64 }, ...(d.title ? { title: d.title } : {}) })),
+            { type: "text" as const, text: userText },
+          ],
+        },
+      ],
       output_config: { format: zodOutputFormat(opts.schema) },
     });
     const cost = costUsd(opts.model, res.usage.input_tokens, res.usage.output_tokens);
