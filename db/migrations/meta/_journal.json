@@ -57,6 +57,20 @@
       "when": 1790275259797,
       "tag": "0007_org_hold_report",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790277834664,
+      "tag": "0008_compliance",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790277845283,
+      "tag": "0009_compliance_rls",
+      "breakpoints": true
     }
   ]
 }

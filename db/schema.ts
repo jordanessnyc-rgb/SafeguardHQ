@@ -20,6 +20,7 @@ import {
   text,
   time,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -442,6 +443,8 @@ export const jobs = pgTable(
     hpdViolationRef: text("hpd_violation_ref"),
     airnycCaseId: uuid("airnyc_case_id"),
     nextCycleDue: date("next_cycle_due"),
+    // Set when the compliance worker has scheduled this job's next cycle (SPEC §6.6), so it runs once.
+    cycleScheduledAt: timestamp("cycle_scheduled_at", { withTimezone: true }),
     notes: text("notes"),
   },
   (t) => [
@@ -979,3 +982,60 @@ export const digestRuns = pgTable("digest_runs", {
   summary: jsonb("summary"),
   error: text("error"),
 });
+
+// ---------------------------------------------------------------------------
+// Phase 4a — compliance calendar & credentials (SPEC §6.6, §4.8, §10)
+// ---------------------------------------------------------------------------
+
+/** Entered and maintained by Jordan — legal cycles are never hard-coded (SPEC §6.6). */
+export const complianceRules = pgTable("compliance_rules", {
+  ...baseColumns(),
+  serviceCode: serviceCodeEnum("service_code").notNull().unique(),
+  // null → no automatic date; the worker asks for the next cycle to be set by hand.
+  cycleMonths: integer("cycle_months"),
+  leadTimeDays: integer("lead_time_days").notNull().default(60),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+});
+
+/** ESS's own licenses and certifications. */
+export const credentials = pgTable("credentials", {
+  ...baseColumns(),
+  name: text("name").notNull(),
+  number: text("number"),
+  issuer: text("issuer"),
+  expiresAt: date("expires_at"),
+  filePath: text("file_path"),
+  notes: text("notes"),
+});
+
+/** Subcontractor details (rates live in sub_costs, OWNER only — see DECISIONS.md). */
+export const subProfiles = pgTable("sub_profiles", {
+  orgId: uuid("org_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  trades: text("trades").array().notNull().default(sql`'{}'::text[]`),
+  licenseNumbers: jsonb("license_numbers").$type<Record<string, string>>().notNull().default({}),
+  insuranceExpires: date("insurance_expires"),
+  coiPath: text("coi_path"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const expirySubjectEnum = pgEnum("expiry_subject", ["CREDENTIAL", "SUB_COI"]);
+
+/** One row per alert raised (60/30/7 days, and expired), so each fires once per expiry date. */
+export const expiryAlerts = pgTable(
+  "expiry_alerts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    subjectType: expirySubjectEnum("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    expiresOn: date("expires_on").notNull(),
+    thresholdDays: integer("threshold_days").notNull(),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("expiry_alerts_once").on(t.subjectType, t.subjectId, t.expiresOn, t.thresholdDays)],
+);
