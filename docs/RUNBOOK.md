@@ -82,7 +82,15 @@ The DB suites apply `db/test/supabase-stub.sql` (a minimal `auth.users` + `auth.
 5. **Auto-send FreshBooks invoices** stays **off** until Jordan has checked a few drafts.
 
 ### Local end-to-end (what Phase 3 was verified against)
-FreshBooks has no sandbox that accepts `http://localhost`. Locally, `FRESHBOOKS_API_BASE` / `FRESHBOOKS_AUTH_BASE` point at a mock server (same routes and envelopes as `tests/helpers/fake-freshbooks.ts`). Never set these in production.
+FreshBooks has no sandbox that accepts `http://localhost`. Locally, `FRESHBOOKS_API_BASE` / `FRESHBOOKS_AUTH_BASE` point at a mock server (same routes and envelopes as `tests/helpers/fake-freshbooks.ts`). Never set these in production (they're ignored when `NODE_ENV=production`).
+Verified in the browser on 2026-09-24:
+- **Connect:** Connect → OAuth → all 8 webhooks verified.
+  - This run found and fixed a bug: concurrent handshakes overwrote each other's verifiers.
+- **Import:** 2 clients; Pat Lee suggested by name and linked; Parkside created.
+- **Delivered → draft:** moving a QA job to Delivered in the UI created a draft within a second. It went to FreshBooks client 9001, with the two line items ($1,650), due in 30 days, and "ESS job ESS-2026-0003" plus the address in the notes. Nothing was emailed.
+- **Sent and paid:** "sent" moved the job to Invoiced; $650 kept it Invoiced; $1,000 more moved it to Paid.
+- **After payment:** the held report was released with a task, and a review-request draft was waiting in the Outbox.
+- **VA:** sees no Reports link; `/reports` and `/settings/freshbooks` redirect; no financials on the job.
 
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.

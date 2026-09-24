@@ -127,8 +127,8 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
                 {d.pending.map((c) => (
                   <TableRow key={c.freshbooksClientId} className="align-top">
                     <TableCell>
-                      <div className="font-medium">{c.organization || personName(c) || "(no name)"}</div>
-                      <div className="text-xs text-muted-foreground">{[c.organization && personName(c), c.email, c.phone].filter(Boolean).join(" · ")}</div>
+                      <div className="font-medium">{c.organization || personName(c)}</div>
+                      <div className="text-xs text-muted-foreground">{[c.organization && (c.firstName || c.lastName) && personName(c), c.email, c.phone].filter(Boolean).join(" · ")}</div>
                     </TableCell>
                     <TableCell className="text-sm">
                       {c.suggestedOrgId || c.suggestedContactId ? (
