@@ -63,7 +63,16 @@ async function proposal() {
           p("By signing below, the client authorizes ESS to perform the scope of work above at the fees stated."),
           p(""),
           p("Client name: ______________________________"),
-          p("Signature: ________________________________   Date: ______________"),
+          // Invisible DocuSign anchors (white, tiny): the signature and date tabs land here.
+          new Paragraph({
+            children: [
+              new TextRun("Signature: "),
+              new TextRun({ text: "\\ess_sign\\", color: "FFFFFF", size: 2 }),
+              new TextRun("________________________________   Date: "),
+              new TextRun({ text: "\\ess_date\\", color: "FFFFFF", size: 2 }),
+              new TextRun("______________"),
+            ],
+          }),
         ],
       },
     ],

@@ -8,6 +8,7 @@
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
  *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
  *  - scheduled inspections → Titan calendar over CalDAV (SPEC §6.3), every 5 min
+ *  - DocuSign webhook deliveries left unprocessed are retried (SPEC §6.7), every 20 min
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -28,6 +29,9 @@ import { scheduleNextCycles } from "@/lib/compliance/cycles";
 import { raiseExpiryAlerts } from "@/lib/compliance/expiry";
 import { syncCalendar } from "@/lib/calendar/sync";
 import { titanCalendarFromEnv } from "@/lib/integrations/titan-calendar";
+import { docusignFromEnv } from "@/lib/integrations/docusign";
+import { retryDocuSignDeliveries } from "@/lib/docs/esign";
+import { storageDownloader } from "@/lib/supabase/service";
 import { storageUploader } from "@/lib/supabase/service";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
@@ -163,6 +167,9 @@ async function main() {
   } else {
     console.log("[calendar] TITAN_CALDAV_ENABLED not set — scheduled jobs aren't copied to the Titan calendar");
   }
+
+  const ds = docusignFromEnv();
+  if (ds) timers.push(every(20 * 60_000, "docusign", () => retryDocuSignDeliveries(adminDb(), ds, { ...storageUploader(), ...storageDownloader() })));
 
   console.log("Worker started.");
   const stop = async () => {

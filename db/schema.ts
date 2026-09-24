@@ -597,6 +597,10 @@ export const documents = pgTable(
     status: documentStatusEnum("status").notNull().default("DRAFT"),
     // Never exposed to SUB/VA if true (enforced in RLS and in storage bucket choice).
     containsPricing: boolean("contains_pricing").notNull().default(false),
+    // DocuSign (SPEC §6.7): the envelope this proposal was sent in, and its last known status.
+    docusignEnvelopeId: text("docusign_envelope_id"),
+    docusignStatus: text("docusign_status"),
+    signedDocumentId: uuid("signed_document_id"),
   },
   (t) => [index("documents_job_idx").on(t.jobId)],
 );
@@ -836,7 +840,7 @@ export const webhookDeliveries = pgTable(
   "webhook_deliveries",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    provider: text("provider").notNull(), // QUO | FRESHBOOKS | AIRNYC
+    provider: text("provider").notNull(), // QUO | FRESHBOOKS | AIRNYC | DOCUSIGN
     deliveryId: text("delivery_id").notNull(),
     eventType: text("event_type"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
