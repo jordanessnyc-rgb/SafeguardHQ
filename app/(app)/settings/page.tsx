@@ -51,7 +51,12 @@ export default async function SettingsPage() {
       <PageHeader
         title="Settings"
         description={isOwner ? undefined : "Read-only — only the owner can change settings."}
-        actions={<Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>
+            {isOwner && <Link href="/settings/freshbooks" className={buttonVariants({ variant: "outline" })}>FreshBooks →</Link>}
+          </div>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -66,7 +71,7 @@ export default async function SettingsPage() {
                 <div className="space-y-2">
                   {toggle("autoSendEmail", "Auto-send emails", "Off: AI and template emails stay drafts until approved.")}
                   {toggle("autoSendSms", "Auto-send SMS")}
-                  {toggle("autoCreateInvoice", "Auto-send FreshBooks invoices", "Drafts are always created on Delivered (Phase 3); this controls sending.")}
+                  {toggle("autoCreateInvoice", "Auto-send FreshBooks invoices", "A draft is always created when a job is marked Delivered; this emails it to the client right away.")}
                   {toggle("holdReportUntilPaidDefault", "Hold reports until paid (default for new jobs)")}
                 </div>
                 <div className="space-y-2 rounded-md border border-amber-300 p-3">
@@ -83,6 +88,13 @@ export default async function SettingsPage() {
                       <option value="GRAPH" disabled>Microsoft Graph — needs AIRnyc written approval</option>
                     </NativeSelect>
                   </Field>
+                </div>
+                <Field label="Invoice payment terms (days)" hint="Due date on new FreshBooks drafts; also used for A/R aging when an invoice has no due date.">
+                  <Input name="invoicePaymentTermsDays" inputMode="numeric" className="w-24" defaultValue={cfg.invoicePaymentTermsDays} />
+                </Field>
+                <div className="space-y-2">
+                  {toggle("digestEnabled", "Send the daily digest (weekdays)", "Stale jobs, lab results waiting, unpaid invoices, going-cold leads.")}
+                  {toggle("digestSmsEnabled", "Also text a one-line digest", "Goes to the alert number on the Communications page.")}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <Field label="Daily digest recipients" className="sm:col-span-2" hint="Comma-separated emails.">

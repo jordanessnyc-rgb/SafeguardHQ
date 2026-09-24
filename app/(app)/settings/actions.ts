@@ -31,6 +31,9 @@ const settingsSchema = z.object({
     .transform((v) => (v ?? "").split(/[,\s]+/).filter(Boolean))
     .pipe(z.array(z.email())),
   digestTime: hhmm,
+  digestEnabled: checkbox,
+  digestSmsEnabled: checkbox,
+  invoicePaymentTermsDays: z.coerce.number().int().min(0).max(120),
   driveJobsParentFolderId: folderId,
   driveAirnycParentFolderId: folderId,
   driveTemplateFolderId: folderId,
@@ -47,7 +50,7 @@ export async function saveSettings(_prev: ActionState, form: FormData): Promise<
     const raw = formObject(form);
     const input = settingsSchema.parse({
       ...raw,
-      ...Object.fromEntries(["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "airnycAiAllowed"].map((k) => [k, form.get(k)])),
+      ...Object.fromEntries(["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "airnycAiAllowed", "digestEnabled", "digestSmsEnabled"].map((k) => [k, form.get(k)])),
     });
     const businessHours = Object.fromEntries(
       DAYS.map((d) => {
