@@ -18,6 +18,8 @@ export function TaskList({
   link: Partial<Record<"jobId" | "contactId" | "propertyId" | "airnycCaseId", string>>;
   revalidate: string;
 }) {
+  // Server Component: rendered once per request, so reading the clock here is deterministic enough.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   return (
     <div className="space-y-2">

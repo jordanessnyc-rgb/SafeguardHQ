@@ -86,3 +86,25 @@ describe.skipIf(!hasTestDb)("enrichProperty", () => {
     expect(p.buildingClass).toBe("C1");
   });
 });
+
+describe.skipIf(!hasTestDb)("worker: active properties", () => {
+  it("includes properties with non-Lost jobs, active owner/manager roles, or open AIRnyc cases only", async () => {
+    const t = await setupTestDb();
+    process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+    const va = await createUser(t, "VA");
+    const ids = await va.as(async (tx) => {
+      const mk = async (a: string) => (await tx.insert(s.properties).values({ addressLine: a }).returning())[0].id;
+      const [openJob, lostJob, manager, tenant, none] = await Promise.all(["open", "lost", "mgr", "tenant", "none"].map(mk));
+      await tx.insert(s.jobs).values({ serviceCode: "LL152", pipelineKey: "INSPECTION", stage: "SCHEDULED", propertyId: openJob });
+      await tx.insert(s.jobs).values({ serviceCode: "LL152", pipelineKey: "INSPECTION", stage: "LOST", lostReason: "price", propertyId: lostJob });
+      const [c] = await tx.insert(s.contacts).values({ lastName: "X" }).returning();
+      await tx.insert(s.propertyRoles).values({ propertyId: manager, contactId: c.id, role: "MANAGER" });
+      await tx.insert(s.propertyRoles).values({ propertyId: tenant, contactId: c.id, role: "TENANT" });
+      return { openJob, lostJob, manager, tenant, none };
+    });
+    const { activePropertyIds } = await import("@/worker/index");
+    const active = await activePropertyIds();
+    expect(active.sort()).toEqual([ids.openJob, ids.manager].sort());
+    await t.close();
+  });
+});

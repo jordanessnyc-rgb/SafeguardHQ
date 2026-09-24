@@ -124,7 +124,7 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
           <CardTitle>Move stage</CardTitle>
         </CardHeader>
         <CardContent>
-          <ActionForm action={moveJobStage.bind(null, id)} className="flex flex-wrap items-end gap-2">
+          <ActionForm key={job.stage} action={moveJobStage.bind(null, id)} className="flex flex-wrap items-end gap-2">
             <Field label="Stage" className="w-56">
               <NativeSelect name="stage" defaultValue={nextStage?.key ?? job.stage}>
                 {stages.map((st) => {
