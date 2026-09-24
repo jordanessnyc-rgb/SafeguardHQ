@@ -1,0 +1,1 @@
+ALTER TABLE "organizations" ADD COLUMN "hold_report_until_paid" boolean;

@@ -7,7 +7,7 @@
  * Everything runs on the privileged connection (worker/webhooks) and is idempotent.
  */
 import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
-import { schema as s, type Db } from "@/lib/db";
+import { schema as s, type Db, type Tx } from "@/lib/db";
 import type { FbInvoice, FbPayment, FreshBooksClient } from "@/lib/integrations/freshbooks";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
 import { createDraft } from "@/lib/comms/outbound";
@@ -89,6 +89,21 @@ export async function createDraftInvoiceForJob(db: Db, fb: FreshBooksClient, job
   const lines = invoiceLines(row.job.serviceCode, { lineItems: row.fin?.lineItems ?? [], quotedAmount: row.fin?.quotedAmount ?? null }, address);
   if (!lines.length) return fail("No line items or quoted amount on the job's financials. Add them, then retry.");
 
+  // Claim the attempt atomically so the worker loop and a stage move can't both create an invoice.
+  // (A row exists here: invoice lines come from job_financials.)
+  const claimed = await db
+    .update(s.jobFinancials)
+    .set({ invoiceAttemptAt: new Date() })
+    .where(
+      and(
+        eq(s.jobFinancials.jobId, jobId),
+        isNull(s.jobFinancials.freshbooksInvoiceId),
+        sql`(${s.jobFinancials.invoiceAttemptAt} is null or ${s.jobFinancials.invoiceAttemptAt} < now() - interval '2 minutes')`,
+      ),
+    )
+    .returning({ jobId: s.jobFinancials.jobId });
+  if (!claimed.length) return { status: "skipped", reason: "another attempt is in progress" };
+
   try {
     const customerId = await ensureFreshbooksClient(db, fb, row.job);
     const marker = `ESS job ${row.job.jobNumber}`;
@@ -101,10 +116,6 @@ export async function createDraftInvoiceForJob(db: Db, fb: FreshBooksClient, job
         return { status: "exists", invoiceId: String(prior.id) };
       }
     }
-    await db
-      .insert(s.jobFinancials)
-      .values({ jobId, invoiceAttemptAt: new Date() })
-      .onConflictDoUpdate({ target: s.jobFinancials.jobId, set: { invoiceAttemptAt: new Date() } });
 
     const [cfg] = await db.select().from(s.settings);
     const invoice = await fb.createInvoice({
@@ -190,6 +201,19 @@ export async function syncInvoice(db: Db, fb: FreshBooksClient, invoiceId: strin
   return job.id;
 }
 
+/** Hold-until-paid resolves job flag → client organization flag → settings default. */
+export async function reportHeld(
+  conn: Db | Tx,
+  job: { clientOrgId: string | null },
+  fin: { holdReportUntilPaid: boolean | null } | null | undefined,
+): Promise<boolean> {
+  if (fin?.holdReportUntilPaid != null) return fin.holdReportUntilPaid;
+  const [org] = job.clientOrgId ? await conn.select({ hold: s.organizations.holdReportUntilPaid }).from(s.organizations).where(eq(s.organizations.id, job.clientOrgId)) : [];
+  if (org?.hold != null) return org.hold;
+  const [cfg] = await conn.select({ hold: s.settings.holdReportUntilPaidDefault }).from(s.settings);
+  return cfg?.hold ?? false;
+}
+
 async function onPaid(db: Db, job: typeof s.jobs.$inferSelect, fin: typeof s.jobFinancials.$inferSelect) {
   // Idempotency gate: only the first time we see this job paid.
   const [claimed] = await db
@@ -202,8 +226,7 @@ async function onPaid(db: Db, job: typeof s.jobs.$inferSelect, fin: typeof s.job
   if (["DELIVERED", "INVOICED"].includes(job.stage)) await db.update(s.jobs).set({ stage: "PAID" }).where(eq(s.jobs.id, job.id));
 
   // Held report → released on payment (SPEC §6.2 "hold report until paid").
-  const [cfg] = await db.select().from(s.settings);
-  const held = fin.holdReportUntilPaid ?? cfg?.holdReportUntilPaidDefault ?? false;
+  const held = await reportHeld(db, job, fin);
   if (held && !fin.reportReleasedAt) {
     await db.update(s.jobFinancials).set({ reportReleasedAt: new Date() }).where(eq(s.jobFinancials.jobId, job.id));
     await ownerTask(db, { title: `Paid — release the report for ${job.jobNumber}`, description: "The report was held until payment. Send the final report to the client.", jobId: job.id, contactId: job.clientContactId });
@@ -250,7 +273,7 @@ export async function syncPayment(db: Db, fb: FreshBooksClient, paymentId: strin
  * Only jobs delivered after FreshBooks was connected: older jobs may already have been billed by hand,
  * so those get a draft only when someone clicks "Create draft invoice" on the job.
  */
-export async function invoiceDeliveredJobs(db: Db, fb: FreshBooksClient, limit = 10) {
+export async function invoiceDeliveredJobs(db: Db, fb: FreshBooksClient, limit = 10, onlyJobId?: string) {
   const [conn] = await db.select({ since: s.freshbooksConnection.createdAt }).from(s.freshbooksConnection);
   if (!conn) return [];
   const due = await db
@@ -263,6 +286,7 @@ export async function invoiceDeliveredJobs(db: Db, fb: FreshBooksClient, limit =
         isNull(s.jobs.archivedAt),
         isNull(s.jobFinancials.freshbooksInvoiceId),
         gte(s.jobs.deliveredAt, conn.since),
+        onlyJobId ? eq(s.jobs.id, onlyJobId) : undefined,
         // Failed attempts wait for a human fix (they get a task), but are retried hourly.
         sql`(${s.jobFinancials.invoiceError} is null or ${s.jobFinancials.updatedAt} < now() - interval '1 hour')`,
       ),

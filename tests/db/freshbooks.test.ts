@@ -8,7 +8,7 @@ import { and, eq, like } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { encryptField, decryptField } from "@/lib/crypto";
 import { FreshBooksClient, pythonJsonDumps, signFreshbooks, verifyFreshbooksSignature } from "@/lib/integrations/freshbooks";
-import { createDraftInvoiceForJob, invoiceDeliveredJobs } from "@/lib/money/invoicing";
+import { createDraftInvoiceForJob, invoiceDeliveredJobs, reportHeld } from "@/lib/money/invoicing";
 import { handleFreshbooksWebhook } from "@/lib/money/freshbooks-webhook";
 import { registerWebhooks } from "@/lib/money/freshbooks-setup";
 import { importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
@@ -126,11 +126,19 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       await createDraftInvoiceForJob(t.db, fb, job.id);
       const count = fake.invoices.length;
       await createDraftInvoiceForJob(t.db, fb, job.id); // already recorded → "exists"
-      // Simulate the crash: FreshBooks has it, we lost the id.
-      await t.db.update(s.jobFinancials).set({ freshbooksInvoiceId: null }).where(eq(s.jobFinancials.jobId, job.id));
+      // Simulate the crash: FreshBooks has it, we lost the id; the retry comes later.
+      await t.db.update(s.jobFinancials).set({ freshbooksInvoiceId: null, invoiceAttemptAt: new Date(Date.now() - 10 * 60_000) }).where(eq(s.jobFinancials.jobId, job.id));
       const out = await createDraftInvoiceForJob(t.db, fb, job.id);
       expect(out.status).toBe("exists");
       expect(fake.invoices.length).toBe(count);
+    });
+
+    it("two simultaneous attempts (worker + stage move) create exactly one invoice", async () => {
+      const { job } = await deliveredJob({ quotedAmount: "450.00" });
+      const before = fake.invoices.length;
+      const outs = await Promise.all([createDraftInvoiceForJob(t.db, fb, job.id), createDraftInvoiceForJob(t.db, fb, job.id)]);
+      expect(outs.map((o) => o.status).sort()).toEqual(["created", "skipped"]);
+      expect(fake.invoices.length).toBe(before + 1);
     });
 
     it("no line items or amount → error on the job + one owner task (not repeated)", async () => {
@@ -222,6 +230,16 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       expect(tasks.filter((x) => x.title.startsWith("Paid — release the report"))).toHaveLength(1);
       const payments = await t.db.select().from(s.paymentsCache).where(eq(s.paymentsCache.jobId, job.id));
       expect(payments.map((p) => p.amount).sort()).toEqual(["400.00", "600.00"]);
+    });
+
+    it("hold-until-paid resolves job flag → client organization flag → settings default", async () => {
+      const [org] = await t.db.insert(s.organizations).values({ name: "Hold Co", holdReportUntilPaid: true }).returning();
+      expect(await reportHeld(t.db, { clientOrgId: org.id }, null)).toBe(true);
+      expect(await reportHeld(t.db, { clientOrgId: org.id }, { holdReportUntilPaid: false })).toBe(false);
+      expect(await reportHeld(t.db, { clientOrgId: null }, { holdReportUntilPaid: null })).toBe(false);
+      await t.db.update(s.settings).set({ holdReportUntilPaidDefault: true });
+      expect(await reportHeld(t.db, { clientOrgId: null }, null)).toBe(true);
+      await t.db.update(s.settings).set({ holdReportUntilPaidDefault: false });
     });
 
     it("payments and FreshBooks tokens are invisible to a VA", async () => {

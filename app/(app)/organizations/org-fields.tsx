@@ -4,7 +4,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Field } from "@/components/forms";
 import { BRAND_LABELS, ORG_TYPE_LABELS } from "@/lib/labels";
 
-type Org = { name?: string; type?: string; brand?: string; website?: string | null; phone?: string | null; email?: string | null; notes?: string | null };
+type Org = { holdReportUntilPaid?: boolean | null; name?: string; type?: string; brand?: string; website?: string | null; phone?: string | null; email?: string | null; notes?: string | null };
 
 export function OrgFields({ org = {} }: { org?: Org }) {
   return (
@@ -28,7 +28,14 @@ export function OrgFields({ org = {} }: { org?: Org }) {
       <Field label="Email">
         <Input name="email" type="email" defaultValue={org.email ?? ""} />
       </Field>
-      <Field label="Website" className="sm:col-span-2">
+      <Field label="Hold reports until paid" hint="For this client's jobs, unless a job says otherwise.">
+        <NativeSelect name="holdReportUntilPaid" defaultValue={org.holdReportUntilPaid == null ? "" : String(org.holdReportUntilPaid)}>
+          <option value="">Use the default (Settings)</option>
+          <option value="true">Yes — hold until paid</option>
+          <option value="false">No</option>
+        </NativeSelect>
+      </Field>
+      <Field label="Website">
         <Input name="website" defaultValue={org.website ?? ""} />
       </Field>
       <Field label="Notes" className="sm:col-span-2">

@@ -250,6 +250,8 @@ export const organizations = pgTable(
     type: orgTypeEnum("type").notNull().default("OTHER"),
     brand: brandEnum("brand").notNull().default("ESS"),
     freshbooksClientId: text("freshbooks_client_id"),
+    // null = use settings.hold_report_until_paid_default; a job's own flag overrides this.
+    holdReportUntilPaid: boolean("hold_report_until_paid"),
     website: text("website"),
     phone: text("phone"),
     email: text("email"),
