@@ -118,3 +118,19 @@ export async function uploadRfp(id: string, _prev: ActionState, form: FormData):
   revalidatePath(`/bids/${id}`);
   return res;
 }
+
+/** Keywords that decide which listings are pulled in (City Record + alert emails). */
+export async function saveBidKeywords(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const list = String(form.get("keywords") ?? "")
+      .split(/[,\n]/)
+      .map((k) => k.trim().toLowerCase())
+      .filter((k) => k.length >= 3);
+    if (!list.length) throw new Error("Add at least one keyword.");
+    await user.db((tx) => tx.update(s.settings).set({ bidKeywords: [...new Set(list)] }).where(eq(s.settings.id, 1)));
+    return { ok: true, message: `Saved ${list.length} keywords.` };
+  });
+  revalidatePath("/bids");
+  return res;
+}

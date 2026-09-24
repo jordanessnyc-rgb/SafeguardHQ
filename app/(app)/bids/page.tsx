@@ -4,6 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
+import { ActionForm, SubmitButton } from "@/components/forms";
+import { Textarea } from "@/components/ui/textarea";
+import { saveBidKeywords } from "./actions";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { fmtDate } from "@/lib/labels";
@@ -29,6 +32,7 @@ export default async function BidsPage() {
       .orderBy(sql`${s.bids.dueAt} asc nulls last`, asc(s.bids.createdAt)),
   );
   const closed = bids.filter((b) => CLOSED.includes(b.status)).slice(0, 30);
+  const [cfg] = await user.db((tx) => tx.select({ keywords: s.settings.bidKeywords }).from(s.settings));
 
   return (
     <>
@@ -58,6 +62,21 @@ export default async function BidsPage() {
           );
         })}
       </div>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="text-sm">Automatic listings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p className="text-muted-foreground">
+            NYC agency solicitations are pulled from the City Record (NYC Open Data) every 6 hours. NYS Contract Reporter, PASSPort and county portals don&apos;t allow automated access — sign up for their email alerts to crm@ess-nyc.com and each alert becomes a Watching bid. Listings are kept when they mention one of these keywords:
+          </p>
+          <ActionForm action={saveBidKeywords} className="space-y-2">
+            <Textarea name="keywords" rows={2} defaultValue={cfg?.keywords.join(", ") ?? ""} disabled={user.role !== "OWNER"} aria-label="Keywords" />
+            {user.role === "OWNER" && <SubmitButton size="xs" variant="secondary">Save keywords</SubmitButton>}
+          </ActionForm>
+        </CardContent>
+      </Card>
+
       {closed.length > 0 && (
         <Card className="mt-4">
           <CardHeader><CardTitle className="text-sm">Closed</CardTitle></CardHeader>

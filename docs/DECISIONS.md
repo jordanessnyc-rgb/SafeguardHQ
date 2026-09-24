@@ -204,3 +204,32 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **AIRnyc jobs** show only the case reference and address; no member name or phone.
   - **Updates:** an event is rewritten only when its content changes (hash), with SEQUENCE bumped. It is deleted when the job is unscheduled, Lost or archived.
   - **Errors** are kept on the job (`calendar_error`).
+
+## 2026-09-24 — Phase 5 (Growth)
+
+**Scope confirmed with Jordan:**
+- **Skipped:** AIRnyc modes 2–4 (AIRnyc hasn't approved a connection method) and CityWatch.
+- **Route planning:** the free, approximate version.
+- **Bid sources:** NYS Contract Reporter, NYC PASSPort / City Record, and county sites.
+
+### Bids (5a, 5b)
+- **Bid records:** `bids` follows SPEC §8, plus source, external ID, site visit, scope and the go/no-go result.
+  - Staff work bids; only the owner deletes them or records the **decision**.
+  - The AI only recommends. A no-go closes the bid as No Bid; a go moves it to Drafting.
+- **Go/no-go (§9.6):** the RFP PDF goes to the model as a document block (`claude-sonnet-5`, `AI_MODEL_BID`), together with ESS's credentials list (number, issuer, expiry).
+  - **Extracted:** deadlines (as New York time), required certifications, insurance, scope, submission items, and a checklist marked MET, GAP or UNKNOWN.
+  - **Checklist rule:** MET only when a listed, unexpired credential covers the requirement.
+  - **Existing data:** fields someone already filled in are never overwritten.
+  - **Deadline tasks:** created once each — questions (2 days before), site visit, and bid due (3 days before).
+  - **PDF guard:** the AI wrapper now refuses any PDF on an AIRnyc-linked call, because PDFs can't be redacted.
+- **Sources (checked live, 2026-09-24):**
+  | Source | Finding | What we did |
+  |---|---|---|
+  | NYC City Record Online | Open dataset `dg92-zbpx` (DCAS, updated daily; it occasionally pauses for several days). Solicitations are `section_name='Procurement' AND type_of_notice_description='Solicitation'`. Dates are floating local times. | Pulled every 6 h with a **14-day look-back** (so pauses don't lose listings). SoQL `LIKE` pre-filters on keywords; a word-boundary check keeps only true matches ("lead" but not "leadership"). Closed listings are skipped. Dedupe on `request_id`. A live query returned NYCHA asbestos, Parks industrial hygiene and EDC on-call hazmat listings. |
+  | NYC PASSPort | Public browsing, but `robots.txt` disallows all, and there's no API. Its RFx are advertised in the City Record. | Covered by the City Record. PASSPort's vendor digest emails are handled like any other alert email. |
+  | NYS Contract Reporter | No API, feed or open dataset. The **terms forbid copying without written permission**. A free account gets daily e-Alerts (the "Environmental" category plus keywords). | No scraping. **E-Alert emails** are parsed. |
+  | Counties | Nassau (Oracle APEX board plus vendor portal emails), Suffolk (Bonfire plus the Procurement Announcement System, which requires login), Westchester/Rockland (BidNet Direct; email matching is a paid tier). None has a public API or RSS. | Their **alert emails** are parsed. |
+- **Alert emails:** emails the triage step tags `BID_NOTICE` go through one Haiku extraction each, since one e-Alert can list many ads. Solicitations that are relevant and still open become Watching bids.
+  - **Dedupe:** on (source, solicitation number), or on a hash of agency and title when there's no number.
+  - **Once per email:** `activities.ai_extracted_at`, limited to the last 3 days.
+- **Keywords** are editable on the Bids page (owner). The defaults cover ESS's services.
