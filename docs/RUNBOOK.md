@@ -67,6 +67,23 @@ The DB suites apply `db/test/supabase-stub.sql` (a minimal `auth.users` + `auth.
   - EMSL email → sample RESULTS_IN and job moved to Drafting: working.
   - Duplicate webhook deliveries: no duplicate rows.
 
+## Phase 3 setup (FreshBooks, digest)
+1. **FreshBooks app**
+   - At <https://my.freshbooks.com/#/developer>, create an app.
+   - **Redirect URI** must be HTTPS: `https://<crm>/api/freshbooks/callback`.
+   - **Scopes:** `user:profile:read`, `user:clients:read`, `user:clients:write`, `user:invoices:read`, `user:invoices:write`, `user:payments:read`.
+   - Set `FRESHBOOKS_CLIENT_ID`, `FRESHBOOKS_CLIENT_SECRET`, `FRESHBOOKS_REDIRECT_URI` on **Vercel and the worker**.
+2. **Connect (owner):** Settings → FreshBooks → **Connect FreshBooks**, then approve in FreshBooks. The callback saves encrypted tokens and registers the webhooks at `https://<crm>/api/webhooks/freshbooks`. Within about a minute, each should show ✓ on the page. If any stays "waiting", click **Register webhooks again**.
+3. **Import clients:** **Import / refresh clients from FreshBooks**, then work through the review list (Link / Create new / Ignore). Link before the first invoice goes out, so FreshBooks doesn't end up with duplicate clients.
+4. **Settings:**
+   - Payment terms (days) and "Hold reports until paid" default.
+   - Digest on/off, the SMS line, recipients and time.
+   - Per-client hold: on the organization page.
+5. **Auto-send FreshBooks invoices** stays **off** until Jordan has checked a few drafts.
+
+### Local end-to-end (what Phase 3 was verified against)
+FreshBooks has no sandbox that accepts `http://localhost`. Locally, `FRESHBOOKS_API_BASE` / `FRESHBOOKS_AUTH_BASE` point at a mock server (same routes and envelopes as `tests/helpers/fake-freshbooks.ts`). Never set these in production.
+
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.
 - **Refreshing a property's NYC data:** use the property page → "Refresh NYC data". The worker also refreshes nightly.
