@@ -55,6 +55,7 @@ export default async function SettingsPage() {
           <div className="flex flex-wrap gap-2">
             <Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>
             {isOwner && <Link href="/settings/freshbooks" className={buttonVariants({ variant: "outline" })}>FreshBooks →</Link>}
+            {isOwner && <Link href="/settings/pricing" className={buttonVariants({ variant: "outline" })}>Pricing →</Link>}
           </div>
         }
       />

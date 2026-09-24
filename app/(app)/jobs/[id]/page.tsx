@@ -28,8 +28,13 @@ import {
   addSample,
   archiveJob,
   createJobDriveFolder,
+  addSubQuote,
+  buildQuote,
   createJobInvoice,
+  generateProposalDoc,
+  makeSubCopy,
   moveJobStage,
+  selectSubQuote,
   refreshJobInvoice,
   saveFinancials,
   setDocumentStatus,
@@ -73,6 +78,18 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
           invoice: fin?.freshbooksInvoiceId ? (await tx.select().from(s.invoicesCache).where(eq(s.invoicesCache.freshbooksInvoiceId, fin.freshbooksInvoiceId)))[0] : undefined,
           held: await reportHeld(tx, row.job, fin),
           connected: (await tx.select({ id: s.freshbooksConnection.id }).from(s.freshbooksConnection)).length > 0,
+          rule: (await tx.select().from(s.pricingRules).where(and(eq(s.pricingRules.serviceCode, row.job.serviceCode), eq(s.pricingRules.active, true))))[0],
+          subQuotes: await tx
+            .select({ q: s.subCosts, name: s.organizations.name })
+            .from(s.subCosts)
+            .leftJoin(s.organizations, eq(s.organizations.id, s.subCosts.subOrgId))
+            .where(eq(s.subCosts.jobId, id))
+            .orderBy(asc(s.subCosts.amount)),
+          subOrgs: await tx
+            .select({ id: s.organizations.id, name: s.organizations.name })
+            .from(s.organizations)
+            .where(and(eq(s.organizations.type, "SUBCONTRACTOR"), isNull(s.organizations.archivedAt)))
+            .orderBy(asc(s.organizations.name)),
         }
       : null;
     return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, compose: await loadComposeData(tx) };
@@ -281,6 +298,11 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
                   )}{" "}
                   <span className="text-xs text-muted-foreground">v{d.version}</span>
                   {d.containsPricing && <Badge variant="outline" className="ml-1">$ owner only</Badge>}
+                  {isOwner && d.kind === "REPORT" && d.storagePath?.toLowerCase().endsWith(".docx") && (
+                    <ActionForm action={makeSubCopy.bind(null, id, d.id)} className="mt-1 flex flex-col items-start gap-1">
+                      <SubmitButton size="xs" variant="outline">Make sub copy</SubmitButton>
+                    </ActionForm>
+                  )}
                 </div>
                 <form action={setDocumentStatus.bind(null, id, d.id)} className="flex gap-1">
                   <NativeSelect name="status" defaultValue={d.status} className="h-7 w-24 text-xs" aria-label="Document status">
@@ -351,6 +373,87 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
                 {financials && <span className="text-sm">Gross margin: <strong>${financials.grossMargin}</strong></span>}
               </div>
             </ActionForm>
+
+            <div className="mt-4 space-y-3 border-t pt-3 text-sm">
+              <div className="font-medium">Quote builder</div>
+              <p className="text-xs text-muted-foreground">
+                {money?.rule
+                  ? `Rule for this service: base ${usd(money.rule.baseAmount)}${money.rule.perSqft ? ` · ${usd(money.rule.perSqft)}/sq ft over ${money.rule.includedSqft.toLocaleString("en-US")}` : ""}${money.rule.perSample ? ` · ${usd(money.rule.perSample)}/sample over ${money.rule.includedSamples}` : ""}${money.rule.minimumAmount ? ` · minimum ${usd(money.rule.minimumAmount)}` : ""}.`
+                  : "No pricing rule for this service yet (Settings → Pricing) — only extra lines are priced."}{" "}
+                Building the quote replaces the line items above.
+              </p>
+              <ActionForm action={buildQuote.bind(null, id)} className="grid gap-2 sm:grid-cols-4">
+                <Field label="Area (sq ft)"><Input name="sqft" inputMode="numeric" defaultValue={financials?.quoteInputs?.sqft ?? ""} /></Field>
+                <Field label="Samples"><Input name="samples" inputMode="numeric" defaultValue={financials?.quoteInputs?.samples ?? samples.length ?? ""} /></Field>
+                <Field label="Valid (days)"><Input name="validDays" inputMode="numeric" defaultValue={financials?.quoteInputs?.validDays ?? 30} /></Field>
+                <div />
+                <Field label="Extra lines" hint="Description | qty | unit price" className="sm:col-span-2">
+                  <Textarea name="extras" rows={2} defaultValue={financials?.quoteInputs?.extras?.map((l) => `${l.description} | ${l.quantity} | ${l.unitPrice}`).join("\n")} />
+                </Field>
+                <Field label="Scope (shown on the proposal)" className="sm:col-span-2">
+                  <Textarea name="scope" rows={2} defaultValue={financials?.quoteInputs?.scope ?? money?.rule?.defaultScope ?? ""} />
+                </Field>
+                <div className="flex flex-wrap items-center gap-2 sm:col-span-4">
+                  <SubmitButton size="sm" variant="secondary">Build quote</SubmitButton>
+                </div>
+              </ActionForm>
+              {(financials?.lineItems.length ?? 0) > 0 && (
+                <ActionForm action={generateProposalDoc.bind(null, id)} className="flex flex-col items-start gap-1">
+                  <SubmitButton size="sm">Generate proposal (Word)</SubmitButton>
+                </ActionForm>
+              )}
+
+              <div className="font-medium">Subcontractor quotes</div>
+              {money && money.subQuotes.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Sub</TableHead>
+                      <TableHead className="text-right">Their price</TableHead>
+                      <TableHead className="text-right">ESS margin</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {money.subQuotes.map(({ q, name }) => {
+                      const margin = financials?.quotedAmount ? Number(financials.quotedAmount) - Number(q.amount ?? 0) - Number(financials.labCost ?? 0) - Number(financials.otherCost ?? 0) : null;
+                      return (
+                        <TableRow key={q.id}>
+                          <TableCell>
+                            {name ?? "—"} {q.description && <span className="text-xs text-muted-foreground">· {q.description}</span>}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{usd(q.amount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{margin === null ? "—" : usd(margin)}</TableCell>
+                          <TableCell className="text-right">
+                            {q.selected ? (
+                              <Badge>chosen</Badge>
+                            ) : (
+                              <form action={selectSubQuote.bind(null, id, q.id)}>
+                                <Button size="xs" variant="ghost" type="submit">Use this sub</Button>
+                              </form>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-xs text-muted-foreground">No sub quotes yet.</p>
+              )}
+              {money && money.subOrgs.length > 0 ? (
+                <ActionForm action={addSubQuote.bind(null, id)} className="flex flex-wrap items-end gap-2">
+                  <NativeSelect name="subOrgId" className="h-8 w-48" aria-label="Subcontractor">
+                    {money.subOrgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </NativeSelect>
+                  <Input name="amount" inputMode="decimal" placeholder="Price $" className="h-8 w-28" aria-label="Sub price" />
+                  <Input name="description" placeholder="Notes (scope, timing)" className="h-8 w-56" aria-label="Notes" />
+                  <SubmitButton size="xs" variant="secondary">Add sub quote</SubmitButton>
+                </ActionForm>
+              ) : (
+                <p className="text-xs text-muted-foreground">Add an organization of type Subcontractor to compare sub quotes.</p>
+              )}
+            </div>
 
             <div className="mt-4 space-y-2 border-t pt-3 text-sm">
               <div className="font-medium">FreshBooks invoice</div>
