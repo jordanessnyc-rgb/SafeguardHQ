@@ -258,3 +258,19 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
     - The same person resubmitting within 10 minutes is ignored.
   - **Plain HTML forms** can redirect back to a thank-you page, but only on an allowed origin.
 - **Results:** scans, leads, jobs and won jobs are visible to staff. Revenue (invoice amount, else quote) and cost come from owner-only tables, so under a VA's RLS they are `null`. They're never derived from anything a VA can read.
+
+### Natural-language search and route planning (5e)
+- **"Ask the CRM" (§9.6).** The question plus a **curated catalog** of tables and columns goes to `claude-sonnet-5`, which returns one SELECT. **No row data ever reaches the model;** results go straight to the screen. The query then passes four layers:
+  1. **Validator:**
+     - SELECT/WITH only, as a single statement, with no comments.
+     - No write or DDL keywords (including SELECT INTO and data-changing CTEs).
+     - No `pg_*`, `information_schema`, `auth.`/`storage.`, `set_config`/`current_setting` or `dblink`.
+     - No `*` projections, no encrypted/raw/message-body columns, and only catalog tables.
+  2. **Run as the asking user**, so RLS applies. The catalog also hides owner-only money tables from a VA's prompt.
+  3. **`transaction_read_only = on`** — writes fail even if something slips past the validator (tested).
+  4. **`statement_timeout = 5s`**, and results are capped at 200 rows.
+- **Route planning (§10, free version).**
+  - **Ordering:** the day's scheduled jobs are ordered as a round trip from the office (47-58 43rd St; coordinates from GeoSearch) — nearest neighbour, then 2-opt, which matches the brute-force optimum in tests.
+  - **Drive times** are estimated as straight-line distance × 1.4 at about 12 mph, plus 5 minutes per stop to park.
+  - **"Open in Google Maps"** uses the public directions URL (no API key or cost).
+  - **Suggestion only:** it never reschedules anything or tells clients.
