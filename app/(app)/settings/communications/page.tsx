@@ -43,7 +43,7 @@ export default async function CommsSettingsPage() {
 
   return (
     <>
-      <PageHeader title="Communications" description={<Link href="/settings" className="hover:underline">← Settings</Link>} />
+      <PageHeader title="Phone, email &amp; AI" description="Quo phone and text lines, the Titan mailbox, AI triage, and message templates." />
 
       <Card className="mb-4">
         <CardHeader>

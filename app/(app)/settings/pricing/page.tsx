@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,7 +21,7 @@ export default async function PricingPage() {
         title="Pricing"
         description={
           <>
-            <Link href="/settings" className="hover:underline">← Settings</Link> · Owner only. The quote builder prices each job as base + area over the included sq ft + samples over the included count, raised to the minimum.
+            Owner only. The quote builder prices each job as base + area over the included sq ft + samples over the included count, raised to the minimum.
           </>
         }
       />

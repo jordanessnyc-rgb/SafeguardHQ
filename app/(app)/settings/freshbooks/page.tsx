@@ -39,7 +39,7 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
 
   return (
     <>
-      <PageHeader title="FreshBooks" description={<Link href="/settings" className="hover:underline">← Settings</Link>} />
+      <PageHeader title="FreshBooks" />
       {sp.connected && <p className="mb-3 rounded-md border border-primary/40 bg-primary/5 p-2 text-sm text-primary">FreshBooks connected. Next: import your clients below.</p>}
       {error && <p role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive">{error === "not-configured" ? "FreshBooks app credentials aren't set on the server." : error}</p>}
 
