@@ -183,6 +183,13 @@
       "when": 1790339982967,
       "tag": "0025_worker_status_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790360998882,
+      "tag": "0026_remove_owner_mfa",
+      "breakpoints": true
     }
   ]
 }

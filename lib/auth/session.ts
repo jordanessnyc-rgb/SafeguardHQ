@@ -13,8 +13,6 @@ export type CurrentUser = {
   role: Role | null;
   fullName: string | null;
   claims: JwtClaims;
-  /** OWNER signed in with the email link only: the database grants no role until the TOTP step (0023). */
-  mfaPending: boolean;
   /** Run queries as this user — Postgres RLS applies. The only way request code touches the DB. */
   db: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>;
 };
@@ -27,14 +25,12 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
 
   const db = <T>(fn: (tx: Tx) => Promise<T>) => runAsUser(adminDb(), claims, fn);
   const [profile] = await db((tx) => tx.select().from(s.profiles).where(eq(s.profiles.userId, claims.sub)));
-  const mfaPending = profile?.role === "OWNER" && typeof claims.aal === "string" && claims.aal !== "aal2";
   return {
     id: claims.sub,
     email: profile?.email ?? claims.email ?? "",
-    role: mfaPending ? null : (profile?.role ?? null), // no role at all until the second factor
+    role: profile?.role ?? null,
     fullName: profile?.fullName ?? null,
     claims,
-    mfaPending,
     db,
   };
 });
@@ -43,7 +39,6 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
 export async function requireStaff(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.mfaPending) redirect("/mfa");
   if (user.role === "SUB") redirect("/portal");
   if (user.role !== "OWNER" && user.role !== "VA") redirect("/no-access");
   return user;

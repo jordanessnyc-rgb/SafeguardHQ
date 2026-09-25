@@ -303,7 +303,9 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
 
 Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus Sentry for error tracking.
 
-### Owner two-step sign-in (6a)
+### Owner two-step sign-in (6a) — REMOVED 2026-09-25
+
+- **Removed at Jordan's request** ("we don't have that important information"). Migration 0026 restores the plain `current_app_role()`; the /mfa and Sign-in security pages are gone. The notes below are kept for history.
 
 - **Verified against:** `@supabase/auth-js` 2.117 (installed type definitions and their inline docs):
   `mfa.enroll({factorType:'totp'})` returns an SVG QR code and a secret, `mfa.challengeAndVerify`

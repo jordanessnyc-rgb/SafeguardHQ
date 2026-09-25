@@ -427,7 +427,7 @@ payment moves the job to Paid.
   queries to Claude.
 
 ### Phase 6 — Hardening (§13)
-- Two-factor login (TOTP) required for OWNER accounts.
+- ~~Two-factor login (TOTP) for OWNER accounts~~: built, then removed at Jordan's request (2026-09-25).
 - Admin health page: failed background jobs (dead-letter queue) with retry, integration health
   (last Quo event, IMAP connection, FreshBooks token age, worker heartbeat), and the audit log.
 - Audit coverage: every financial table has the audit trigger (enforced by a test).
@@ -442,7 +442,7 @@ AIRnyc MANUAL mode (§7.4 mode 1) ships in Phase 1 alongside jobs.
 ## 13. Non-functional requirements
 
 - **Security:** RLS on every table; secrets in host secret stores; encrypted member fields;
-  `audit_log` for reads of AIRnyc data and all financial changes; 2FA on the CRM login for OWNER.
+  `audit_log` for reads of AIRnyc data and all financial changes; 2FA for OWNER was built and then removed at Jordan's request (2026-09-25).
 - **Reliability:** all integrations retry with exponential backoff via pg-boss; dead-letter queue
   visible in an admin page; webhook signature verification required.
 - **Backups:** Supabase daily backups + weekly export of core tables to Drive.

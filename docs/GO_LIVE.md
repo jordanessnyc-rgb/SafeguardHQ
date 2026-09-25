@@ -11,7 +11,7 @@ State as of 2026-09-25. A new session should pick up here when Jordan says "cont
   the Management API with drizzle's bookkeeping (`drizzle.__drizzle_migrations`), so `pnpm db:migrate` and the
   Production database workflow continue from here. The DB password was rotated during setup and lives only in
   Vercel/Railway env vars; reset it in Supabase (Database → Settings) if you ever need it.
-- **Auth:** site URL + redirect allow-list set, sign-ups off, TOTP MFA on. Owner: jordanessnyc@gmail.com (OWNER).
+- **Auth:** site URL + redirect allow-list set, sign-ups off. (Two-step sign-in was removed on request, so the TOTP setting is unused.) Owner: jordanessnyc@gmail.com (OWNER).
   Custom email templates need custom SMTP on the free plan, so the default Supabase emails are used for now. They
   link via PKCE `code`, which `/auth/confirm` accepts. The built-in sender only mails project team members and is
   rate-limited, so set up SMTP (Titan) before inviting VAs.
