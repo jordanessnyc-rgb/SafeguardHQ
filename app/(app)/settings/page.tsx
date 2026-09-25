@@ -12,9 +12,23 @@ import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { loadPipelines } from "@/lib/pipeline/config";
 import { titleCase } from "@/lib/labels";
+import { RoleFields } from "./role-fields";
 import { addChecklistItem, inviteUser, saveSettings, saveStaleDays, setChecklistItemActive, setUserRole } from "./actions";
 
 export const metadata = { title: "Settings" };
+
+const ROLE_OPTIONS = [
+  { value: "", label: "No access" },
+  { value: "OWNER", label: "Owner" },
+  { value: "VA", label: "VA" },
+  { value: "FIELD", label: "Field (later)" },
+  { value: "SUB", label: "Sub (portal)" },
+];
+const INVITE_ROLES = [
+  { value: "VA", label: "VA" },
+  { value: "OWNER", label: "Owner" },
+  { value: "SUB", label: "Sub (portal)" },
+];
 
 const DAYS = [
   ["mon", "Mon"],
@@ -169,18 +183,8 @@ export default async function SettingsPage() {
                       <TableCell>
                         {isOwner ? (
                           <ActionForm action={setUserRole.bind(null, p.userId)} className="flex flex-wrap items-center gap-1">
-                            <NativeSelect name="role" defaultValue={p.role ?? ""} className="h-7 w-28 text-xs" aria-label="Role">
-                              <option value="">No access</option>
-                              <option value="OWNER">Owner</option>
-                              <option value="VA">VA</option>
-                              <option value="FIELD">Field (later)</option>
-                              <option value="SUB">Sub (portal)</option>
-                            </NativeSelect>
-                            <NativeSelect name="orgId" defaultValue={p.orgId ?? ""} className="h-7 w-36 text-xs" aria-label="Subcontractor organization (Sub only)">
-                              <option value="">— sub org —</option>
-                              {subOrgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                            </NativeSelect>
-                            <Button size="xs" variant="ghost" type="submit">Set</Button>
+                            <RoleFields roles={ROLE_OPTIONS} subOrgs={subOrgs} defaultRole={p.role ?? ""} defaultOrgId={p.orgId} compact />
+                            <Button size="xs" variant="outline" type="submit">Save</Button>
                           </ActionForm>
                         ) : (
                           <Badge variant="secondary">{p.role ? titleCase(p.role) : "No access"}</Badge>
@@ -194,15 +198,7 @@ export default async function SettingsPage() {
                 <ActionForm action={inviteUser} className="grid gap-2 border-t pt-3 sm:grid-cols-4">
                   <Input name="email" type="email" placeholder="email" required className="sm:col-span-2" />
                   <Input name="fullName" placeholder="Name" />
-                  <NativeSelect name="role" defaultValue="VA" aria-label="Role">
-                    <option value="VA">VA</option>
-                    <option value="OWNER">Owner</option>
-                    <option value="SUB">Sub (portal)</option>
-                  </NativeSelect>
-                  <NativeSelect name="orgId" defaultValue="" aria-label="Subcontractor organization" className="sm:col-span-2">
-                    <option value="">— subcontractor org (Sub only) —</option>
-                    {subOrgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </NativeSelect>
+                  <RoleFields roles={INVITE_ROLES} subOrgs={subOrgs} defaultRole="VA" />
                   <SubmitButton size="sm" variant="secondary">Send invite</SubmitButton>
                 </ActionForm>
               )}

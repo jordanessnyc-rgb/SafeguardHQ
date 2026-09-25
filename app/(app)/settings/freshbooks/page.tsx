@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActionForm, SubmitButton } from "@/components/forms";
+import { Status } from "@/components/status";
 import { PageHeader } from "@/components/page-header";
 import { requireOwner } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
@@ -86,7 +87,7 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
               <ul className="grid grid-cols-2 gap-1 text-xs">
                 {callbacks.map(([id, cb]) => (
                   <li key={id} className="flex items-center gap-1.5">
-                    <Badge variant={cb.verified ? "secondary" : "outline"}>{cb.verified ? "✓" : "waiting"}</Badge>
+                    <Status tone={cb.verified ? "ok" : "warn"}>{cb.verified ? "Verified" : "Waiting"}</Status>
                     {cb.event}
                   </li>
                 ))}
