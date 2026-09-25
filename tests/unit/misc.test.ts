@@ -164,3 +164,15 @@ describe("Titan config", () => {
     expect(titanConfigFromEnv({} as unknown as NodeJS.ProcessEnv)).toBeNull();
   });
 });
+
+describe("FreshBooks authorize URL", () => {
+  it("asks for the app's own scopes unless FRESHBOOKS_SCOPES forces a list", async () => {
+    const { authorizeUrl } = await import("@/lib/integrations/freshbooks");
+    const cfg = { clientId: "cid", clientSecret: "x", redirectUri: "https://crm.example/api/freshbooks/callback" };
+    const plain = new URL(authorizeUrl(cfg, "st", ""));
+    expect(plain.searchParams.get("scope")).toBeNull();
+    expect(plain.searchParams.get("client_id")).toBe("cid");
+    expect(plain.searchParams.get("redirect_uri")).toBe(cfg.redirectUri);
+    expect(new URL(authorizeUrl(cfg, "st", "user:profile:read")).searchParams.get("scope")).toBe("user:profile:read");
+  });
+});

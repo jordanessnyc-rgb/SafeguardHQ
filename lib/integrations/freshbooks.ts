@@ -36,8 +36,14 @@ export function fbConfigFromEnv(env = process.env): FbConfig | null {
   return { clientId: env.FRESHBOOKS_CLIENT_ID, clientSecret: env.FRESHBOOKS_CLIENT_SECRET, redirectUri: env.FRESHBOOKS_REDIRECT_URI };
 }
 
-export function authorizeUrl(cfg: FbConfig, state: string): string {
-  const q = new URLSearchParams({ response_type: "code", client_id: cfg.clientId, redirect_uri: cfg.redirectUri, scope: FB_SCOPES.join(" "), state });
+/**
+ * No `scope` parameter: FreshBooks then grants the scopes ticked on the app itself. Sending an explicit
+ * list failed in production ("The requested scope is invalid, unknown, or malformed") as soon as the
+ * app's ticked scopes didn't match it exactly. FRESHBOOKS_SCOPES can still force a list if ever needed.
+ */
+export function authorizeUrl(cfg: FbConfig, state: string, scopes = process.env.FRESHBOOKS_SCOPES): string {
+  const q = new URLSearchParams({ response_type: "code", client_id: cfg.clientId, redirect_uri: cfg.redirectUri, state });
+  if (scopes) q.set("scope", scopes);
   return `${FB_AUTH}/oauth/authorize/?${q}`;
 }
 
