@@ -1,0 +1,42 @@
+name: Production database
+# Applies migrations to the live Supabase database, and makes the first owner.
+# The connection string lives only in the repo secret PRODUCTION_DATABASE_URL (Supabase →
+# Connect → Session pooler, port 5432). Nobody pastes it anywhere else.
+on:
+  push:
+    branches: [main]
+    paths: ["db/migrations/**"]
+  workflow_dispatch:
+    inputs:
+      owner_email:
+        description: "Optional: after migrating, give this Supabase user the OWNER role"
+        required: false
+        type: string
+
+concurrency: production-db
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+    steps:
+      - name: Check the secret is set
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add the PRODUCTION_DATABASE_URL repository secret first (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - name: Make owner
+        if: ${{ inputs.owner_email != '' }}
+        run: pnpm db:make-owner "$OWNER_EMAIL"
+        env:
+          OWNER_EMAIL: ${{ inputs.owner_email }}

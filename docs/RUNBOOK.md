@@ -25,10 +25,10 @@ The DB suites apply `db/test/supabase-stub.sql` (a minimal `auth.users` + `auth.
    - Authentication → URL Configuration: Site URL = production URL; add it to Redirect URLs.
    - Authentication → Email Templates: paste `supabase/templates/magic_link.html` (Magic Link) and `invite.html` (Invite User). They link to `/auth/confirm?token_hash=…`.
    - Set up custom SMTP (the built-in sender is rate-limited).
-2. **Migrate:** `DATABASE_URL=<direct connection> pnpm db:migrate`. This also creates the `job-files` and `job-files-pricing` buckets and their policies.
-3. **First owner:** Supabase → Authentication → Users → Invite Jordan, then run `pnpm db:make-owner <jordan's email>`. Jordan invites VAs from Settings → Team.
+2. **Migrate:** GitHub → Actions → **Production database** → Run workflow (uses the `PRODUCTION_DATABASE_URL` repo secret: Supabase → Connect → Session pooler string). It also runs by itself whenever a push to main adds a migration. This also creates the `job-files` and `job-files-pricing` buckets and their policies.
+3. **First owner:** Supabase → Authentication → Users → Invite Jordan, then run the **Production database** workflow again with Jordan's email in `owner_email`. Jordan invites VAs from Settings → Team.
 4. **Vercel** env vars: `DATABASE_URL` (pooler, transaction mode), the `NEXT_PUBLIC_SUPABASE_*` values, `SUPABASE_SECRET_KEY`, `NEXT_PUBLIC_SITE_URL`, `AIRNYC_ENCRYPTION_KEY`, `SOCRATA_APP_TOKEN`, and the Google credentials.
-5. **Worker** (Railway/Fly): `pnpm worker`, with the same `DATABASE_URL` and `SOCRATA_APP_TOKEN`.
+5. **Worker** (Railway): New project → Deploy from GitHub repo → this repo. `railway.json` sets the start command (`pnpm worker`, no build step, always restart). Variables: `DATABASE_URL` (Supabase session pooler string, same as the GitHub secret), `SOCRATA_APP_TOKEN`, plus the integration keys as each one is connected. /admin → System health shows its heartbeat.
 6. **Google Drive:** either
    - a service account, added as a Content Manager to a **Shared Drive** that holds the parent + template folders (`GOOGLE_SERVICE_ACCOUNT_JSON`), or
    - an OAuth client + refresh token for Jordan's account (`GOOGLE_OAUTH_*`).
