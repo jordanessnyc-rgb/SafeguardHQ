@@ -339,3 +339,23 @@ Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus 
   if any table with an amount/cost/paid/outstanding/margin column lacks the trigger, so new money tables
   can't slip through. `ai_calls` and `settings` are excluded: they hold API spend and the AI cost cap,
   not client money.
+
+### Weekly export to Google Drive (6c)
+
+- **Verified against:** Google Drive API v3 docs (Sept 2026).
+  - `name contains 'x'` is **prefix** matching for names.
+  - `orderBy=createdTime desc` is a valid sort.
+  - Trashing is `files.update` with `{trashed: true}`, and trashed files are deleted after 30 days.
+  - Uploads reuse the existing multipart upload.
+- **What's exported:** one `.zip` of CSVs (one per table) every Sunday at 2:00 AM New York, named
+  `ess-crm-export-YYYY-MM-DD.zip`, in `GOOGLE_DRIVE_EXPORT_FOLDER_ID`. The newest 12 are kept; older
+  ones go to the Drive trash.
+- **Retries:** it's a pg-boss job, so it retries three times and then shows up under Failed jobs
+  on /admin. Each run is also recorded in `worker_status`.
+- **Tables:** every table except credentials and plumbing (FreshBooks tokens, MCP token hashes,
+  webhook payloads, worker and mail sync state). New tables are included automatically.
+- **Encrypted data:** AIRnyc member fields are exported as stored, i.e. encrypted. The key is never in the export.
+- **Spreadsheet safety:** CSV cells that a spreadsheet would run as a formula get a leading apostrophe.
+  Negative numbers are left alone.
+- **Purpose:** this is a readable copy that doesn't depend on us. Full restores still come from
+  Supabase's daily backups.

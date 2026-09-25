@@ -15,6 +15,7 @@ export function createDb(connectionString: string): { db: Db; pool: Pool } {
 }
 
 let cached: Db | undefined;
+let cachedPool: Pool | undefined;
 
 /**
  * Privileged connection (table owner → bypasses RLS). Only for system work that has no user:
@@ -24,9 +25,15 @@ export function adminDb(): Db {
   if (!cached) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set");
-    cached = createDb(url).db;
+    ({ db: cached, pool: cachedPool } = createDb(url));
   }
   return cached;
+}
+
+/** The pool behind adminDb(), for raw SQL that Drizzle doesn't model (e.g. the weekly export). */
+export function adminPool(): Pool {
+  adminDb();
+  return cachedPool!;
 }
 
 /**

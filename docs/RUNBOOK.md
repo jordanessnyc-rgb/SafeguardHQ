@@ -132,3 +132,10 @@ Verified in the browser on 2026-09-24:
   in the SQL editor). The next login will ask to set up a new app.
 - The hosted project needs TOTP MFA enabled (Authentication → Sign In / Providers → Multi-Factor);
   it's on by default.
+
+## Weekly export (Phase 6)
+
+- Create a Drive folder only Jordan can open (e.g. "ESS CRM exports") and put its id in
+  `GOOGLE_DRIVE_EXPORT_FOLDER_ID` on the worker. The same Google credentials as the job folders are used;
+  with a service account, the folder must be in a Shared Drive the account belongs to.
+- Every Sunday at 2 AM a zip of CSVs appears there; the newest 12 are kept. /admin shows the last run.
