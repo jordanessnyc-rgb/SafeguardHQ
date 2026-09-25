@@ -379,3 +379,14 @@ Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus 
   - Emails, phone numbers and dollar amounts in messages are masked. A test runs the real SDK against a local
     server and checks the sent payload.
 - **Errors only.** `tracesSampleRate: 0`, which keeps us on the free plan.
+
+### Mobile pass (6e)
+
+- **Check:** a browser script loaded 30 core screens as the owner at 390×844 (iPhone size). It flagged
+  any page wider than the screen and any element past the right edge (tables scroll inside their own
+  box and are allowed). None were found.
+- **Fixes:**
+  - The mobile nav pill row now scrolls to the current page, so pages near the end of the row, like
+    Route, still show where you are.
+  - Two leftover "Phase 2" labels on screen were reworded.
+  - The unbuilt AIRnyc email mode is now disabled in the settings dropdown.

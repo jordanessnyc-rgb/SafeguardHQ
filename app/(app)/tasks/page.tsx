@@ -40,7 +40,7 @@ export default async function TasksPage({ searchParams }: PageProps<"/tasks">) {
   }));
   return (
     <>
-      <PageHeader title="Tasks" description="Open tasks. System-created tasks (new violations, and in Phase 2 call next steps) land here too." />
+      <PageHeader title="Tasks" description="Open tasks. System-created tasks (new violations, call next steps, deadlines, renewals) land here too." />
       <div className="mb-4 flex gap-1">
         {Object.entries(FILTERS).map(([k, v]) => (
           <Link key={k} href={`/tasks?filter=${k}`} className={buttonVariants({ size: "sm", variant: filter === k ? "secondary" : "ghost" })}>{v}</Link>
