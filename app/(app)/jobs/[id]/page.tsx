@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, MessageSquare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActionForm, Field, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
+import { Status } from "@/components/status";
 import { TaskList } from "@/components/task-list";
 import { Timeline } from "@/components/timeline";
 import { ComposeMessage } from "@/components/compose-message";
@@ -23,20 +24,19 @@ import { reportHeld } from "@/lib/money/invoicing";
 import { docusignConfigFromEnv } from "@/lib/integrations/docusign";
 import { stagesFor } from "@/lib/pipeline/config";
 import { checkStageTransition, daysInStage, isStale } from "@/lib/pipeline/rules";
+import { cn } from "@/lib/utils";
 import {
   addDocument,
   addFieldPhoto,
   addJobNote,
   addSample,
   addSubQuote,
-  archiveJob,
   buildQuote,
   createJobDriveFolder,
   createJobInvoice,
   draftReportAction,
   generateProposalDoc,
   makeSubCopy,
-  moveJobStage,
   refreshJobInvoice,
   refreshSignature,
   removeFieldPhoto,
@@ -49,14 +49,19 @@ import {
   updateJob,
 } from "../actions";
 import { JobFields } from "../job-fields";
+import { JobActions } from "./job-actions";
 
 const SAMPLE_TYPES = s.sampleTypeEnum.enumValues;
 const SAMPLE_STATUSES = s.sampleStatusEnum.enumValues;
 const DOC_KINDS = s.documentKindEnum.enumValues;
 const DOC_STATUSES = s.documentStatusEnum.enumValues;
 
-export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
+const TABS = ["overview", "field", "documents", "messages", "money", "edit"] as const;
+type Tab = (typeof TABS)[number];
+
+export default async function JobPage({ params, searchParams }: PageProps<"/jobs/[id]">) {
   const { id } = await params;
+  const sp = await searchParams;
   const user = await requireStaff();
   const isOwner = user.role === "OWNER";
 
@@ -124,223 +129,328 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
       }),
     ]),
   );
-  const nextStage = stages.find((st) => st.position > (current?.position ?? 0) && !st.isTerminal);
+
+  const tabParam = TABS.find((t) => t === sp.tab);
+  const tab: Tab = tabParam === "money" && !isOwner ? "overview" : (tabParam ?? "overview");
+  const tabs: { key: Tab; label: string; count?: number }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "field", label: "Field & samples", count: samples.length },
+    { key: "documents", label: "Documents", count: documents.length },
+    { key: "messages", label: "Messages & notes", count: activities.length },
+    ...(isOwner ? [{ key: "money" as const, label: "Money" }] : []),
+    { key: "edit", label: "Edit details" },
+  ];
+
+  // Stepper: the pipeline's open stages in order. A terminal current stage (Closed, Lost…) is shown as a badge instead.
+  const openStages = stages.filter((st) => !st.isTerminal);
+  const currentIdx = openStages.findIndex((st) => st.key === job.stage);
+  const doneThrough = current?.isTerminal && job.stage !== "LOST" ? openStages.length : currentIdx;
+  const nextStage = current?.isTerminal ? undefined : stages.find((st) => st.position > (current?.position ?? 0) && !st.isTerminal);
+  const stageOptions = stages.filter((st) => st.key !== job.stage).map((st) => ({ key: st.key, name: st.name, blocked: blockers.get(st.key) ?? [] }));
+  const later = openStages.slice(Math.max(currentIdx, 0) + 1);
+  const needs = [
+    later.some((st) => st.key === "LAB_PENDING") && { label: "Lab Pending", ok: submitted > 0, text: submitted ? `${submitted} sample${submitted === 1 ? "" : "s"} submitted` : "needs a sample marked Submitted" },
+    later.some((st) => st.key === "DELIVERED") && { label: "Delivered", ok: finalReports > 0, text: finalReports ? "final report on file" : "needs a FINAL report document" },
+  ].filter(Boolean) as { label: string; ok: boolean; text: string }[];
+
+  const fact = (k: string, v: React.ReactNode, sub?: React.ReactNode) => (
+    <div className="min-w-0">
+      <div className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{k}</div>
+      <div className="truncate text-sm">{v}</div>
+      {sub && <div className="truncate text-xs text-muted-foreground">{sub}</div>}
+    </div>
+  );
 
   return (
     <>
+      <nav aria-label="Breadcrumb" className="mb-2 flex gap-1.5 text-xs text-muted-foreground">
+        <Link href="/jobs" className="hover:underline">Jobs</Link>
+        <span aria-hidden>/</span>
+        <Link href={`/jobs?pipeline=${job.pipelineKey}`} className="hover:underline">{titleCase(job.pipelineKey)}</Link>
+        <span aria-hidden>/</span>
+        <span className="font-mono">{job.jobNumber}</span>
+      </nav>
       <PageHeader
         title={
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="font-mono">{job.jobNumber}</span>
-            <span className="font-normal text-muted-foreground">·</span>
+          <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             {label(SERVICE_LABELS, job.serviceCode)}
+            <span className="font-mono text-base font-normal text-muted-foreground">{job.jobNumber}</span>
           </span>
         }
         description={
-          <span className="flex flex-wrap items-center gap-2">
-            <Badge variant={stale ? "destructive" : "default"}>{current?.name ?? job.stage}</Badge>
-            <span>
-              {daysInStage(job.stageEnteredAt)}d in stage{stale ? ` (stale after ${current?.staleAfterDays}d)` : ""}
-            </span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Badge variant={stale ? "destructive" : "default"}>
+              {current?.name ?? job.stage} · {daysInStage(job.stageEnteredAt)}d{stale ? ` (limit ${current?.staleAfterDays}d)` : ""}
+            </Badge>
+            {(job.priority === "URGENT" || job.priority === "HIGH") && <Badge variant="destructive">{titleCase(job.priority)} priority</Badge>}
+            {property && (
+              <Link className="hover:underline" href={`/properties/${property.id}`}>
+                {property.addressLine}
+                {property.unit ? ` #${property.unit}` : ""}
+                {property.borough ? `, ${property.borough}` : ""}
+              </Link>
+            )}
+            {org && <Link className="hover:underline" href={`/organizations/${org.id}`}>· {org.name}</Link>}
             <span>· {label(BRAND_LABELS, job.brand)}</span>
             {job.title && <span>· {job.title}</span>}
           </span>
         }
         actions={
-          job.driveFolderUrl ? (
-            <a href={job.driveFolderUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
-              <FolderOpen /> Drive folder
-            </a>
-          ) : (
-            <ActionForm action={createJobDriveFolder.bind(null, id)} className="flex flex-col items-end gap-1">
-              <SubmitButton variant="outline">Create Drive folder</SubmitButton>
-            </ActionForm>
-          )
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            {job.driveFolderUrl ? (
+              <a href={job.driveFolderUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "lg" })}>
+                <FolderOpen /> Drive
+              </a>
+            ) : (
+              <ActionForm action={createJobDriveFolder.bind(null, id)} className="flex flex-col items-end gap-1">
+                <SubmitButton variant="outline" size="lg">Create Drive folder</SubmitButton>
+              </ActionForm>
+            )}
+            {contact && !contact.doNotContact && (
+              <Link href={`/jobs/${id}?tab=messages`} className={buttonVariants({ variant: "outline", size: "lg" })}>
+                <MessageSquare /> Message client
+              </Link>
+            )}
+            <JobActions
+              jobId={id}
+              jobNumber={job.jobNumber}
+              next={nextStage ? { key: nextStage.key, name: nextStage.name, blocked: blockers.get(nextStage.key) ?? [] } : null}
+              stages={stageOptions}
+              canMarkLost={!current?.isTerminal}
+            />
+          </div>
         }
       />
 
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>Move stage</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ActionForm key={job.stage} action={moveJobStage.bind(null, id)} className="flex flex-wrap items-end gap-2">
-            <Field label="Stage" className="w-56">
-              <NativeSelect name="stage" defaultValue={nextStage?.key ?? job.stage}>
-                {stages.map((st) => {
-                  const b = blockers.get(st.key) ?? [];
-                  return (
-                    <option key={st.key} value={st.key}>
-                      {st.name}
-                      {st.key === job.stage ? " (current)" : b.length ? " — blocked" : ""}
-                    </option>
-                  );
-                })}
-              </NativeSelect>
-            </Field>
-            <Field label="Lost reason (required for Lost)" className="min-w-56 flex-1">
-              <Input name="lostReason" placeholder="e.g. chose another firm, price, no response" />
-            </Field>
-            <SubmitButton>Move</SubmitButton>
-          </ActionForm>
-          <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
-            <li>
-              Lab Pending needs ≥1 sample in SUBMITTED — {submitted ? `✓ ${submitted} submitted` : "none submitted yet"}.
+      <section aria-label="Pipeline progress" className="mb-4 rounded-xl border bg-card p-4">
+        {current?.isTerminal && (
+          <p className="mb-3 text-sm">
+            <Badge variant={job.stage === "LOST" ? "destructive" : "secondary"}>{current.name}</Badge>
+            {job.stage === "LOST" && job.lostReason && <span className="ml-2">Reason: {job.lostReason}</span>}
+          </p>
+        )}
+        <ol className="grid gap-1" style={{ gridTemplateColumns: `repeat(${openStages.length}, minmax(0, 1fr))` }}>
+          {openStages.map((st, i) => (
+            <li key={st.key} aria-current={i === currentIdx ? "step" : undefined} className="min-w-0">
+              <div className={cn("h-1.5 rounded-full", i < doneThrough ? "bg-(--brand-sage)" : i === currentIdx ? "bg-primary" : "bg-muted")} />
+              <div className={cn("mt-1.5 hidden truncate text-[11px] sm:block", i === currentIdx ? "font-semibold text-primary" : i < doneThrough ? "text-foreground" : "text-muted-foreground")} title={st.name}>
+                {st.name}
+              </div>
             </li>
-            <li>Delivered needs a FINAL report document — {finalReports ? "✓ on file" : "not on file yet"}.</li>
-            <li>Lost needs a reason and can only be entered from an open stage.</li>
-          </ul>
-          {job.stage === "LOST" && job.lostReason && <p className="mt-2 text-sm">Lost reason: {job.lostReason}</p>}
-        </CardContent>
-      </Card>
+          ))}
+        </ol>
+        <p className="mt-1.5 text-xs text-muted-foreground sm:hidden">
+          Step {Math.max(currentIdx, 0) + 1} of {openStages.length}
+          {nextStage ? ` · next: ${nextStage.name}` : ""}
+        </p>
+        {(needs.length > 0 || (nextStage && (blockers.get(nextStage.key) ?? []).length > 0)) && (
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t pt-3 text-xs">
+            <span className="font-semibold">Coming up</span>
+            {needs.map((n) => (
+              <Status key={n.label} tone={n.ok ? "ok" : "warn"}>
+                {n.label}: {n.text}
+              </Status>
+            ))}
+          </div>
+        )}
+      </section>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Where &amp; who</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>
-              <div className="text-xs text-muted-foreground">Property</div>
-              {property ? (
-                <Link className="hover:underline" href={`/properties/${property.id}`}>
-                  {property.addressLine}
-                  {property.unit ? ` #${property.unit}` : ""}, {property.borough}
-                </Link>
-              ) : (
-                "—"
-              )}
-              {property?.isNycha && <Badge variant="destructive" className="ml-2">NYCHA</Badge>}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Client</div>
-              {org && <Link className="hover:underline" href={`/organizations/${org.id}`}>{org.name}</Link>}
-              {org && contact && " · "}
-              {contact && <Link className="hover:underline" href={`/contacts/${contact.id}`}>{personName(contact)}</Link>}
-              {!org && !contact && "—"}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Scheduled</div>
-              {fmtDate(job.scheduledAt, true)}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <div className="text-xs text-muted-foreground">Field complete</div>
-                {fmtDate(job.fieldCompletedAt)}
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Delivered</div>
-                {fmtDate(job.deliveredAt)}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Field data</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 lg:grid-cols-2">
-            <ActionForm action={saveFieldData.bind(null, id)} className="space-y-2">
-              <Field label="Areas inspected" hint="Comma-separated, e.g. Bathroom, Bedroom 2, Hall closet">
-                <Input name="areas" defaultValue={field?.areas.join(", ") ?? ""} />
-              </Field>
-              <Field label="Observations">
-                <Textarea name="observations" rows={5} defaultValue={field?.observations ?? ""} placeholder="What you saw, area by area." />
-              </Field>
-              <Field label="Readings" hint="One per line: Area | moisture % | RH % | temp °F | note">
-                <Textarea name="readings" rows={3} defaultValue={(field?.readings ?? []).map((r) => [r.area, r.moisture, r.rh, r.temp, r.note].map((x) => x ?? "").join(" | ").replace(/( \| )+$/, "")).join("\n")} />
-              </Field>
-              <SubmitButton size="sm" variant="secondary">Save field data</SubmitButton>
-            </ActionForm>
-            <div className="space-y-3">
-              <div className="text-sm font-medium">Photos ({field?.photos.length ?? 0})</div>
-              {(field?.photos ?? []).length > 0 && (
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {field!.photos.map((p, i) => (
-                    <li key={p.path} className="text-xs">
-                      <a href={`/api/field-photos/${id}/${i}`} target="_blank" rel="noreferrer">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed storage URL via redirect */}
-                        <img src={`/api/field-photos/${id}/${i}`} alt={p.caption} className="aspect-[4/3] w-full rounded border object-cover" loading="lazy" />
-                      </a>
-                      <div className="mt-0.5">{i + 1}. {p.area ? `${p.area} — ` : ""}{p.caption}</div>
-                      <form action={removeFieldPhoto.bind(null, id, i)}>
-                        <button className="text-muted-foreground underline" type="submit">remove</button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <ActionForm action={addFieldPhoto.bind(null, id)} className="grid gap-2 sm:grid-cols-2">
-                <Input name="photo" type="file" accept="image/jpeg,image/png" capture="environment" className="sm:col-span-2" aria-label="Photo" />
-                <Input name="caption" placeholder="Caption (goes in the photo log)" aria-label="Caption" />
-                <Input name="area" placeholder="Area" aria-label="Area" list="field-areas" />
-                <datalist id="field-areas">{(field?.areas ?? []).map((a) => <option key={a} value={a} />)}</datalist>
-                <SubmitButton size="sm" variant="outline">Add photo</SubmitButton>
-              </ActionForm>
-              {aiEnabled && (
-                <ActionForm action={draftReportAction.bind(null, id)} className="flex flex-col items-start gap-1 border-t pt-3">
-                  <SubmitButton size="sm">Draft report with AI</SubmitButton>
-                  <span className="text-xs text-muted-foreground">Writes the findings, observations, results and recommendations from the field data, photos and samples into the report template as a DRAFT for Jordan to edit.</span>
-                </ActionForm>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Samples</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {samples.length > 0 && (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="hidden sm:table-cell">Location</TableHead>
-                    <TableHead className="hidden sm:table-cell">COC #</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {samples.map((x) => (
-                    <TableRow key={x.id}>
-                      <TableCell className="font-mono text-xs">{x.sampleId}</TableCell>
-                      <TableCell>{titleCase(x.type)}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{x.location ?? "—"}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{x.cocNumber ?? "—"}</TableCell>
-                      <TableCell>
-                        <form action={setSampleStatus.bind(null, id, x.id)} className="flex gap-1">
-                          <NativeSelect name="status" defaultValue={x.status} className="h-7 w-32 text-xs" aria-label="Sample status">
-                            {SAMPLE_STATUSES.map((st) => <option key={st} value={st}>{titleCase(st)}</option>)}
-                          </NativeSelect>
-                          <Button size="xs" variant="ghost" type="submit">Set</Button>
-                        </form>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+      <nav aria-label="Job sections" className="mb-4 flex gap-1 overflow-x-auto border-b">
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            href={t.key === "overview" ? `/jobs/${id}` : `/jobs/${id}?tab=${t.key}`}
+            scroll={false}
+            aria-current={t.key === tab ? "page" : undefined}
+            className={cn(
+              "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm",
+              t.key === tab ? "border-primary font-semibold text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
             )}
-            <ActionForm action={addSample.bind(null, id)} className="grid grid-cols-2 gap-2 sm:grid-cols-6">
-              <Input name="sampleId" placeholder="Sample ID" required className="col-span-1" />
-              <NativeSelect name="type" defaultValue="AIR" aria-label="Type">
-                {SAMPLE_TYPES.map((t) => <option key={t} value={t}>{titleCase(t)}</option>)}
-              </NativeSelect>
-              <Input name="location" placeholder="Location" className="col-span-2 sm:col-span-1" />
-              <Input name="cocNumber" placeholder="COC #" />
-              <NativeSelect name="status" defaultValue="COLLECTED" aria-label="Status">
-                {SAMPLE_STATUSES.map((st) => <option key={st} value={st}>{titleCase(st)}</option>)}
-              </NativeSelect>
-              <SubmitButton size="sm" variant="secondary">Add sample</SubmitButton>
-            </ActionForm>
-          </CardContent>
-        </Card>
-      </div>
+          >
+            {t.label}
+            {t.count ? <span className="text-xs font-normal text-muted-foreground tabular-nums">{t.count}</span> : null}
+          </Link>
+        ))}
+      </nav>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      {tab === "overview" && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="space-y-4">
+            <Card>
+              <CardContent className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                {fact(
+                  "Property",
+                  property ? (
+                    <Link className="hover:underline" href={`/properties/${property.id}`}>
+                      {property.addressLine}
+                      {property.unit ? ` #${property.unit}` : ""}
+                    </Link>
+                  ) : (
+                    "—"
+                  ),
+                  property ? (
+                    <>
+                      {property.borough}
+                      {property.isNycha && <Badge variant="destructive" className="ml-1.5">NYCHA</Badge>}
+                    </>
+                  ) : null,
+                )}
+                {fact(
+                  "Client",
+                  org ? <Link className="hover:underline" href={`/organizations/${org.id}`}>{org.name}</Link> : contact ? <Link className="hover:underline" href={`/contacts/${contact.id}`}>{personName(contact)}</Link> : "—",
+                  org && contact ? <Link className="hover:underline" href={`/contacts/${contact.id}`}>{personName(contact)}</Link> : null,
+                )}
+                {fact("Scheduled", fmtDate(job.scheduledAt, true))}
+                {fact("Field complete", fmtDate(job.fieldCompletedAt))}
+                {fact("Samples", samples.length ? `${samples.length} (${submitted} submitted)` : "None yet", <Link className="hover:underline" href={`/jobs/${id}?tab=field`}>Field &amp; samples →</Link>)}
+                {fact("Delivered", fmtDate(job.deliveredAt), finalReports ? "Final report on file" : "No final report yet")}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Latest activity</CardTitle>
+                <Link href={`/jobs/${id}?tab=messages`} className="text-sm font-medium text-primary hover:underline">All messages &amp; notes</Link>
+              </CardHeader>
+              <CardContent>
+                <Timeline items={activities.slice(0, 5)} viewerIsOwner={isOwner} />
+              </CardContent>
+            </Card>
+          </div>
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Tasks</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TaskList tasks={tasks} link={{ jobId: id }} revalidate={`/jobs/${id}`} />
+              </CardContent>
+            </Card>
+            {isOwner && (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle>Money</CardTitle>
+                  <Badge variant="outline">Owner only</Badge>
+                </CardHeader>
+                <CardContent className="space-y-1.5 text-sm">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Quoted</span><span className="tabular-nums">{financials?.quotedAmount ? usd(financials.quotedAmount) : "—"}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Gross margin</span><span className="font-semibold tabular-nums">{financials?.grossMargin ? usd(financials.grossMargin) : "—"}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Invoice</span><span>{financials?.freshbooksInvoiceId ? (financials.invoiceStatus ?? "draft") : "Not yet"}</span></div>
+                  {money?.held && !financials?.reportReleasedAt && <p className="text-xs text-amber-700 dark:text-amber-400">Report held until paid.</p>}
+                  <Link href={`/jobs/${id}?tab=money`} className="block pt-1 font-medium text-primary hover:underline">Quote, costs &amp; invoice →</Link>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === "field" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Field data</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 lg:grid-cols-2">
+              <ActionForm action={saveFieldData.bind(null, id)} className="space-y-2">
+                <Field label="Areas inspected" hint="Comma-separated, e.g. Bathroom, Bedroom 2, Hall closet">
+                  <Input name="areas" defaultValue={field?.areas.join(", ") ?? ""} />
+                </Field>
+                <Field label="Observations">
+                  <Textarea name="observations" rows={5} defaultValue={field?.observations ?? ""} placeholder="What you saw, area by area." />
+                </Field>
+                <Field label="Readings" hint="One per line: Area | moisture % | RH % | temp °F | note">
+                  <Textarea name="readings" rows={3} defaultValue={(field?.readings ?? []).map((r) => [r.area, r.moisture, r.rh, r.temp, r.note].map((x) => x ?? "").join(" | ").replace(/( \| )+$/, "")).join("\n")} />
+                </Field>
+                <SubmitButton size="sm" variant="secondary">Save field data</SubmitButton>
+              </ActionForm>
+              <div className="space-y-3">
+                <div className="text-sm font-medium">Photos ({field?.photos.length ?? 0})</div>
+                {(field?.photos ?? []).length > 0 && (
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {field!.photos.map((p, i) => (
+                      <li key={p.path} className="text-xs">
+                        <a href={`/api/field-photos/${id}/${i}`} target="_blank" rel="noreferrer">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed storage URL via redirect */}
+                          <img src={`/api/field-photos/${id}/${i}`} alt={p.caption} className="aspect-[4/3] w-full rounded border object-cover" loading="lazy" />
+                        </a>
+                        <div className="mt-0.5">{i + 1}. {p.area ? `${p.area} — ` : ""}{p.caption}</div>
+                        <form action={removeFieldPhoto.bind(null, id, i)}>
+                          <button className="text-muted-foreground underline" type="submit">remove</button>
+                        </form>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <ActionForm action={addFieldPhoto.bind(null, id)} className="grid gap-2 sm:grid-cols-2">
+                  <Input name="photo" type="file" accept="image/jpeg,image/png" capture="environment" className="sm:col-span-2" aria-label="Photo" />
+                  <Input name="caption" placeholder="Caption (goes in the photo log)" aria-label="Caption" />
+                  <Input name="area" placeholder="Area" aria-label="Area" list="field-areas" />
+                  <datalist id="field-areas">{(field?.areas ?? []).map((a) => <option key={a} value={a} />)}</datalist>
+                  <SubmitButton size="sm" variant="outline">Add photo</SubmitButton>
+                </ActionForm>
+                {aiEnabled && (
+                  <ActionForm action={draftReportAction.bind(null, id)} className="flex flex-col items-start gap-1 border-t pt-3">
+                    <SubmitButton size="sm">Draft report with AI</SubmitButton>
+                    <span className="text-xs text-muted-foreground">Writes the findings, observations, results and recommendations from the field data, photos and samples into the report template as a DRAFT for Jordan to edit.</span>
+                  </ActionForm>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Samples</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {samples.length > 0 && (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="hidden sm:table-cell">Location</TableHead>
+                      <TableHead className="hidden sm:table-cell">COC #</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {samples.map((x) => (
+                      <TableRow key={x.id}>
+                        <TableCell className="font-mono text-xs">{x.sampleId}</TableCell>
+                        <TableCell>{titleCase(x.type)}</TableCell>
+                        <TableCell className="hidden sm:table-cell">{x.location ?? "—"}</TableCell>
+                        <TableCell className="hidden sm:table-cell">{x.cocNumber ?? "—"}</TableCell>
+                        <TableCell>
+                          <form action={setSampleStatus.bind(null, id, x.id)} className="flex gap-1">
+                            <NativeSelect name="status" defaultValue={x.status} className="h-7 w-32 text-xs" aria-label="Sample status">
+                              {SAMPLE_STATUSES.map((st) => <option key={st} value={st}>{titleCase(st)}</option>)}
+                            </NativeSelect>
+                            <Button size="xs" variant="ghost" type="submit">Set</Button>
+                          </form>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <ActionForm action={addSample.bind(null, id)} className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+                <Input name="sampleId" placeholder="Sample ID" required className="col-span-1" />
+                <NativeSelect name="type" defaultValue="AIR" aria-label="Type">
+                  {SAMPLE_TYPES.map((t) => <option key={t} value={t}>{titleCase(t)}</option>)}
+                </NativeSelect>
+                <Input name="location" placeholder="Location" className="col-span-2 sm:col-span-1" />
+                <Input name="cocNumber" placeholder="COC #" />
+                <NativeSelect name="status" defaultValue="COLLECTED" aria-label="Status">
+                  {SAMPLE_STATUSES.map((st) => <option key={st} value={st}>{titleCase(st)}</option>)}
+                </NativeSelect>
+                <SubmitButton size="sm" variant="secondary">Add sample</SubmitButton>
+              </ActionForm>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {tab === "documents" && (
         <Card>
           <CardHeader>
             <CardTitle>Documents</CardTitle>
@@ -405,21 +515,40 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
             </ActionForm>
           </CardContent>
         </Card>
+      )}
 
+      {tab === "messages" && (
         <Card>
-          <CardHeader>
-            <CardTitle>Tasks</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TaskList tasks={tasks} link={{ jobId: id }} revalidate={`/jobs/${id}`} />
+          <CardContent className="space-y-4">
+            {contact && !contact.doNotContact && (
+              <details open className="rounded-lg border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Message {personName(contact)}</summary>
+                <div className="mt-3">
+                  <ComposeMessage
+                    phones={contact.phones}
+                    emails={contact.emails}
+                    {...compose}
+                    context={{ contactId: contact.id, jobId: id, airnycCaseId: job.airnycCaseId ?? undefined }}
+                    revalidate={`/jobs/${id}`}
+                    isOwner={isOwner}
+                  />
+                </div>
+              </details>
+            )}
+            <ActionForm action={addJobNote.bind(null, id)} className="space-y-2">
+              <Textarea name="body" rows={2} placeholder="Add a note…" />
+              <SubmitButton size="sm" variant="secondary">Add note</SubmitButton>
+            </ActionForm>
+            <Timeline items={activities} viewerIsOwner={isOwner} />
           </CardContent>
         </Card>
-      </div>
+      )}
 
-      {isOwner && (
-        <Card className="mt-4 border-primary/40">
-          <CardHeader>
-            <CardTitle>Financials (owner only)</CardTitle>
+      {tab === "money" && isOwner && (
+        <Card className="border-primary/40">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Money</CardTitle>
+            <Badge variant="outline">Owner only</Badge>
           </CardHeader>
           <CardContent>
             <ActionForm action={saveFinancials.bind(null, id)} className="space-y-3">
@@ -576,49 +705,19 @@ export default async function JobPage({ params }: PageProps<"/jobs/[id]">) {
         </Card>
       )}
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      {tab === "edit" && (
         <Card>
           <CardHeader>
-            <CardTitle>Timeline</CardTitle>
+            <CardTitle>Edit job details</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {contact && !contact.doNotContact && (
-              <details className="rounded-lg border p-3">
-                <summary className="cursor-pointer text-sm font-medium">Message {personName(contact)}</summary>
-                <div className="mt-3">
-                  <ComposeMessage
-                    phones={contact.phones}
-                    emails={contact.emails}
-                    {...compose}
-                    context={{ contactId: contact.id, jobId: id, airnycCaseId: job.airnycCaseId ?? undefined }}
-                    revalidate={`/jobs/${id}`}
-                    isOwner={isOwner}
-                  />
-                </div>
-              </details>
-            )}
-            <ActionForm action={addJobNote.bind(null, id)} className="space-y-2">
-              <Textarea name="body" rows={2} placeholder="Add a note…" />
-              <SubmitButton size="sm" variant="secondary">Add note</SubmitButton>
-            </ActionForm>
-            <Timeline items={activities} viewerIsOwner={isOwner} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Edit job</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <ActionForm action={updateJob.bind(null, id)} className="space-y-4">
               <JobFields job={job} options={options} editing />
               <SubmitButton size="sm">Save</SubmitButton>
             </ActionForm>
-            <form action={archiveJob.bind(null, id)}>
-              <Button type="submit" variant="destructive" size="sm">Archive job</Button>
-            </form>
           </CardContent>
         </Card>
-      </div>
+      )}
     </>
   );
 }

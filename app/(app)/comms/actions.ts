@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { adminDb, schema as s } from "@/lib/db";
 import { requireStaff } from "@/lib/auth/session";
@@ -112,7 +112,8 @@ export async function approveAndSend(id: string, _prev: ActionState, form: FormD
 export async function discardMessage(id: string) {
   const user = await requireStaff();
   await user.db((tx) =>
-    tx.update(s.outboundMessages).set({ status: "DISCARDED" }).where(and(eq(s.outboundMessages.id, id), eq(s.outboundMessages.status, "DRAFT"))),
+    // A failed send can be discarded too, rather than retried.
+    tx.update(s.outboundMessages).set({ status: "DISCARDED" }).where(and(eq(s.outboundMessages.id, id), inArray(s.outboundMessages.status, ["DRAFT", "FAILED"]))),
   );
   revalidatePath("/outbox");
 }

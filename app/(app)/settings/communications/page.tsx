@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/ui/native-select";
 import { ActionForm, Field, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
+import { Status } from "@/components/status";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { BRAND_LABELS, fmtDate } from "@/lib/labels";
@@ -42,7 +43,7 @@ export default async function CommsSettingsPage() {
 
   return (
     <>
-      <PageHeader title="Communications" description={<Link href="/settings" className="hover:underline">← Settings</Link>} />
+      <PageHeader title="Phone, email &amp; AI" description="Quo phone and text lines, the Titan mailbox, AI triage, and message templates." />
 
       <Card className="mb-4">
         <CardHeader>
@@ -51,13 +52,16 @@ export default async function CommsSettingsPage() {
         <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <div className="font-medium">Quo</div>
-            <div className="text-xs text-muted-foreground">API key {env.quo ? "✓" : "✗ missing"} · webhook secret {env.quoWebhook ? "✓" : "✗ missing"}</div>
+            <div className="flex flex-wrap gap-x-3">
+              <Status tone={env.quo ? "ok" : "error"}>API key {env.quo ? "set" : "missing"}</Status>
+              <Status tone={env.quoWebhook ? "ok" : "error"}>Webhook secret {env.quoWebhook ? "set" : "missing"}</Status>
+            </div>
             {isOwner && <div className="text-xs">Last event: {d.lastQuo ? `${d.lastQuo.eventType} · ${fmtDate(d.lastQuo.receivedAt, true)}` : "none yet"}</div>}
             {isOwner && d.quoErrors > 0 && <div className="text-xs text-destructive">{d.quoErrors} failed deliveries (Quo will retry)</div>}
           </div>
           <div>
             <div className="font-medium">Titan email</div>
-            <div className="text-xs text-muted-foreground">Credentials {env.titan ? "✓ (worker)" : "✗ not set on this host"}</div>
+            <Status tone={env.titan ? "ok" : "warn"}>{env.titan ? "Credentials set (worker)" : "Credentials not set on this host"}</Status>
             {d.mail.length === 0 && <div className="text-xs">Worker hasn&apos;t connected yet.</div>}
             {d.mail.map((m) => (
               <div key={m.mailbox + m.folder} className="text-xs">
@@ -68,7 +72,7 @@ export default async function CommsSettingsPage() {
           </div>
           <div>
             <div className="font-medium">AI triage</div>
-            <div className="text-xs text-muted-foreground">API key {env.ai ? "✓" : "✗ missing (messages go to review)"}</div>
+            <Status tone={env.ai ? "ok" : "error"}>{env.ai ? "API key set" : "API key missing (messages go to review)"}</Status>
             <div className="text-xs">{d.pendingTriage} waiting</div>
           </div>
           {isOwner && (

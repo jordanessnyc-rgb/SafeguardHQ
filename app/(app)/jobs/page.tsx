@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { FilterForm } from "@/components/filter-form";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth/session";
@@ -15,11 +17,24 @@ import { Kanban, type BoardJob } from "./kanban";
 
 export const metadata = { title: "Jobs" };
 
+const SORTS = [
+  ["newest", "Newest first"],
+  ["days", "Longest in stage"],
+  ["number", "Job number"],
+  ["stage", "Stage order"],
+] as const;
+
 export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const user = await requireStaff();
   const sp = await searchParams;
-  const view = sp.view === "list" ? "list" : "board";
-  const q = typeof sp.q === "string" ? sp.q.trim() : "";
+  const str = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim() : "");
+  const q = str(sp.q);
+  // Filters are list-only; a link that carries one (e.g. from a dashboard tile) opens the list.
+  const stageFilter = str(sp.stage).split(",").filter(Boolean);
+  const service = s.jobs.serviceCode.enumValues.find((v) => v === str(sp.service)) ?? "";
+  const staleOnly = sp.stale === "1";
+  const sort = SORTS.some(([k]) => k === sp.sort) ? String(sp.sort) : "newest";
+  const view = sp.view === "list" || stageFilter.length || service || staleOnly ? "list" : "board";
 
   const { pipelines, rows } = await user.db(async (tx) => {
     const pipelines = (await loadPipelines(tx)).filter((p) => p.key !== "AIRNYC");
@@ -34,6 +49,8 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         and(
           isNull(s.jobs.archivedAt),
           view === "board" ? eq(s.jobs.pipelineKey, pipelineKey) : undefined,
+          view === "list" && stageFilter.length ? inArray(s.jobs.stage, stageFilter) : undefined,
+          view === "list" && service ? eq(s.jobs.serviceCode, service) : undefined,
           q
             ? or(
                 ilike(s.jobs.jobNumber, `%${q}%`),
@@ -67,12 +84,21 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
     };
   };
 
+  const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, sort: sort === "newest" ? undefined : sort };
   const qs = (o: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const merged = { view, pipeline: pipelineKey, q: q || undefined, ...o };
+    const merged = { view, pipeline: pipelineKey, q: q || undefined, ...(view === "list" ? listParams : {}), ...o };
     Object.entries(merged).forEach(([k, v]) => v && p.set(k, v));
     return `/jobs?${p}`;
   };
+
+  const stageOptions = [...new Map(pipelines.flatMap((p) => p.stages.map((st) => [st.key, st] as const))).values()].sort((a, b) => a.position - b.position);
+  const stageRank = new Map(stageOptions.map((st, i) => [st.key, i]));
+  const listRows = view === "list" ? rows.map((r) => ({ r, c: toCard(r) })).filter(({ c }) => !staleOnly || c.stale) : [];
+  if (sort === "days") listRows.sort((a, b) => b.c.daysInStage - a.c.daysInStage);
+  else if (sort === "number") listRows.sort((a, b) => a.c.jobNumber.localeCompare(b.c.jobNumber));
+  else if (sort === "stage") listRows.sort((a, b) => (stageRank.get(a.c.stage) ?? 99) - (stageRank.get(b.c.stage) ?? 99));
+  const filtered = Boolean(stageFilter.length || service || staleOnly || q);
 
   return (
     <>
@@ -81,7 +107,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         actions={
           <>
             <div className="flex rounded-lg border p-0.5">
-              <Link href={qs({ view: "board" })} className={buttonVariants({ size: "sm", variant: view === "board" ? "secondary" : "ghost" })}>Board</Link>
+              <Link href={qs({ view: "board", stage: undefined, service: undefined, stale: undefined, sort: undefined })} className={buttonVariants({ size: "sm", variant: view === "board" ? "secondary" : "ghost" })}>Board</Link>
               <Link href={qs({ view: "list" })} className={buttonVariants({ size: "sm", variant: view === "list" ? "secondary" : "ghost" })}>List</Link>
             </div>
             <Link href="/jobs/new" className={buttonVariants()}>New job</Link>
@@ -95,17 +121,38 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
               {p.name}
             </Link>
           ))}
-        <form className="ml-auto w-full max-w-xs sm:w-auto">
+        <FilterForm action="/jobs" className={view === "board" ? "ml-auto w-full sm:w-auto" : "w-full"}>
           <input type="hidden" name="view" value={view} />
-          <input type="hidden" name="pipeline" value={pipelineKey} />
-          <Input name="q" defaultValue={q} placeholder="Search job #, address, client" />
-        </form>
+          {view === "board" && <input type="hidden" name="pipeline" value={pipelineKey} />}
+          <Input type="search" name="q" defaultValue={q} placeholder="Search job #, address, client" aria-label="Search jobs" className="w-full sm:w-64" />
+          {view === "list" && (
+            <>
+              <NativeSelect name="stage" defaultValue={stageFilter.join(",")} aria-label="Stage" className="w-auto">
+                <option value="">All stages</option>
+                {stageFilter.length > 1 && <option value={stageFilter.join(",")}>{stageFilter.map((k) => stageOptions.find((st) => st.key === k)?.name ?? k).join(" + ")}</option>}
+                {stageOptions.map((st) => <option key={st.key} value={st.key}>{st.name}</option>)}
+              </NativeSelect>
+              <NativeSelect name="service" defaultValue={service} aria-label="Service" className="w-auto">
+                <option value="">All services</option>
+                {Object.entries(SERVICE_LABELS).filter(([k]) => k !== "AIRNYC").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </NativeSelect>
+              <label className="flex h-8 items-center gap-2 rounded-lg border px-2.5 text-sm">
+                <input type="checkbox" name="stale" value="1" defaultChecked={staleOnly} className="size-4 accent-primary" />
+                Stale only
+              </label>
+              <NativeSelect name="sort" defaultValue={sort} aria-label="Sort by" className="w-auto">
+                {SORTS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </NativeSelect>
+              {filtered && <Link href="/jobs?view=list" className="text-sm text-muted-foreground underline hover:text-foreground">Clear filters</Link>}
+            </>
+          )}
+        </FilterForm>
       </div>
 
       {view === "board" ? (
         <Kanban columns={pipeline.stages.map(({ key, name, isTerminal }) => ({ key, name, isTerminal }))} jobs={rows.map(toCard)} />
-      ) : rows.length === 0 ? (
-        <EmptyState>No jobs match.</EmptyState>
+      ) : listRows.length === 0 ? (
+        <EmptyState>No jobs match{filtered ? " these filters" : ""}.</EmptyState>
       ) : (
         <Table>
           <TableHeader>
@@ -118,8 +165,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => {
-              const c = toCard(r);
+            {listRows.map(({ r, c }) => {
               return (
                 <TableRow key={c.id}>
                   <TableCell>

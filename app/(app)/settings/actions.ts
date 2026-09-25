@@ -7,61 +7,20 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s } from "@/lib/db";
 import { requireOwner } from "@/lib/auth/session";
-import { checkbox, formObject, safeAction, type ActionState } from "@/lib/actions";
+import { formObject, safeAction, type ActionState } from "@/lib/actions";
+import { isSettingsSection, parseSettingsSection } from "@/lib/settings/form";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
-const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
-const folderId = z
-  .string()
-  .optional()
-  // Accept a pasted folder URL as well as a bare ID.
-  .transform((v) => (v ? (v.match(/folders\/([\w-]+)/)?.[1] ?? v) : null));
-
-const settingsSchema = z.object({
-  autoSendEmail: checkbox,
-  autoSendSms: checkbox,
-  autoCreateInvoice: checkbox,
-  holdReportUntilPaidDefault: checkbox,
-  airnycAiAllowed: checkbox,
-  airnycMode: z.enum(["MANUAL", "EMAIL"]), // POWER_AUTOMATE / GRAPH need AIRnyc's written approval first
-  digestRecipients: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "").split(/[,\s]+/).filter(Boolean))
-    .pipe(z.array(z.email())),
-  digestTime: hhmm,
-  digestEnabled: checkbox,
-  digestSmsEnabled: checkbox,
-  invoicePaymentTermsDays: z.coerce.number().int().min(0).max(120),
-  driveJobsParentFolderId: folderId,
-  driveAirnycParentFolderId: folderId,
-  driveTemplateFolderId: folderId,
-  aiMonthlyCostCapUsd: z
-    .string()
-    .optional()
-    .transform((v) => (v ? v.replace(/[$,]/g, "") : null))
-    .refine((v) => v === null || /^\d+(\.\d{1,2})?$/.test(v), "Enter a dollar amount"),
-});
-
+/** Saves one Settings section (hidden `section` field). Only that section's columns are written. */
 export async function saveSettings(_prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireOwner();
   return safeAction(async () => {
-    const raw = formObject(form);
-    const input = settingsSchema.parse({
-      ...raw,
-      ...Object.fromEntries(["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "airnycAiAllowed", "digestEnabled", "digestSmsEnabled"].map((k) => [k, form.get(k)])),
-    });
-    const businessHours = Object.fromEntries(
-      DAYS.map((d) => {
-        const open = raw[`${d}Open`];
-        const close = raw[`${d}Close`];
-        return [d, open && close ? { open: hhmm.parse(open), close: hhmm.parse(close) } : null];
-      }),
-    ) as typeof s.settings.$inferSelect.businessHours;
-    await user.db((tx) => tx.update(s.settings).set({ ...input, businessHours, updatedBy: user.id }).where(eq(s.settings.id, 1)));
-    revalidatePath("/settings");
-    return { ok: true, message: "Settings saved." };
+    const section = form.get("section");
+    if (!isSettingsSection(section)) throw new Error("Unknown settings section.");
+    const update = parseSettingsSection(section, form);
+    await user.db((tx) => tx.update(s.settings).set({ ...update, updatedBy: user.id }).where(eq(s.settings.id, 1)));
+    revalidatePath("/settings", "layout");
+    return { ok: true, message: "Saved." };
   });
 }
 

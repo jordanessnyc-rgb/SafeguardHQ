@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { headers } from "next/headers";
 import { desc } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +20,7 @@ export default async function ClaudeSettingsPage() {
 
   return (
     <>
-      <PageHeader title="Claude access" description={<Link href="/settings" className="hover:underline">← Settings</Link>} />
+      <PageHeader title="Claude access" />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
