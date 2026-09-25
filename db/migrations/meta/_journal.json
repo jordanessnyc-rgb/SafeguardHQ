@@ -106,6 +106,62 @@
       "when": 1790280217770,
       "tag": "0014_docusign",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790285754068,
+      "tag": "0015_bids",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790285765127,
+      "tag": "0016_bids_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790286122639,
+      "tag": "0017_bid_keywords",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790286347346,
+      "tag": "0018_sub_portal",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790286515676,
+      "tag": "0019_campaigns",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790286516988,
+      "tag": "0020_campaigns_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790287122251,
+      "tag": "0021_mcp_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790287123703,
+      "tag": "0022_mcp_tokens_rls",
+      "breakpoints": true
     }
   ]
 }

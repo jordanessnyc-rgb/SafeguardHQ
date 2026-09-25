@@ -7,6 +7,7 @@ export const AI_MODELS = {
   classify: process.env.AI_MODEL_CLASSIFY ?? "claude-haiku-4-5",
   draft: process.env.AI_MODEL_DRAFT ?? "claude-sonnet-5",
   report: process.env.AI_MODEL_REPORT ?? "claude-opus-5",
+  bid: process.env.AI_MODEL_BID ?? "claude-sonnet-5",
 } as const;
 
 const PRICES: Record<string, { input: number; output: number }> = {

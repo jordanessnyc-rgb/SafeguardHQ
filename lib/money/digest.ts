@@ -3,7 +3,7 @@
  * settings.digest_recipients and the owner's alert phone, never to clients.
  *
  * Sections: stale jobs, lab results waiting, unpaid invoices by age, going-cold leads, expiring
- * licenses/COIs, compliance cycles coming due, overdue tasks. Bids join in Phase 5.
+ * licenses/COIs, compliance cycles coming due, bids due within 7 days, overdue tasks.
  */
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
@@ -26,6 +26,7 @@ export type Digest = {
   goingCold: { name: string; phoneOrEmail: string | null; lastInbound: Date; channel: string }[];
   expiring: Expiring[];
   cyclesDue: UpcomingCycle[];
+  bidsDue: { title: string; agency: string | null; dueAt: Date; status: string; recommendation: string | null }[];
   overdueTasks: number;
 };
 
@@ -112,6 +113,13 @@ export async function buildDigest(conn: Conn, now = new Date()): Promise<Digest>
     })),
     expiring: await expiringItems(conn, now, 60),
     cyclesDue: await upcomingCycles(conn, nyDate(now), addDays(nyDate(now), 60)),
+    bidsDue: (
+      await conn
+        .select({ title: s.bids.title, agency: s.bids.agency, dueAt: s.bids.dueAt, status: s.bids.status, goNoGo: s.bids.goNoGo })
+        .from(s.bids)
+        .where(and(isNull(s.bids.archivedAt), inArray(s.bids.status, ["WATCHING", "GO_NO_GO", "DRAFTING"]), sql`${s.bids.dueAt} between ${now.toISOString()} and ${new Date(now.getTime() + 7 * 86_400_000).toISOString()}`))
+        .orderBy(s.bids.dueAt)
+    ).map((b) => ({ title: b.title, agency: b.agency, dueAt: b.dueAt!, status: b.status, recommendation: b.goNoGo?.recommendation ?? null })),
     overdueTasks: overdue,
   };
 }
@@ -149,6 +157,11 @@ export function renderDigestText(d: Digest, appUrl = process.env.NEXT_PUBLIC_SIT
     d.cyclesDue.slice(0, 20).map((c) => `${c.due} — ${c.serviceCode} — ${c.client ?? "no client"}${c.address ? `, ${c.address}` : ""} (last job ${c.jobNumber})`),
     "None.",
   );
+  section(
+    `BIDS DUE WITHIN 7 DAYS (${d.bidsDue.length})`,
+    d.bidsDue.map((b) => `${fmtDate(b.dueAt, true)} — ${b.title}${b.agency ? ` (${b.agency})` : ""} · ${b.status.replace("_", "-").toLowerCase()}${b.recommendation ? ` · AI: ${b.recommendation.replace("_", "-")}` : ""}`),
+    "None.",
+  );
   lines.push(`OVERDUE TASKS: ${d.overdueTasks}`, "");
   if (appUrl) lines.push(`Open the CRM: ${appUrl}`);
   return { subject: `ESS digest ${d.date}: ${d.staleJobs.length} stale · ${d.labWaiting.length} lab · ${usd(d.unpaid.total)} unpaid · ${d.goingCold.length} cold leads`, text: lines.join("\n") };
@@ -163,6 +176,7 @@ export function renderDigestSms(d: Digest): string {
     `${usd(d.unpaid.total)} unpaid${over90 ? ` (${usd(over90)} 90+ days)` : ""}`,
     `${d.goingCold.length} cold leads`,
     ...(d.expiring.length ? [`${d.expiring.length} licenses/COIs expiring`] : []),
+    ...(d.bidsDue.length ? [`${d.bidsDue.length} bids due this week`] : []),
     `${d.overdueTasks} overdue tasks`,
   ].join(" · ").replace(":·", ":");
 }

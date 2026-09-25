@@ -15,7 +15,7 @@ export function TaskList({
   revalidate,
 }: {
   tasks: Task[];
-  link: Partial<Record<"jobId" | "contactId" | "propertyId" | "airnycCaseId", string>>;
+  link: Partial<Record<"jobId" | "contactId" | "propertyId" | "airnycCaseId" | "bidId", string>>;
   revalidate: string;
 }) {
   // Server Component: rendered once per request, so reading the clock here is deterministic enough.

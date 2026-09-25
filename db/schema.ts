@@ -16,6 +16,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  pgView,
   primaryKey,
   text,
   time,
@@ -446,6 +447,8 @@ export const jobs = pgTable(
     nextCycleDue: date("next_cycle_due"),
     // Set when the compliance worker has scheduled this job's next cycle (SPEC §6.6), so it runs once.
     cycleScheduledAt: timestamp("cycle_scheduled_at", { withTimezone: true }),
+    // First-touch campaign attribution (SPEC §11): QR scan, dedicated Quo number, or landing page.
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     // Titan calendar sync (SPEC §6.3): hash of the last event written; null = not on the calendar.
     calendarHash: text("calendar_hash"),
     calendarSequence: integer("calendar_sequence").notNull().default(0),
@@ -588,6 +591,7 @@ export const documents = pgTable(
     ...baseColumns(),
     jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
     airnycCaseId: uuid("airnyc_case_id"),
+    bidId: uuid("bid_id"),
     kind: documentKindEnum("kind").notNull(),
     title: text("title"),
     version: integer("version").notNull().default(1),
@@ -798,6 +802,11 @@ export const settings = pgTable("settings", {
   invoicePaymentTermsDays: integer("invoice_payment_terms_days").notNull().default(30),
   // Jordan's notes on how he writes (tone, sign-off, phrases) — fed to AI reply drafts (SPEC §9.2).
   aiVoiceNotes: text("ai_voice_notes"),
+  // Bid ingestion (SPEC §8): listings whose title/description match any of these are kept.
+  bidKeywords: text("bid_keywords")
+    .array()
+    .notNull()
+    .default(sql`'{mold,asbestos,lead,"industrial hygiene",environmental,abatement,"hazardous material","air monitoring","air sampling","indoor air",radon,"gas piping","local law 152",parapet,"local law 126","lead-based paint",microbial}'::text[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });
@@ -1083,3 +1092,109 @@ export const pricingRules = pgTable("pricing_rules", {
 
 export type FieldReading = { area: string; moisture?: string | null; rh?: string | null; temp?: string | null; note?: string | null };
 export type FieldPhoto = { path: string; caption: string; area?: string | null; contentType: string; width?: number; height?: number };
+
+// ---------------------------------------------------------------------------
+// Phase 5 — government bids (SPEC §8, §9.6)
+// ---------------------------------------------------------------------------
+
+export const bidTypeEnum = pgEnum("bid_type", ["RFP", "RFQ", "RFB", "IFB", "OTHER"]);
+export const bidRoleEnum = pgEnum("bid_role", ["PRIME", "SUB"]);
+export const bidStatusEnum = pgEnum("bid_status", ["WATCHING", "GO_NO_GO", "DRAFTING", "SUBMITTED", "AWARDED", "LOST", "NO_BID"]);
+export const bidSourceEnum = pgEnum("bid_source", ["MANUAL", "NYSCR", "CITY_RECORD", "PASSPORT", "COUNTY", "EMAIL"]);
+
+export type GoNoGo = {
+  recommendation: "GO" | "NO_GO" | "REVIEW";
+  summary: string;
+  checklist: { item: string; status: "MET" | "GAP" | "UNKNOWN"; note: string }[];
+  submission: string[];
+  model?: string;
+  at?: string;
+};
+
+export const bids = pgTable(
+  "bids",
+  {
+    ...baseColumns(),
+    agency: text("agency"),
+    solicitationNumber: text("solicitation_number"),
+    title: text("title").notNull(),
+    type: bidTypeEnum("type").notNull().default("OTHER"),
+    primeEntity: text("prime_entity").notNull().default("ESS"),
+    role: bidRoleEnum("role").notNull().default("PRIME"),
+    questionsDue: timestamp("questions_due", { withTimezone: true }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    openingAt: timestamp("opening_at", { withTimezone: true }),
+    siteVisitAt: timestamp("site_visit_at", { withTimezone: true }),
+    buyerName: text("buyer_name"),
+    buyerEmail: text("buyer_email"),
+    buyerPhone: text("buyer_phone"),
+    requiredCerts: text("required_certs").array().notNull().default(sql`'{}'::text[]`),
+    certGaps: text("cert_gaps").array().notNull().default(sql`'{}'::text[]`),
+    insuranceRequirements: text("insurance_requirements"),
+    scope: text("scope"),
+    status: bidStatusEnum("status").notNull().default("WATCHING"),
+    source: bidSourceEnum("source").notNull().default("MANUAL"),
+    sourceUrl: text("source_url"),
+    externalId: text("external_id"),
+    goNoGo: jsonb("go_no_go").$type<GoNoGo>(),
+    decision: text("decision"), // GO | NO_GO (a person's call; the AI only recommends)
+    decidedBy: uuid("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    notes: text("notes"),
+  },
+  (t) => [uniqueIndex("bids_source_external_uq").on(t.source, t.externalId), index("bids_due_idx").on(t.dueAt)],
+);
+
+// ---------------------------------------------------------------------------
+// Phase 5 — subcontractor portal views (defined in migration 0018; SUB reads only these)
+// ---------------------------------------------------------------------------
+export const subPortalJobs = pgView("sub_portal_jobs", {
+  id: uuid("id").notNull(),
+  jobNumber: text("job_number").notNull(),
+  serviceCode: serviceCodeEnum("service_code").notNull(),
+  stage: text("stage").notNull(),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  fieldCompletedAt: timestamp("field_completed_at", { withTimezone: true }),
+  addressLine: text("address_line"),
+  unit: text("unit"),
+  borough: text("borough"),
+  zip: text("zip"),
+}).existing();
+
+export const subPortalDocuments = pgView("sub_portal_documents", {
+  id: uuid("id").notNull(),
+  jobId: uuid("job_id").notNull(),
+  title: text("title"),
+  version: integer("version").notNull(),
+  status: documentStatusEnum("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  storageBucket: text("storage_bucket"),
+  storagePath: text("storage_path"),
+}).existing();
+
+/** Campaign touchpoints we can count without identifying anyone (QR scans). SPEC §11. */
+export const campaignEvents = pgTable(
+  "campaign_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // SCAN
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("campaign_events_campaign_idx").on(t.campaignId, t.at)],
+);
+
+/** Personal access tokens for the read-only MCP connector (Phase 5). Only a SHA-256 hash is stored. */
+export const mcpTokens = pgTable("mcp_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => authUsers.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});

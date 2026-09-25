@@ -46,3 +46,11 @@ export function isWithinBusinessHours(at: Date, hours: Hours): boolean {
 export function nyDate(d: Date): string {
   return d.toLocaleDateString("en-CA", { timeZone: TZ });
 }
+
+/** "due in 3d" / "due in 5h" / "due passed", plus whether it's within a week. */
+export function countdown(at: Date, label = "due", now = new Date()): { text: string; urgent: boolean; past: boolean } {
+  const hours = (at.getTime() - now.getTime()) / 3_600_000;
+  if (hours < 0) return { text: `${label} passed`, urgent: true, past: true };
+  const text = hours < 24 ? `${label} in ${Math.max(1, Math.round(hours))}h` : `${label} in ${Math.round(hours / 24)}d`;
+  return { text, urgent: hours <= 7 * 24, past: false };
+}

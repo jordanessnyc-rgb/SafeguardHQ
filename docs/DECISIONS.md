@@ -204,3 +204,97 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   - **AIRnyc jobs** show only the case reference and address; no member name or phone.
   - **Updates:** an event is rewritten only when its content changes (hash), with SEQUENCE bumped. It is deleted when the job is unscheduled, Lost or archived.
   - **Errors** are kept on the job (`calendar_error`).
+
+## 2026-09-24 — Phase 5 (Growth)
+
+**Scope confirmed with Jordan:**
+- **Skipped:** AIRnyc modes 2–4 (AIRnyc hasn't approved a connection method) and CityWatch.
+- **Route planning:** the free, approximate version.
+- **Bid sources:** NYS Contract Reporter, NYC PASSPort / City Record, and county sites.
+
+### Bids (5a, 5b)
+- **Bid records:** `bids` follows SPEC §8, plus source, external ID, site visit, scope and the go/no-go result.
+  - Staff work bids; only the owner deletes them or records the **decision**.
+  - The AI only recommends. A no-go closes the bid as No Bid; a go moves it to Drafting.
+- **Go/no-go (§9.6):** the RFP PDF goes to the model as a document block (`claude-sonnet-5`, `AI_MODEL_BID`), together with ESS's credentials list (number, issuer, expiry).
+  - **Extracted:** deadlines (as New York time), required certifications, insurance, scope, submission items, and a checklist marked MET, GAP or UNKNOWN.
+  - **Checklist rule:** MET only when a listed, unexpired credential covers the requirement.
+  - **Existing data:** fields someone already filled in are never overwritten.
+  - **Deadline tasks:** created once each — questions (2 days before), site visit, and bid due (3 days before).
+  - **PDF guard:** the AI wrapper now refuses any PDF on an AIRnyc-linked call, because PDFs can't be redacted.
+- **Sources (checked live, 2026-09-24):**
+  | Source | Finding | What we did |
+  |---|---|---|
+  | NYC City Record Online | Open dataset `dg92-zbpx` (DCAS, updated daily; it occasionally pauses for several days). Solicitations are `section_name='Procurement' AND type_of_notice_description='Solicitation'`. Dates are floating local times. | Pulled every 6 h with a **14-day look-back** (so pauses don't lose listings). SoQL `LIKE` pre-filters on keywords; a word-boundary check keeps only true matches ("lead" but not "leadership"). Closed listings are skipped. Dedupe on `request_id`. A live query returned NYCHA asbestos, Parks industrial hygiene and EDC on-call hazmat listings. |
+  | NYC PASSPort | Public browsing, but `robots.txt` disallows all, and there's no API. Its RFx are advertised in the City Record. | Covered by the City Record. PASSPort's vendor digest emails are handled like any other alert email. |
+  | NYS Contract Reporter | No API, feed or open dataset. The **terms forbid copying without written permission**. A free account gets daily e-Alerts (the "Environmental" category plus keywords). | No scraping. **E-Alert emails** are parsed. |
+  | Counties | Nassau (Oracle APEX board plus vendor portal emails), Suffolk (Bonfire plus the Procurement Announcement System, which requires login), Westchester/Rockland (BidNet Direct; email matching is a paid tier). None has a public API or RSS. | Their **alert emails** are parsed. |
+- **Alert emails:** emails the triage step tags `BID_NOTICE` go through one Haiku extraction each, since one e-Alert can list many ads. Solicitations that are relevant and still open become Watching bids.
+  - **Dedupe:** on (source, solicitation number), or on a hash of agency and title when there's no number.
+  - **Once per email:** `activities.ai_extracted_at`, limited to the last 3 days.
+- **Keywords** are editable on the Bids page (owner). The defaults cover ESS's services.
+
+### Subcontractor portal (5c)
+- **Enforced in Postgres, not the UI (CLAUDE.md rule 4):**
+  - A SUB user is linked to one subcontractor organization (`profiles.org_id`). The owner sets this in Settings → Team, and a Sub role without an organization is refused.
+  - SUB has **no policy on any table**. Everything it sees comes through two views, filtered by `current_sub_org()`:
+    - **`sub_portal_jobs`:** job number, service, stage, schedule, and the property address — only for jobs whose `sub_org_id` is theirs and that aren't Lost or archived.
+    - **`sub_portal_documents`:** `SUB_COPY` documents that are **not** `contains_pricing`, stored in `job-files`, and **released** (status FINAL or SENT — the owner sets that on the job's document list).
+  - So pricing, client billing, contacts, consent forms, notes and other subs' jobs can't be reached even with a hand-made query. Tests check every table.
+- **Downloads:** `/portal/documents/[id]` checks the view under the sub's own identity, then mints a 60-second signed link. Storage itself grants SUB nothing.
+- **Routing:** SUB users who reach staff pages are sent to `/portal`.
+
+### Campaign attribution and the web lead form (5d)
+- **Attribution is first-touch.** A contact's `campaign_id` is set only when the contact is created. Leads and jobs made from that first touch carry `jobs.campaign_id`. There are three entry points:
+  1. **QR codes:** `/q/<slug>` counts an anonymous scan (`campaign_events`, with no IP or device data) and redirects to the campaign's landing page with `utm_campaign=<slug>&utm_medium=qr`.
+  2. **Dedicated Quo number:** a brand-new caller or texter on a line that a campaign lists as its `quoNumber` is credited to that campaign.
+  3. **Landing page / web form:** the form's `campaign` field (utm_campaign or QR name) is matched case-insensitively to a campaign.
+- **`/api/leads` (public)** creates or reuses the contact (by email, then phone), resolves the property with GeoSearch when possible (else keeps the typed address), and creates a Lead job, a task, and a **draft** NEW_LEAD_ACK text. Nothing goes out unless `auto_send_sms` is on (rule 6).
+  - **Abuse controls:**
+    - Browsers must come from `LEADS_ALLOWED_ORIGINS`; server-to-server posts need `LEADS_API_KEY`.
+    - A honeypot `website` field.
+    - A 20 KB body limit.
+    - A global cap of 30 submissions per 10 minutes.
+    - The same person resubmitting within 10 minutes is ignored.
+  - **Plain HTML forms** can redirect back to a thank-you page, but only on an allowed origin.
+- **Results:** scans, leads, jobs and won jobs are visible to staff. Revenue (invoice amount, else quote) and cost come from owner-only tables, so under a VA's RLS they are `null`. They're never derived from anything a VA can read.
+
+### Natural-language search and route planning (5e)
+- **"Ask the CRM" (§9.6).** The question plus a **curated catalog** of tables and columns goes to `claude-sonnet-5`, which returns one SELECT. **No row data ever reaches the model;** results go straight to the screen. The query then passes four layers:
+  1. **Validator:**
+     - SELECT/WITH only, as a single statement, with no comments.
+     - No write or DDL keywords (including SELECT INTO and data-changing CTEs).
+     - No `pg_*`, `information_schema`, `auth.`/`storage.`, `set_config`/`current_setting` or `dblink`.
+     - No `*` projections, no encrypted/raw/message-body columns, and only catalog tables.
+  2. **Run as the asking user**, so RLS applies. The catalog also hides owner-only money tables from a VA's prompt.
+  3. **`transaction_read_only = on`** — writes fail even if something slips past the validator (tested).
+  4. **`statement_timeout = 5s`**, and results are capped at 200 rows.
+- **Route planning (§10, free version).**
+  - **Ordering:** the day's scheduled jobs are ordered as a round trip from the office (47-58 43rd St; coordinates from GeoSearch) — nearest neighbour, then 2-opt, which matches the brute-force optimum in tests.
+  - **Drive times** are estimated as straight-line distance × 1.4 at about 12 mph, plus 5 minutes per stop to park.
+  - **"Open in Google Maps"** uses the public directions URL (no API key or cost).
+  - **Suggestion only:** it never reschedules anything or tells clients.
+
+### Read-only MCP server (Phase 5f)
+
+- **Verified against:** MCP spec revision 2026-07-28 and the official TypeScript SDK
+  `@modelcontextprotocol/server@2.1.0` (package docs and type definitions, Sept 2026). The SDK's
+  `createMcpHandler(factory)` serves the 2026-07-28 per-request protocol and, by default, falls back to
+  stateless serving for 2025-era clients, so current Claude Code and claude.ai connectors both work.
+  The handler does no auth or Origin checks itself; per the SDK docs we put `originValidationResponse`
+  and `requireBearerAuth` in front of it. The SDK's bearer gate rejects tokens without `expiresAt`, so
+  the verifier sets a 5-minute expiry. That's fine because every request is checked against the database again.
+- **Auth: personal access tokens, not OAuth.** Staff create tokens in Settings → Claude access. Each token
+  is 32 random bytes, shown once and stored as SHA-256, and can be revoked. Claude Code sends it as
+  `Authorization: Bearer`. claude.ai custom connectors accept a static header too. A full OAuth
+  authorization server is out of scope for a one-owner firm; we can revisit if more staff use it.
+- **Every tool runs as the token's user under RLS** (`runAsUser`), so a VA's token never returns pricing,
+  invoices or A/R. SUB and unassigned users can't hold tokens (the RLS policy and the verifier both check this).
+- **Curated tools, no free SQL.** Tool results go straight to an AI, so the tools are fixed, read-only
+  queries: search_jobs, get_job, search_contacts, property_violations, list_tasks, pipeline_summary. All
+  are annotated `readOnlyHint`. Nothing can be written or sent through them.
+- **AIRnyc is always excluded**, regardless of `airnyc_ai_allowed`. AIRnyc jobs, tasks linked to AIRnyc
+  cases, contacts tied to AIRnyc jobs or sensitive activities, and properties with AIRnyc jobs are filtered
+  out in every query. Counts in the pipeline summary are the only aggregate that includes them.
+- `/api/mcp` is public in the proxy (like the webhooks) because the Supabase session cookie doesn't
+  apply; the route verifies the token itself.

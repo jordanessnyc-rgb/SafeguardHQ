@@ -102,7 +102,7 @@ async function onMessage(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
   const incoming = m.direction === "incoming";
   const contact = phone
     ? incoming
-      ? (await findOrCreateLeadByPhone(conn, phone, { brand: line?.brand, lineLabel: line?.label })).contact
+      ? (await findOrCreateLeadByPhone(conn, phone, { brand: line?.brand, lineLabel: line?.label, lineNumber: line?.number })).contact
       : await findContactByPhone(conn, phone)
     : null;
   const sensitive = line?.lineKey === AIRNYC_LINE;
@@ -157,7 +157,7 @@ async function onCall(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
   const phone = counterpart(event, c.direction);
   const incoming = c.direction === "incoming";
   const contact = phone
-    ? (await findOrCreateLeadByPhone(conn, phone, { brand: line?.brand, lineLabel: line?.label })).contact
+    ? (await findOrCreateLeadByPhone(conn, phone, { brand: line?.brand, lineLabel: line?.label, lineNumber: line?.number })).contact
     : null;
   const status = event.type === "call.missed" ? "missed" : (c.status ?? "unknown");
   const missed = incoming && MISSED_STATUSES.has(status);
