@@ -392,3 +392,27 @@ Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus 
     Route, still show where you are.
   - Two leftover "Phase 2" labels on screen were reworded.
   - The unbuilt AIRnyc email mode is now disabled in the settings dropdown.
+
+## 2026-09-25 — UI redesign (navigation, dashboard, job page, review queue, settings)
+
+Layout and usability only: no schema changes, and RLS and the approval rules are unchanged. Behaviour
+changes worth knowing:
+
+- **Settings save one section at a time.** `saveSettings` now requires a hidden `section` field and
+  writes only that section's columns (`lib/settings/form.ts`). Before, the whole settings row was
+  written from one form, so a form holding a single section would have switched every other checkbox
+  off. Unit tests cover this.
+- **A failed Outbox send can be discarded.** `discardMessage` now accepts FAILED as well as DRAFT.
+  It still never sends anything.
+- **"Accept suggestion" in Inbox review** files the message with the AI's category, plus a job only when
+  a `job_match_hints` entry is an exact job number, or is an address fragment with a house number that
+  matches an open job (`suggestJob`). A person still clicks. Nothing is filed automatically.
+- **⌘K search** runs under the user's RLS. It matches AIRnyc cases by case ID only and never searches
+  member fields, which are encrypted anyway.
+- **Nav counts:** the Tasks badge counts my and unassigned tasks due today or overdue. Inbox review
+  and Outbox count items waiting on a person.
+- **Checked in a real browser:** the built app was run against the local test database, with a stand-in
+  for Supabase auth, to click through filing, approving, marking lost, moving on the board, completing
+  tasks, saving settings and ⌘K. Two bugs found this way are fixed. Outline-style links had lost
+  their border across the app (`buttonVariants` didn't merge classes). The board's Move menu crashed
+  (Base UI requires a menu label inside a group).
