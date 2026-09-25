@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -11,6 +11,7 @@ import { schema as s } from "@/lib/db";
 import { TRIAGE_CATEGORIES, type Triage } from "@/lib/ai/classify";
 import { fmtDate, label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
 import { formatPhone } from "@/lib/phone";
+import { inboxReviewWhere } from "@/lib/queues";
 import { reviewActivity } from "../comms/actions";
 
 export const metadata = { title: "Inbox review" };
@@ -24,12 +25,7 @@ export default async function InboxPage() {
       .from(s.activities)
       .leftJoin(s.contacts, eq(s.contacts.id, s.activities.contactId))
       .leftJoin(s.jobs, eq(s.jobs.id, s.activities.jobId))
-      .where(
-        or(
-          inArray(s.activities.triageStatus, ["NEEDS_REVIEW", "BLOCKED"]),
-          and(eq(s.activities.triageStatus, "PENDING"), sql`${s.activities.createdAt} < now() - interval '10 minutes'`),
-        ),
-      )
+      .where(inboxReviewWhere)
       .orderBy(desc(s.activities.occurredAt))
       .limit(100),
     jobs: await tx
