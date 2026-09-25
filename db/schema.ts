@@ -1198,3 +1198,13 @@ export const mcpTokens = pgTable("mcp_tokens", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
+
+/** Last outcome of each worker task (Phase 6 health page). One row per task name, upserted by the worker. */
+export const workerStatus = pgTable("worker_status", {
+  name: text("name").primaryKey(), // "triage", "invoices", "heartbeat", …
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastOkAt: timestamp("last_ok_at", { withTimezone: true }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  intervalSeconds: integer("interval_seconds"), // how often it's meant to run, to spot stalls
+});

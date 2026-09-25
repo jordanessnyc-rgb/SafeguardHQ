@@ -35,6 +35,8 @@ import { retryDocuSignDeliveries } from "@/lib/docs/esign";
 import { bidsFromPendingEmails, ingestCityRecord } from "@/lib/bids/ingest";
 import { storageDownloader } from "@/lib/supabase/service";
 import { storageUploader } from "@/lib/supabase/service";
+import { recordRun } from "@/lib/admin/health";
+import { captureError } from "@/lib/observability";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
 
@@ -44,13 +46,18 @@ function every(ms: number, name: string, fn: () => Promise<unknown>) {
   const tick = async () => {
     if (running) return;
     running = true;
+    let error: unknown = null;
     try {
       await fn();
     } catch (e) {
+      error = e;
       console.error(`[${name}]`, (e as Error).message);
+      captureError(e, { task: name });
     } finally {
       running = false;
     }
+    // Shown on the owner's admin health page; never let bookkeeping break the task loop.
+    await recordRun(adminDb(), name, ms / 1000, error).catch((e) => console.error("[worker-status]", (e as Error).message));
   };
   void tick();
   return setInterval(tick, ms);
@@ -113,6 +120,7 @@ async function main() {
   });
 
   const timers: NodeJS.Timeout[] = [];
+  timers.push(every(60_000, "heartbeat", async () => {}));
   const abort = new AbortController();
 
   const titan = titanConfigFromEnv();

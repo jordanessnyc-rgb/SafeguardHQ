@@ -321,3 +321,21 @@ Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus 
   Supabase doesn't put "has a factor" in the JWT, so we didn't offer one.
 - **Recovery.** Settings → Sign-in security lets the owner add a second authenticator. The last one
   can't be removed. If every device is lost, see RUNBOOK.
+
+### System health page (6b)
+
+- **Dead letters.** Verified against pg-boss 12.34 (installed types): a queue created with `deadLetter`
+  moves a job there after its last retry. `findJobs(queue)` lists them, and each job carries
+  `sourceName`/`sourceId`/`sourceRetryCount`. `redrive(queue, {ids})` sends one back to its original queue,
+  and `deleteJob` dismisses it. The error message is read from the original failed job's `output`.
+  The web app's pg-boss client runs with `supervise/schedule/migrate: false`, because the worker owns
+  maintenance. A test fails a real job, lists it, retries it and dismisses it.
+- **Worker status.** Every timer task in the worker records its last success or failure in
+  `worker_status` (owner-read only, because error text can mention clients). A 1-minute heartbeat task
+  shows whether the worker is running at all. A task counts as stalled after 3 missed intervals.
+- **Integration health** is computed from data we already keep: webhook deliveries (errors in the last
+  24 h), IMAP sync state, FreshBooks token refresh time, and failed AI calls.
+- **Audit coverage.** The audit triggers from Phase 1 already cover every money table. A test now fails
+  if any table with an amount/cost/paid/outstanding/margin column lacks the trigger, so new money tables
+  can't slip through. `ai_calls` and `settings` are excluded: they hold API spend and the AI cost cap,
+  not client money.

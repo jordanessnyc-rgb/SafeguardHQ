@@ -169,6 +169,20 @@
       "when": 1790339477692,
       "tag": "0023_owner_mfa",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790339981600,
+      "tag": "0024_worker_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790339982967,
+      "tag": "0025_worker_status_rls",
+      "breakpoints": true
     }
   ]
 }

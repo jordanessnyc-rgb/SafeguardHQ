@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Building2, CalendarClock, Gavel, Megaphone, Route, Sparkles, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
+import { BarChart3, Building2, CalendarClock, Gavel, Megaphone, Route, Sparkles, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -21,6 +21,7 @@ const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/search", label: "Ask the CRM", icon: Sparkles },
   { href: "/reports", label: "Reports", icon: BarChart3, ownerOnly: true },
+  { href: "/admin", label: "System health", icon: Activity, ownerOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
