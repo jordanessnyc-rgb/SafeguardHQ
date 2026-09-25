@@ -38,6 +38,7 @@ import { storageUploader } from "@/lib/supabase/service";
 import { recordRun } from "@/lib/admin/health";
 import { runWeeklyExport } from "@/lib/backup/export";
 import { captureError } from "@/lib/observability";
+import { initWorkerSentry } from "./sentry";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
 
@@ -94,6 +95,7 @@ export async function activePropertyIds(): Promise<string[]> {
 }
 
 async function main() {
+  initWorkerSentry();
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const boss = new PgBoss(url);

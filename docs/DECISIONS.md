@@ -359,3 +359,23 @@ Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus 
   Negative numbers are left alone.
 - **Purpose:** this is a readable copy that doesn't depend on us. Full restores still come from
   Supabase's daily backups.
+
+### Error tracking with Sentry (6d)
+
+- **Verified against:** the Sentry Next.js manual setup guide (Sept 2026) and the installed
+  `@sentry/nextjs` 11.0 / `@sentry/node` 11.0. The peer range includes Next 16.
+- **Differs from the guide:** in v11, `withSentryConfig` is exported from `@sentry/nextjs/config`, not the
+  package root. Importing it from the root fails at build time.
+- **Setup:** `instrumentation.ts` (server/edge init plus `onRequestError = captureRequestError`),
+  `instrumentation-client.ts` (browser init plus `onRouterTransitionStart`) and `app/global-error.tsx`.
+  The worker uses `@sentry/node` and reports every failing timer task.
+- **Off by default.** `enabled` is false without a DSN. Source maps are uploaded only when
+  `SENTRY_AUTH_TOKEN` is set.
+- **Privacy (rules 4 and 5):** pricing and AIRnyc data must not leak through error reports.
+  - No session replay: it records screens that show prices and member details.
+  - No request bodies, cookies or headers (user-agent aside), and no default PII.
+  - The user is reduced to their id.
+  - Query strings are dropped from URLs and breadcrumbs.
+  - Emails, phone numbers and dollar amounts in messages are masked. A test runs the real SDK against a local
+    server and checks the sent payload.
+- **Errors only.** `tracesSampleRate: 0`, which keeps us on the free plan.

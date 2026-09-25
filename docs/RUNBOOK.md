@@ -139,3 +139,11 @@ Verified in the browser on 2026-09-24:
   `GOOGLE_DRIVE_EXPORT_FOLDER_ID` on the worker. The same Google credentials as the job folders are used;
   with a service account, the folder must be in a Shared Drive the account belongs to.
 - Every Sunday at 2 AM a zip of CSVs appears there; the newest 12 are kept. /admin shows the last run.
+
+## Error tracking (Sentry, Phase 6)
+
+- Create a free Sentry project (platform: Next.js). Put its DSN in `SENTRY_DSN` and
+  `NEXT_PUBLIC_SENTRY_DSN` on Vercel, and `SENTRY_DSN` on the worker. Optional: `SENTRY_ORG`,
+  `SENTRY_PROJECT` and `SENTRY_AUTH_TOKEN` on Vercel for readable stack traces.
+- Reports are scrubbed (no contact details, amounts, request bodies or replays). Don't turn on
+  Session Replay in the Sentry dashboard.
