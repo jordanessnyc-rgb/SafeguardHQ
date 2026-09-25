@@ -56,6 +56,7 @@ export default async function SettingsPage() {
           <div className="flex flex-wrap gap-2">
             <Link href="/settings/communications" className={buttonVariants({ variant: "outline" })}>Communications &amp; integrations →</Link>
             <Link href="/settings/claude" className={buttonVariants({ variant: "outline" })}>Claude access →</Link>
+            {isOwner && <Link href="/settings/security" className={buttonVariants({ variant: "outline" })}>Sign-in security →</Link>}
             {isOwner && <Link href="/settings/freshbooks" className={buttonVariants({ variant: "outline" })}>FreshBooks →</Link>}
             {isOwner && <Link href="/settings/pricing" className={buttonVariants({ variant: "outline" })}>Pricing →</Link>}
             {isOwner && process.env.DOCUSIGN_INTEGRATION_KEY && (
@@ -90,7 +91,7 @@ export default async function SettingsPage() {
                   <Field label="AIRnyc connection mode">
                     <NativeSelect name="airnycMode" defaultValue={cfg.airnycMode === "MANUAL" || cfg.airnycMode === "EMAIL" ? cfg.airnycMode : "MANUAL"}>
                       <option value="MANUAL">Manual (VA enters cases)</option>
-                      <option value="EMAIL">Email parsing (Phase 2)</option>
+                      <option value="EMAIL" disabled>Email parsing — not built yet (waiting on AIRnyc)</option>
                       <option value="POWER_AUTOMATE" disabled>Power Automate — needs AIRnyc written approval</option>
                       <option value="GRAPH" disabled>Microsoft Graph — needs AIRnyc written approval</option>
                     </NativeSelect>

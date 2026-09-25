@@ -116,6 +116,25 @@ export class DriveClient {
     });
   }
 
+  /** Files in a folder whose name starts with `prefix`, newest first. */
+  async listByPrefix(folderId: string, prefix: string): Promise<(DriveFile & { createdTime: string })[]> {
+    const escaped = prefix.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const qs = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false and name contains '${escaped}'`,
+      fields: "files(id, name, mimeType, createdTime)",
+      orderBy: "createdTime desc",
+      pageSize: "1000",
+      includeItemsFromAllDrives: "true",
+    });
+    const page = await this.request<{ files: (DriveFile & { createdTime: string })[] }>(`/files?${qs}`);
+    return page.files.filter((f) => f.name.startsWith(prefix)); // "contains" matches word prefixes only
+  }
+
+  /** Moves a file to the trash (recoverable for 30 days), per Drive v3 files.update {trashed: true}. */
+  async trash(fileId: string): Promise<void> {
+    await this.request(`/files/${encodeURIComponent(fileId)}?fields=id`, { method: "PATCH", body: JSON.stringify({ trashed: true }) });
+  }
+
   /** Multipart upload of a file into a folder (Drive v3 `uploadType=multipart`). Returns the file id. */
   async uploadToFolder(folderId: string, name: string, data: Buffer, contentType: string): Promise<string> {
     const t = await this.auth.getAccessToken();

@@ -56,12 +56,11 @@ export async function getJob(tx: Tx, jobNumber: string) {
     .where(and(eq(s.jobs.jobNumber, jobNumber.trim().toUpperCase()), isNull(s.jobs.archivedAt), notAirnycJob));
   if (!r) return null;
   const id = r.job.id;
-  const [samples, tasks, docs, fin] = await Promise.all([
-    tx.select({ sample_id: s.samples.sampleId, type: s.samples.type, status: s.samples.status }).from(s.samples).where(and(eq(s.samples.jobId, id), isNull(s.samples.archivedAt))),
-    tx.select({ title: s.tasks.title, due: s.tasks.dueAt, status: s.tasks.status }).from(s.tasks).where(and(eq(s.tasks.jobId, id), inArray(s.tasks.status, ["OPEN", "IN_PROGRESS"]))).orderBy(asc(s.tasks.dueAt)),
-    tx.select({ kind: s.documents.kind, status: s.documents.status, title: s.documents.title }).from(s.documents).where(and(eq(s.documents.jobId, id), isNull(s.documents.archivedAt))),
-    tx.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, id)), // RLS: empty for a VA
-  ]);
+  // Sequential: these share the transaction's single connection.
+  const samples = await tx.select({ sample_id: s.samples.sampleId, type: s.samples.type, status: s.samples.status }).from(s.samples).where(and(eq(s.samples.jobId, id), isNull(s.samples.archivedAt)));
+  const tasks = await tx.select({ title: s.tasks.title, due: s.tasks.dueAt, status: s.tasks.status }).from(s.tasks).where(and(eq(s.tasks.jobId, id), inArray(s.tasks.status, ["OPEN", "IN_PROGRESS"]))).orderBy(asc(s.tasks.dueAt));
+  const docs = await tx.select({ kind: s.documents.kind, status: s.documents.status, title: s.documents.title }).from(s.documents).where(and(eq(s.documents.jobId, id), isNull(s.documents.archivedAt)));
+  const fin = await tx.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, id)); // RLS: empty for a VA
   const f = fin[0];
   return {
     job_number: r.job.jobNumber,

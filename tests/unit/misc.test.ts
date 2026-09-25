@@ -55,6 +55,22 @@ describe("DriveClient", () => {
   const auth = { getAccessToken: async () => "tok" };
   const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
 
+  it("lists exports by name prefix (newest first) and trashes with files.update", async () => {
+    const seen: { method: string; url: URL; body?: unknown }[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      seen.push({ method: init?.method ?? "GET", url: new URL(url), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return json({ files: [{ id: "a", name: "ess-crm-export-2026-09-27.zip" }, { id: "b", name: "other ess-crm-export-.zip" }] });
+    });
+    const d = new DriveClient(auth, fetchMock as unknown as typeof fetch);
+    const files = await d.listByPrefix("FOLDER", "ess-crm-export-");
+    expect(files.map((f) => f.id)).toEqual(["a"]);
+    expect(seen[0].url.searchParams.get("q")).toBe("'FOLDER' in parents and trashed = false and name contains 'ess-crm-export-'");
+    expect(seen[0].url.searchParams.get("orderBy")).toBe("createdTime desc");
+    await d.trash("a");
+    expect(seen[1]).toMatchObject({ method: "PATCH", body: { trashed: true } });
+    expect(seen[1].url.pathname).toBe("/drive/v3/files/a");
+  });
+
   it("clones a template tree: folders are created, files are copied", async () => {
     const calls: { method: string; url: string; body?: unknown }[] = [];
     const tree: Record<string, { id: string; name: string; mimeType: string }[]> = {

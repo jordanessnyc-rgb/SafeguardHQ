@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { BarChart3, Building2, CalendarClock, Gavel, Megaphone, Route, Sparkles, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users } from "lucide-react";
+import { BarChart3, Building2, CalendarClock, Gavel, Megaphone, Route, Sparkles, CheckSquare, ClipboardList, HeartPulse, Home, Inbox, Landmark, Send, Settings, Users, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -21,6 +22,7 @@ const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/search", label: "Ask the CRM", icon: Sparkles },
   { href: "/reports", label: "Reports", icon: BarChart3, ownerOnly: true },
+  { href: "/admin", label: "System health", icon: Activity, ownerOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -51,12 +53,18 @@ export function SideNav({ isOwner }: { isOwner: boolean }) {
 
 export function MobileNav({ isOwner }: { isOwner: boolean }) {
   const path = usePathname();
+  const ref = useRef<HTMLElement>(null);
+  // The pill row is wider than a phone: keep the current page's pill in view (e.g. Route, far right).
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>("[aria-current=page]")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [path]);
   return (
-    <nav className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-2">
+    <nav ref={ref} className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-2">
       {navFor(isOwner).map(({ href, label }) => (
         <Link
           key={href}
           href={href}
+          aria-current={isActive(path, href) ? "page" : undefined}
           className={cn(
             "shrink-0 rounded-full border px-3 py-1 text-xs",
             isActive(path, href) ? "border-primary bg-primary text-primary-foreground" : "bg-background",

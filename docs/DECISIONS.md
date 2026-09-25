@@ -298,3 +298,95 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   out in every query. Counts in the pipeline summary are the only aggregate that includes them.
 - `/api/mcp` is public in the proxy (like the webhooks) because the Supabase session cookie doesn't
   apply; the route verifies the token itself.
+
+## 2026-09-25 — Phase 6 (Hardening, SPEC §13)
+
+Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus Sentry for error tracking.
+
+### Owner two-step sign-in (6a)
+
+- **Verified against:** `@supabase/auth-js` 2.117 (installed type definitions and their inline docs):
+  `mfa.enroll({factorType:'totp'})` returns an SVG QR code and a secret, `mfa.challengeAndVerify`
+  upgrades the session to `aal2` and signs out other sessions, and `listFactors().totp` lists only
+  verified factors. The JWT carries `aal`. Hosted Supabase enables TOTP by default; for local work
+  we turned it on in `supabase/config.toml`. Recovery codes exist but are experimental and need a
+  server flag, so we don't rely on them.
+- **Enforced in the database.** `current_app_role()` (migration 0023) returns no role for an OWNER
+  whose JWT says `aal1`, so every RLS policy denies them until the code is entered. It's not only a
+  page redirect. The app mirrors this: `getCurrentUser()` reports `role: null` plus `mfaPending`, and
+  `requireStaff` sends them to `/mfa`. Owner-only route handlers that check `user.role`, and some
+  that use the privileged connection (FreshBooks connect, DocuSign consent), deny them too.
+- Claims with no `aal` (the worker's and MCP's synthetic claims, tests) are unaffected.
+- **Owner only.** VAs and subs don't need it. An optional second step wouldn't be enforced, because
+  Supabase doesn't put "has a factor" in the JWT, so we didn't offer one.
+- **Recovery.** Settings → Sign-in security lets the owner add a second authenticator. The last one
+  can't be removed. If every device is lost, see RUNBOOK.
+
+### System health page (6b)
+
+- **Dead letters.** Verified against pg-boss 12.34 (installed types): a queue created with `deadLetter`
+  moves a job there after its last retry. `findJobs(queue)` lists them, and each job carries
+  `sourceName`/`sourceId`/`sourceRetryCount`. `redrive(queue, {ids})` sends one back to its original queue,
+  and `deleteJob` dismisses it. The error message is read from the original failed job's `output`.
+  The web app's pg-boss client runs with `supervise/schedule/migrate: false`, because the worker owns
+  maintenance. A test fails a real job, lists it, retries it and dismisses it.
+- **Worker status.** Every timer task in the worker records its last success or failure in
+  `worker_status` (owner-read only, because error text can mention clients). A 1-minute heartbeat task
+  shows whether the worker is running at all. A task counts as stalled after 3 missed intervals.
+- **Integration health** is computed from data we already keep: webhook deliveries (errors in the last
+  24 h), IMAP sync state, FreshBooks token refresh time, and failed AI calls.
+- **Audit coverage.** The audit triggers from Phase 1 already cover every money table. A test now fails
+  if any table with an amount/cost/paid/outstanding/margin column lacks the trigger, so new money tables
+  can't slip through. `ai_calls` and `settings` are excluded: they hold API spend and the AI cost cap,
+  not client money.
+
+### Weekly export to Google Drive (6c)
+
+- **Verified against:** Google Drive API v3 docs (Sept 2026).
+  - `name contains 'x'` is **prefix** matching for names.
+  - `orderBy=createdTime desc` is a valid sort.
+  - Trashing is `files.update` with `{trashed: true}`, and trashed files are deleted after 30 days.
+  - Uploads reuse the existing multipart upload.
+- **What's exported:** one `.zip` of CSVs (one per table) every Sunday at 2:00 AM New York, named
+  `ess-crm-export-YYYY-MM-DD.zip`, in `GOOGLE_DRIVE_EXPORT_FOLDER_ID`. The newest 12 are kept; older
+  ones go to the Drive trash.
+- **Retries:** it's a pg-boss job, so it retries three times and then shows up under Failed jobs
+  on /admin. Each run is also recorded in `worker_status`.
+- **Tables:** every table except credentials and plumbing (FreshBooks tokens, MCP token hashes,
+  webhook payloads, worker and mail sync state). New tables are included automatically.
+- **Encrypted data:** AIRnyc member fields are exported as stored, i.e. encrypted. The key is never in the export.
+- **Spreadsheet safety:** CSV cells that a spreadsheet would run as a formula get a leading apostrophe.
+  Negative numbers are left alone.
+- **Purpose:** this is a readable copy that doesn't depend on us. Full restores still come from
+  Supabase's daily backups.
+
+### Error tracking with Sentry (6d)
+
+- **Verified against:** the Sentry Next.js manual setup guide (Sept 2026) and the installed
+  `@sentry/nextjs` 11.0 / `@sentry/node` 11.0. The peer range includes Next 16.
+- **Differs from the guide:** in v11, `withSentryConfig` is exported from `@sentry/nextjs/config`, not the
+  package root. Importing it from the root fails at build time.
+- **Setup:** `instrumentation.ts` (server/edge init plus `onRequestError = captureRequestError`),
+  `instrumentation-client.ts` (browser init plus `onRouterTransitionStart`) and `app/global-error.tsx`.
+  The worker uses `@sentry/node` and reports every failing timer task.
+- **Off by default.** `enabled` is false without a DSN. Source maps are uploaded only when
+  `SENTRY_AUTH_TOKEN` is set.
+- **Privacy (rules 4 and 5):** pricing and AIRnyc data must not leak through error reports.
+  - No session replay: it records screens that show prices and member details.
+  - No request bodies, cookies or headers (user-agent aside), and no default PII.
+  - The user is reduced to their id.
+  - Query strings are dropped from URLs and breadcrumbs.
+  - Emails, phone numbers and dollar amounts in messages are masked. A test runs the real SDK against a local
+    server and checks the sent payload.
+- **Errors only.** `tracesSampleRate: 0`, which keeps us on the free plan.
+
+### Mobile pass (6e)
+
+- **Check:** a browser script loaded 30 core screens as the owner at 390×844 (iPhone size). It flagged
+  any page wider than the screen and any element past the right edge (tables scroll inside their own
+  box and are allowed). None were found.
+- **Fixes:**
+  - The mobile nav pill row now scrolls to the current page, so pages near the end of the row, like
+    Route, still show where you are.
+  - Two leftover "Phase 2" labels on screen were reworded.
+  - The unbuilt AIRnyc email mode is now disabled in the settings dropdown.

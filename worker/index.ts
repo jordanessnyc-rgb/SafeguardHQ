@@ -16,7 +16,7 @@
 import "dotenv/config";
 import { and, isNull, or, sql } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
-import { adminDb, schema as s } from "@/lib/db";
+import { adminDb, adminPool, schema as s } from "@/lib/db";
 import { enrichProperty } from "@/lib/properties/enrich";
 import { triagePending } from "@/lib/ai/classify";
 import { extractPendingCalls } from "@/lib/ai/call-extract";
@@ -35,6 +35,10 @@ import { retryDocuSignDeliveries } from "@/lib/docs/esign";
 import { bidsFromPendingEmails, ingestCityRecord } from "@/lib/bids/ingest";
 import { storageDownloader } from "@/lib/supabase/service";
 import { storageUploader } from "@/lib/supabase/service";
+import { recordRun } from "@/lib/admin/health";
+import { runWeeklyExport } from "@/lib/backup/export";
+import { captureError } from "@/lib/observability";
+import { initWorkerSentry } from "./sentry";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
 
@@ -44,13 +48,18 @@ function every(ms: number, name: string, fn: () => Promise<unknown>) {
   const tick = async () => {
     if (running) return;
     running = true;
+    let error: unknown = null;
     try {
       await fn();
     } catch (e) {
+      error = e;
       console.error(`[${name}]`, (e as Error).message);
+      captureError(e, { task: name });
     } finally {
       running = false;
     }
+    // Shown on the owner's admin health page; never let bookkeeping break the task loop.
+    await recordRun(adminDb(), name, ms / 1000, error).catch((e) => console.error("[worker-status]", (e as Error).message));
   };
   void tick();
   return setInterval(tick, ms);
@@ -60,6 +69,7 @@ const Q = {
   nightly: "enrich-active-properties",
   one: "enrich-property",
   dead: "dead-letter",
+  export: "weekly-export",
 } as const;
 
 /**
@@ -85,6 +95,7 @@ export async function activePropertyIds(): Promise<string[]> {
 }
 
 async function main() {
+  initWorkerSentry();
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const boss = new PgBoss(url);
@@ -97,6 +108,26 @@ async function main() {
 
   // 3:00 AM New York, after the city's overnight dataset refreshes.
   await boss.schedule(Q.nightly, "0 3 * * *", null, { tz: "America/New_York" });
+
+  // Weekly Drive export (SPEC §13): Sundays 2:00 AM New York. Failures retry, then show on /admin.
+  const drive = driveFromEnv();
+  const exportFolder = process.env.GOOGLE_DRIVE_EXPORT_FOLDER_ID;
+  if (drive && exportFolder) {
+    await boss.createQueue(Q.export, { retryLimit: 3, retryDelay: 600, retryBackoff: true, deadLetter: Q.dead });
+    await boss.schedule(Q.export, "0 2 * * 0", null, { tz: "America/New_York" });
+    await boss.work(Q.export, async () => {
+      try {
+        const r = await runWeeklyExport(adminPool(), drive, exportFolder);
+        console.log(`[export] ${r.name}: ${r.uploaded ? `uploaded (${Object.keys(r.tables).length} tables)` : "already there"}, ${r.trashed} old export(s) trashed`);
+        await recordRun(adminDb(), "weekly-export", 7 * 86_400, null);
+      } catch (e) {
+        await recordRun(adminDb(), "weekly-export", 7 * 86_400, e).catch(() => {});
+        throw e; // pg-boss retries, then dead-letters it
+      }
+    });
+  } else {
+    console.log("[export] Google Drive credentials or GOOGLE_DRIVE_EXPORT_FOLDER_ID not set — no weekly export");
+  }
 
   await boss.work(Q.nightly, async () => {
     const ids = await activePropertyIds();
@@ -113,6 +144,7 @@ async function main() {
   });
 
   const timers: NodeJS.Timeout[] = [];
+  timers.push(every(60_000, "heartbeat", async () => {}));
   const abort = new AbortController();
 
   const titan = titanConfigFromEnv();
