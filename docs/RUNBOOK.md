@@ -122,3 +122,13 @@ Verified in the browser on 2026-09-24:
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.
 - **Refreshing a property's NYC data:** use the property page → "Refresh NYC data". The worker also refreshes nightly.
 - **Failed jobs:** failed pg-boss jobs land in the `dead-letter` queue (`pgboss` schema). An admin page for this comes in Phase 2.
+
+## Owner two-step sign-in (Phase 6)
+
+- The owner account must enter a code from an authenticator app after the email link. The first
+  login walks through setup (scan a QR code). Add a backup authenticator in Settings → Sign-in security.
+- **Lost every authenticator:** in the Supabase dashboard go to Authentication → Users, open the
+  owner's user, and delete its MFA factors (or run `delete from auth.mfa_factors where user_id = '<id>'`
+  in the SQL editor). The next login will ask to set up a new app.
+- The hosted project needs TOTP MFA enabled (Authentication → Sign In / Providers → Multi-Factor);
+  it's on by default.

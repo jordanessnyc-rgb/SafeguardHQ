@@ -298,3 +298,26 @@ Owner 2FA (Supabase TOTP) is in §13 but not in Phase 1's list. It's planned bef
   out in every query. Counts in the pipeline summary are the only aggregate that includes them.
 - `/api/mcp` is public in the proxy (like the webhooks) because the Supabase session cookie doesn't
   apply; the route verifies the token itself.
+
+## 2026-09-25 — Phase 6 (Hardening, SPEC §13)
+
+Scope was confirmed with Jordan: the §13 items (the spec had no Phase 6), plus Sentry for error tracking.
+
+### Owner two-step sign-in (6a)
+
+- **Verified against:** `@supabase/auth-js` 2.117 (installed type definitions and their inline docs):
+  `mfa.enroll({factorType:'totp'})` returns an SVG QR code and a secret, `mfa.challengeAndVerify`
+  upgrades the session to `aal2` and signs out other sessions, and `listFactors().totp` lists only
+  verified factors. The JWT carries `aal`. Hosted Supabase enables TOTP by default; for local work
+  we turned it on in `supabase/config.toml`. Recovery codes exist but are experimental and need a
+  server flag, so we don't rely on them.
+- **Enforced in the database.** `current_app_role()` (migration 0023) returns no role for an OWNER
+  whose JWT says `aal1`, so every RLS policy denies them until the code is entered. It's not only a
+  page redirect. The app mirrors this: `getCurrentUser()` reports `role: null` plus `mfaPending`, and
+  `requireStaff` sends them to `/mfa`. Owner-only route handlers that check `user.role`, and some
+  that use the privileged connection (FreshBooks connect, DocuSign consent), deny them too.
+- Claims with no `aal` (the worker's and MCP's synthetic claims, tests) are unaffected.
+- **Owner only.** VAs and subs don't need it. An optional second step wouldn't be enforced, because
+  Supabase doesn't put "has a factor" in the JWT, so we didn't offer one.
+- **Recovery.** Settings → Sign-in security lets the owner add a second authenticator. The last one
+  can't be removed. If every device is lost, see RUNBOOK.

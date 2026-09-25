@@ -426,6 +426,15 @@ payment moves the job to Paid.
   route planning, campaign attribution, CityWatch monitoring, MCP server exposing read-only CRM
   queries to Claude.
 
+### Phase 6 — Hardening (§13)
+- Two-factor login (TOTP) required for OWNER accounts.
+- Admin health page: failed background jobs (dead-letter queue) with retry, integration health
+  (last Quo event, IMAP connection, FreshBooks token age, worker heartbeat), and the audit log.
+- Audit coverage: every financial table has the audit trigger (enforced by a test).
+- Weekly export of core tables to Google Drive (in addition to Supabase daily backups).
+- Error tracking with Sentry (web app and worker), switched on by environment variables.
+- Mobile pass: every core screen usable at phone width.
+
 AIRnyc MANUAL mode (§7.4 mode 1) ships in Phase 1 alongside jobs.
 
 ---
