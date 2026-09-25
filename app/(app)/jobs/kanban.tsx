@@ -5,7 +5,7 @@ import { useOptimistic, useState, useTransition } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { setJobStage } from "./actions";
 import { LostReasonDialog } from "./lost-dialog";
@@ -112,14 +112,17 @@ export function Kanban({ columns, jobs }: { columns: Column[]; jobs: BoardJob[] 
                         <MoreHorizontal />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-48">
-                        <DropdownMenuLabel>Move to…</DropdownMenuLabel>
-                        {columns
-                          .filter((c) => c.key !== j.stage)
-                          .map((c) => (
-                            <DropdownMenuItem key={c.key} variant={c.key === "LOST" ? "destructive" : "default"} onClick={() => move(j.id, c.key)}>
-                              {c.name}
-                            </DropdownMenuItem>
-                          ))}
+                        {/* Base UI: a menu label must sit inside a group. */}
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>Move to…</DropdownMenuLabel>
+                          {columns
+                            .filter((c) => c.key !== j.stage)
+                            .map((c) => (
+                              <DropdownMenuItem key={c.key} variant={c.key === "LOST" ? "destructive" : "default"} onClick={() => move(j.id, c.key)}>
+                                {c.name}
+                              </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>

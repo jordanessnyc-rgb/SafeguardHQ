@@ -49,7 +49,7 @@ export function SettingsNav({ groups }: { groups: SettingsGroup[] }) {
 
   return (
     <>
-      <nav aria-label="Settings sections" className="hidden w-56 shrink-0 md:block">
+      <nav aria-label="Settings sections" className="hidden w-60 shrink-0 md:block">
         {list}
       </nav>
       <details className="group rounded-lg border md:hidden">

@@ -116,12 +116,13 @@ export default async function Dashboard() {
               <ul className="divide-y">
                 {d.needs.map((n) => (
                   <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap">
-                    <span className={cn("w-22 shrink-0 rounded px-2 py-0.5 text-center text-[11px] font-semibold", KIND[n.kind].className)}>{KIND[n.kind].label}</span>
-                    <Link href={n.href} className="min-w-0 flex-1 hover:underline">
+                    <span className={cn("shrink-0 rounded px-2 py-0.5 text-center text-[11px] font-semibold sm:w-22", KIND[n.kind].className)}>{KIND[n.kind].label}</span>
+                    {/* basis-56: on a phone the title keeps the row and the when/action wrap below it. */}
+                    <Link href={n.href} className="min-w-0 flex-1 basis-56 hover:underline sm:basis-auto">
                       <span className="block truncate text-sm font-medium">{n.title}</span>
                       {n.meta && <span className="block truncate text-xs text-muted-foreground">{n.meta}</span>}
                     </Link>
-                    {n.when && <span className={cn("text-xs whitespace-nowrap", n.late ? "font-medium text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>{n.when}</span>}
+                    {n.when && <span className={cn("ml-auto text-xs whitespace-nowrap sm:ml-0", n.late ? "font-medium text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>{n.when}</span>}
                     {n.taskId ? (
                       <form action={setTaskStatus.bind(null, n.taskId, "DONE", "/")}>
                         <Button type="submit" size="sm" variant="outline" aria-label={`Mark “${n.title}” done`}>
