@@ -8,7 +8,7 @@ import { and, eq, like } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { encryptField, decryptField } from "@/lib/crypto";
 import { FreshBooksClient, pythonJsonDumps, signFreshbooks, verifyFreshbooksSignature } from "@/lib/integrations/freshbooks";
-import { createDraftInvoiceForJob, invoiceDeliveredJobs, reportHeld } from "@/lib/money/invoicing";
+import { createDraftInvoiceForJob, ensureFreshbooksClient, invoiceDeliveredJobs, reportHeld } from "@/lib/money/invoicing";
 import { handleFreshbooksWebhook } from "@/lib/money/freshbooks-webhook";
 import { registerWebhooks } from "@/lib/money/freshbooks-setup";
 import { createAllUnmatched, importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
@@ -312,6 +312,23 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       expect(bulk.freshbooksClientId).toBe("510");
       const [sam] = await t.db.select().from(s.contacts).where(eq(s.contacts.lastName, "Kowalczyk"));
       expect(sam).toMatchObject({ orgId: null, freshbooksClientId: "511", emails: ["sam@example.com"] });
+    });
+
+    it("per-building billing: a job is invoiced to the FreshBooks client for its building, else the company's", async () => {
+      const [org] = await t.db.insert(s.organizations).values({ name: "Marbrose Realty Inc", type: "MANAGEMENT_CO", freshbooksClientId: "7001" }).returning();
+      const [b1] = await t.db.insert(s.properties).values({ addressLine: "53 WEST 76 STREET", borough: "Manhattan" }).returning();
+      const [b2] = await t.db.insert(s.properties).values({ addressLine: "33 WEST 76 STREET", borough: "Manhattan" }).returning();
+      await t.db.insert(s.freshbooksClients).values([
+        { freshbooksClientId: "7001", organization: "Marbrose", matchStatus: "CREATED", linkedOrgId: org.id, propertyId: b2.id },
+        { freshbooksClientId: "7002", organization: "Marbrose", matchStatus: "CREATED", linkedOrgId: org.id, propertyId: b1.id },
+        { freshbooksClientId: "7003", organization: "Other Co", matchStatus: "CREATED", linkedOrgId: null, propertyId: b1.id },
+      ]);
+      expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null, propertyId: b1.id })).toBe("7002");
+      expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null, propertyId: b2.id })).toBe("7001");
+      // A building with no per-building client (or no building) falls back to the company's client.
+      const [b3] = await t.db.insert(s.properties).values({ addressLine: "1 NEW STREET" }).returning();
+      expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null, propertyId: b3.id })).toBe("7001");
+      expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null })).toBe("7001");
     });
 
     it("a VA can see the review list but can't resolve it", async () => {
