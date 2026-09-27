@@ -71,6 +71,21 @@ export async function createAllClients(_prev: ActionState): Promise<ActionState>
   return res;
 }
 
+/**
+ * Asks the worker to pull every FreshBooks invoice and payment (it can take a few minutes, longer
+ * than a web request may run). Past invoices become Closed jobs on the client's building.
+ */
+export async function requestInvoiceHistory(_prev: ActionState): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const updated = await user.db((tx) => tx.update(s.freshbooksConnection).set({ historyRequestedAt: new Date() }).where(eq(s.freshbooksConnection.id, 1)).returning({ id: s.freshbooksConnection.id }));
+    if (!updated.length) return { ok: false, message: "Connect FreshBooks first." };
+    return { ok: true, message: "Started. The import runs in the background — refresh this page in a minute or two to see progress." };
+  });
+  revalidatePath(PATH);
+  return res;
+}
+
 /** Puts an ignored/linked row back in the review list (does not unlink the CRM record). */
 export async function reopenClient(fbId: string) {
   const user = await requireOwner();

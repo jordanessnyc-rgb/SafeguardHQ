@@ -10,6 +10,8 @@ import { fmtDate } from "@/lib/labels";
 import { loadHealth, type HealthItem, type Level } from "@/lib/admin/health";
 import { listDeadJobs, webBoss, type DeadJob } from "@/lib/admin/dead-letter";
 import { auditChanges } from "@/lib/admin/audit";
+import { BACKUP_BUCKET, PREFIX } from "@/lib/backup/export";
+import { supabaseService } from "@/lib/supabase/service";
 import { dismissJob, retryJob } from "./actions";
 
 export const metadata = { title: "System health" };
@@ -58,7 +60,18 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
     deadError = (e as Error).message;
   }
 
-  const ENTITIES = ["job_financials", "invoices_cache", "payments_cache", "sub_costs", "campaign_costs", "pricing_rules", "airnyc_cases"];
+  // Exports in the private Storage bucket (Google Drive exports, if configured, live in Drive instead).
+  let backups: { name: string; size: number | null; at: string | null }[] = [];
+  let backupError: string | null = null;
+  try {
+    const { data, error } = await supabaseService().storage.from(BACKUP_BUCKET).list("", { search: PREFIX, limit: 100, sortBy: { column: "name", order: "desc" } });
+    if (error) throw error;
+    backups = (data ?? []).filter((f) => f.name.startsWith(PREFIX)).map((f) => ({ name: f.name, size: (f.metadata?.size as number | undefined) ?? null, at: f.created_at ?? null }));
+  } catch (e) {
+    backupError = (e as Error).message;
+  }
+
+  const ENTITIES = ["backups", "job_financials", "invoices_cache", "payments_cache", "sub_costs", "campaign_costs", "pricing_rules", "airnyc_cases"];
 
   return (
     <>
@@ -80,6 +93,36 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
           <CardContent>{health.tasks.length ? <HealthList items={health.tasks} /> : <p className="text-sm text-muted-foreground">The worker hasn&apos;t reported any tasks yet.</p>}</CardContent>
         </Card>
       </div>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Backups</CardTitle>
+          <CardDescription>
+            A copy of every table as spreadsheets (CSV, zipped), made each Sunday at 2 AM; the last 12 are kept. Supabase also keeps its own daily backups. Download one now and then and
+            keep it on the Synology.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {backupError ? (
+            <p className="text-sm text-destructive">Couldn&apos;t list backups: {backupError}</p>
+          ) : backups.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No backup yet. The first one is made within a few minutes of the worker starting.</p>
+          ) : (
+            <ul className="divide-y text-sm">
+              {backups.map((b) => (
+                <li key={b.name} className="flex items-center justify-between gap-2 py-1.5">
+                  <span>
+                    {b.name.slice(PREFIX.length, -4)}
+                    {b.size != null && <span className="ml-2 text-xs text-muted-foreground">{(b.size / 1024 / 1024).toFixed(1)} MB</span>}
+                  </span>
+                  {/* Plain <a>: a route handler that redirects to a 60-second signed link. */}
+                  <a href={`/api/admin/backups/${encodeURIComponent(b.name)}`} className="text-primary underline">Download</a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="mt-4">
         <CardHeader>

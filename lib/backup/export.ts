@@ -1,6 +1,8 @@
 /**
- * Weekly export of the CRM's tables to Google Drive (SPEC §13 "weekly export of core tables to
- * Drive"), on top of Supabase's daily backups: one zip of CSVs, readable in Excel without us.
+ * Weekly export of the CRM's tables (SPEC §13), on top of Supabase's daily backups: one zip of
+ * CSVs, readable in Excel without us. Stored in Google Drive when it's configured, otherwise in a
+ * private Supabase Storage bucket (`backups`, service role only) that the owner downloads from
+ * System health. ESS keeps its files on Synology, so the Storage copy is the default.
  *
  * - Every public table is included except the ones below, so new tables are covered automatically.
  * - AIRnyc member fields stay as stored, i.e. encrypted (`*_enc`); the key is not in the export.
@@ -8,6 +10,7 @@
  */
 import PizZip from "pizzip";
 import type { Pool } from "pg";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DriveClient } from "@/lib/integrations/google-drive";
 
 export const EXCLUDED_TABLES = new Set([
@@ -66,19 +69,63 @@ export async function buildExport(pool: Pool, now = new Date()): Promise<{ zip: 
   return { zip: zip.generate({ type: "nodebuffer", compression: "DEFLATE" }), tables: counts };
 }
 
-/** Uploads this week's export once (idempotent by file name) and trashes exports beyond the newest KEEP. */
-export async function runWeeklyExport(pool: Pool, drive: DriveClient, folderId: string, now = new Date()) {
+/** Where exports go. `list` returns this CRM's exports, newest first. */
+export type BackupTarget = {
+  kind: "drive" | "storage";
+  list(): Promise<{ id: string; name: string }[]>;
+  upload(name: string, data: Buffer): Promise<string>;
+  remove(ids: string[]): Promise<void>;
+};
+
+export function driveTarget(drive: DriveClient, folderId: string): BackupTarget {
+  return {
+    kind: "drive",
+    list: () => drive.listByPrefix(folderId, PREFIX),
+    upload: (name, data) => drive.uploadToFolder(folderId, name, data, "application/zip"),
+    remove: async (ids) => {
+      for (const id of ids) await drive.trash(id);
+    },
+  };
+}
+
+export const BACKUP_BUCKET = "backups";
+
+export function storageTarget(sb: SupabaseClient): BackupTarget {
+  const bucket = () => sb.storage.from(BACKUP_BUCKET);
+  return {
+    kind: "storage",
+    async list() {
+      const { data, error } = await bucket().list("", { search: PREFIX, limit: 1000, sortBy: { column: "name", order: "desc" } });
+      if (error) throw new Error(`Backup list failed: ${error.message}`);
+      // Names carry the date, so name order is age order.
+      return (data ?? []).filter((f) => f.name.startsWith(PREFIX)).map((f) => ({ id: f.name, name: f.name })).sort((a, b) => b.name.localeCompare(a.name));
+    },
+    async upload(name, data) {
+      const { error } = await bucket().upload(name, data, { contentType: "application/zip", upsert: true });
+      if (error) throw new Error(`Backup upload failed: ${error.message}`);
+      return name;
+    },
+    async remove(ids) {
+      if (!ids.length) return;
+      const { error } = await bucket().remove(ids);
+      if (error) throw new Error(`Backup cleanup failed: ${error.message}`);
+    },
+  };
+}
+
+/** Uploads today's export once (idempotent by file name) and removes exports beyond the newest KEEP. */
+export async function runWeeklyExport(pool: Pool, target: BackupTarget, now = new Date()) {
   const name = `${PREFIX}${now.toISOString().slice(0, 10)}.zip`;
-  const existing = await drive.listByPrefix(folderId, PREFIX);
+  const existing = await target.list();
   let uploaded: string | null = null;
   let tables: Record<string, number> = {};
   if (!existing.some((f) => f.name === name)) {
     const built = await buildExport(pool, now);
     tables = built.tables;
-    uploaded = await drive.uploadToFolder(folderId, name, built.zip, "application/zip");
+    uploaded = await target.upload(name, built.zip);
   }
   const all = uploaded ? [{ id: uploaded, name }, ...existing] : existing;
   const old = all.slice(KEEP);
-  for (const f of old) await drive.trash(f.id);
+  await target.remove(old.map((f) => f.id));
   return { name, uploaded: Boolean(uploaded), trashed: old.length, tables };
 }

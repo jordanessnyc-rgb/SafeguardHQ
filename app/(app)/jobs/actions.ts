@@ -1,5 +1,6 @@
 "use server";
 
+import { aiEnabled } from "@/lib/ai/enabled";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -476,7 +477,7 @@ export async function removeFieldPhoto(jobId: string, index: number) {
 export async function draftReportAction(jobId: string, _prev: ActionState): Promise<ActionState> {
   const user = await requireStaff();
   const res = await safeAction(async () => {
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
+    if (!aiEnabled()) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
     const [visible] = await user.db((tx) => tx.select({ id: s.jobs.id }).from(s.jobs).where(eq(s.jobs.id, jobId)));
     if (!visible) throw new Error("Job not found.");
     const r = await draftReport(adminDb(), jobId, { storage: { ...storageUploader(), ...storageDownloader() }, actorId: user.id });

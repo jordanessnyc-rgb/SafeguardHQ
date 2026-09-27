@@ -4,11 +4,12 @@
  *  - Titan IMAP listener → email ingest, EMSL parser (SPEC §6.3)
  *  - AI triage of inbound email/SMS (SPEC §9.1), every 30s; AI call extraction (SPEC §9.3), every minute
  *  - mail health check → SMS alert to Jordan (every 5 min)
- *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2)
+ *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2); invoice history import on request
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
  *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
  *  - scheduled inspections → Titan calendar over CalDAV (SPEC §6.3), every 5 min
  *  - DocuSign webhook deliveries left unprocessed are retried (SPEC §6.7), every 20 min
+ *  - weekly CSV export → Google Drive or the private Supabase Storage "backups" bucket (SPEC §13)
  *  - bid listings: NYC City Record open data every 6 h; bid alert emails → bids every 2 min (SPEC §8)
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
@@ -25,6 +26,7 @@ import { quoFromEnv } from "@/lib/integrations/quo";
 import { mailSenderFromEnv, titanConfigFromEnv } from "@/lib/integrations/titan-mail";
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { invoiceDeliveredJobs } from "@/lib/money/invoicing";
+import { runRequestedHistoryImport } from "@/lib/money/history";
 import { sendDigestIfDue } from "@/lib/money/digest";
 import { scheduleNextCycles } from "@/lib/compliance/cycles";
 import { raiseExpiryAlerts } from "@/lib/compliance/expiry";
@@ -34,9 +36,9 @@ import { docusignFromEnv } from "@/lib/integrations/docusign";
 import { retryDocuSignDeliveries } from "@/lib/docs/esign";
 import { bidsFromPendingEmails, ingestCityRecord } from "@/lib/bids/ingest";
 import { storageDownloader } from "@/lib/supabase/service";
-import { storageUploader } from "@/lib/supabase/service";
+import { storageUploader, supabaseService } from "@/lib/supabase/service";
 import { recordRun } from "@/lib/admin/health";
-import { runWeeklyExport } from "@/lib/backup/export";
+import { driveTarget, runWeeklyExport, storageTarget } from "@/lib/backup/export";
 import { captureError } from "@/lib/observability";
 import { initWorkerSentry } from "./sentry";
 import { mailHealthCheck } from "./health";
@@ -109,25 +111,25 @@ async function main() {
   // 3:00 AM New York, after the city's overnight dataset refreshes.
   await boss.schedule(Q.nightly, "0 3 * * *", null, { tz: "America/New_York" });
 
-  // Weekly Drive export (SPEC §13): Sundays 2:00 AM New York. Failures retry, then show on /admin.
+  // Weekly export (SPEC §13): Sundays 2:00 AM New York. Failures retry, then show on /admin.
+  // Google Drive when configured, else the private Supabase Storage bucket.
   const drive = driveFromEnv();
   const exportFolder = process.env.GOOGLE_DRIVE_EXPORT_FOLDER_ID;
-  if (drive && exportFolder) {
-    await boss.createQueue(Q.export, { retryLimit: 3, retryDelay: 600, retryBackoff: true, deadLetter: Q.dead });
-    await boss.schedule(Q.export, "0 2 * * 0", null, { tz: "America/New_York" });
-    await boss.work(Q.export, async () => {
-      try {
-        const r = await runWeeklyExport(adminPool(), drive, exportFolder);
-        console.log(`[export] ${r.name}: ${r.uploaded ? `uploaded (${Object.keys(r.tables).length} tables)` : "already there"}, ${r.trashed} old export(s) trashed`);
-        await recordRun(adminDb(), "weekly-export", 7 * 86_400, null);
-      } catch (e) {
-        await recordRun(adminDb(), "weekly-export", 7 * 86_400, e).catch(() => {});
-        throw e; // pg-boss retries, then dead-letters it
-      }
-    });
-  } else {
-    console.log("[export] Google Drive credentials or GOOGLE_DRIVE_EXPORT_FOLDER_ID not set — no weekly export");
-  }
+  const backupTarget = drive && exportFolder ? driveTarget(drive, exportFolder) : storageTarget(supabaseService());
+  await boss.createQueue(Q.export, { retryLimit: 3, retryDelay: 600, retryBackoff: true, deadLetter: Q.dead });
+  await boss.schedule(Q.export, "0 2 * * 0", null, { tz: "America/New_York" });
+  await boss.work(Q.export, async () => {
+    try {
+      const r = await runWeeklyExport(adminPool(), backupTarget);
+      console.log(`[export] ${backupTarget.kind} ${r.name}: ${r.uploaded ? `uploaded (${Object.keys(r.tables).length} tables)` : "already there"}, ${r.trashed} old export(s) removed`);
+      await recordRun(adminDb(), "weekly-export", 7 * 86_400, null);
+    } catch (e) {
+      await recordRun(adminDb(), "weekly-export", 7 * 86_400, e).catch(() => {});
+      throw e; // pg-boss retries, then dead-letters it
+    }
+  });
+  // No export yet (new install, or the destination changed) → make the first one now, not next Sunday.
+  if (!(await backupTarget.list().catch(() => [{ id: "?", name: "?" }])).length) await boss.send(Q.export, null, { singletonKey: "first-export" });
 
   await boss.work(Q.nightly, async () => {
     const ids = await activePropertyIds();
@@ -169,6 +171,12 @@ async function main() {
     timers.push(
       every(60_000, "invoices", async () => {
         for (const o of await invoiceDeliveredJobs(adminDb(), fb)) console.log(`[invoices] ${o.status} ${o.invoiceId ?? ""} ${o.reason ?? ""}`.trim());
+      }),
+    );
+    timers.push(
+      every(60_000, "invoice-history", async () => {
+        const r = await runRequestedHistoryImport(adminDb(), fb);
+        if (r) console.log(`[invoice-history] ${r.invoices} invoices, ${r.jobsCreated} past jobs created, ${r.payments} payments`);
       }),
     );
   } else {

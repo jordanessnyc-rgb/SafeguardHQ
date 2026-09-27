@@ -214,6 +214,14 @@ export class FreshBooksClient {
     );
     return r.response.result.invoices;
   }
+  /** One page of every invoice (oldest pages last), with line items. */
+  async listInvoices(page = 1): Promise<{ invoices: FbInvoice[]; pages: number }> {
+    const r = await this.request<{ response: { result: { invoices: FbInvoice[]; pages: number } } }>(
+      "GET",
+      await this.acct(`/invoices/invoices?page=${page}&per_page=100&include%5B%5D=lines`),
+    );
+    return r.response.result;
+  }
   async emailInvoice(id: string, recipients: string[]): Promise<void> {
     await this.request("PUT", await this.acct(`/invoices/invoices/${id}`), { invoice: { action_email: true, email_recipients: recipients } });
   }
@@ -222,6 +230,10 @@ export class FreshBooksClient {
   async getPayment(id: string): Promise<FbPayment> {
     const r = await this.request<{ response: { result: { payment: FbPayment } } }>("GET", await this.acct(`/payments/payments/${id}`));
     return r.response.result.payment;
+  }
+  async listPayments(page = 1): Promise<{ payments: FbPayment[]; pages: number }> {
+    const r = await this.request<{ response: { result: { payments: FbPayment[]; pages: number } } }>("GET", await this.acct(`/payments/payments?page=${page}&per_page=100`));
+    return r.response.result;
   }
 
   // --- webhooks ---
@@ -260,7 +272,10 @@ export type FbInvoice = {
   paid?: Money;
   notes?: string;
   currency_code?: string;
+  date_paid?: string | null;
+  lines?: FbInvoiceLine[];
 };
+export type FbInvoiceLine = { name?: string | null; description?: string | null; qty?: string | number | null; unit_cost?: Money | null; amount?: Money | null };
 export type FbPayment = { id: number; logid?: number; invoiceid?: number; amount?: Money; date?: string; type?: string; vis_state?: number; updated?: string };
 
 export function freshbooksFromEnv(db: Db): FreshBooksClient | null {

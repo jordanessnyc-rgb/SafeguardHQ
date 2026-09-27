@@ -95,6 +95,7 @@ export class FakeFreshBooks {
       }
       return wrap({ invoice: inv });
     }
+    if (u.pathname === `${acct}/payments/payments`) return wrap({ payments: this.payments, page: 1, pages: 1, per_page: 100, total: this.payments.length });
     const payMatch = u.pathname.match(new RegExp(`^${acct}/payments/payments/(\\d+)$`));
     if (payMatch) return wrap({ payment: this.payments.find((p) => String(p.id) === payMatch[1]) });
 

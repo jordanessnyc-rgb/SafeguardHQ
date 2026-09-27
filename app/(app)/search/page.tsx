@@ -1,3 +1,4 @@
+import { aiEnabled } from "@/lib/ai/enabled";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
   const user = await requireStaff();
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 500) : "";
-  const aiReady = Boolean(process.env.ANTHROPIC_API_KEY);
+  const aiReady = aiEnabled();
   const result = q && aiReady ? await naturalLanguageSearch(adminDb(), user, q) : null;
 
   return (
@@ -32,7 +33,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
         <Input name="q" defaultValue={q} placeholder="e.g. Which management companies haven't paid in 60 days?" className="max-w-2xl flex-1" />
         <Button type="submit" disabled={!aiReady}>Ask</Button>
       </form>
-      {!aiReady && <p className="text-sm text-muted-foreground">Needs ANTHROPIC_API_KEY.</p>}
+      {!aiReady && <p className="text-sm text-muted-foreground">Ask the CRM uses AI, which is turned off. Use the search box (⌘K) to find records instead.</p>}
       {!q && (
         <div className="flex flex-wrap gap-2 text-sm">
           {EXAMPLES.map((e) => (

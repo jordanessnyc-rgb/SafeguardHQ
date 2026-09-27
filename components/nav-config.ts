@@ -20,7 +20,7 @@ import {
 
 export type NavCounts = { tasks: number; inbox: number; outbox: number };
 type CountKey = keyof NavCounts;
-export type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean; count?: CountKey; urgent?: boolean };
+export type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean; aiOnly?: boolean; count?: CountKey; urgent?: boolean };
 
 /** Grouped by what the person is doing, with the queues that wait on someone kept together near the top. */
 export const NAV_GROUPS: { label: string; ownerOnly?: boolean; items: NavItem[] }[] = [
@@ -60,7 +60,7 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; items: NavItem[] 
     label: "Grow",
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-      { href: "/search", label: "Ask the CRM", icon: Sparkles },
+      { href: "/search", label: "Ask the CRM", icon: Sparkles, aiOnly: true },
     ],
   },
   {
@@ -82,4 +82,8 @@ export const NEW_ITEMS = [
   { href: "/bids/new", label: "New bid" },
 ];
 
-export const groupsFor = (isOwner: boolean) => NAV_GROUPS.filter((g) => isOwner || !g.ownerOnly);
+/** What this person sees: owner-only groups for the owner; AI-only pages only while AI is configured. */
+export const groupsFor = (isOwner: boolean, ai: boolean) =>
+  NAV_GROUPS.filter((g) => isOwner || !g.ownerOnly)
+    .map((g) => ({ ...g, items: g.items.filter((i) => ai || !i.aiOnly) }))
+    .filter((g) => g.items.length > 0);

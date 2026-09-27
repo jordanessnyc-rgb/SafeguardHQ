@@ -197,6 +197,20 @@
       "when": 1790549602696,
       "tag": "0027_fb_client_property",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790552424282,
+      "tag": "0028_fb_history_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790552711181,
+      "tag": "0029_backups_bucket",
+      "breakpoints": true
     }
   ]
 }

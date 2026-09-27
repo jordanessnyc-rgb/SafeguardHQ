@@ -46,7 +46,7 @@ export function SearchButton({ className, iconOnly }: { className?: string; icon
  * ⌘K / Ctrl+K: jump to any page, create something, or find a job/property/contact/org by typing.
  * Arrow keys move, Enter opens. Record search runs as the signed-in user (RLS applies).
  */
-export function CommandPalette({ isOwner }: { isOwner: boolean }) {
+export function CommandPalette({ isOwner, ai }: { isOwner: boolean; ai: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -89,7 +89,7 @@ export function CommandPalette({ isOwner }: { isOwner: boolean }) {
   const rows = useMemo<Row[]>(() => {
     const term = q.trim().toLowerCase();
     const match = (s: string) => !term || s.toLowerCase().includes(term);
-    const pages = groupsFor(isOwner)
+    const pages = groupsFor(isOwner, ai)
       .flatMap((g) => g.items.map(({ href, label }) => ({ href, label })))
       .concat({ href: "/settings", label: "Settings" })
       .filter((i) => match(i.label))
@@ -98,9 +98,9 @@ export function CommandPalette({ isOwner }: { isOwner: boolean }) {
       (i): Row => ({ key: `n:${i.href}`, group: "Create", title: i.label, href: i.href, icon: "new" }),
     );
     const records = term.length >= 2 ? hits.map((h, i): Row => ({ key: `r:${i}:${h.href}`, group: h.kind, title: h.title, detail: h.detail, href: h.href })) : [];
-    const ask = term.length >= 3 ? [{ key: "ask", group: "Ask the CRM", title: `Ask: “${q.trim()}”`, href: `/search?q=${encodeURIComponent(q.trim())}`, icon: "ask" as const }] : [];
+    const ask = ai && term.length >= 3 ? [{ key: "ask", group: "Ask the CRM", title: `Ask: “${q.trim()}”`, href: `/search?q=${encodeURIComponent(q.trim())}`, icon: "ask" as const }] : [];
     return [...records, ...pages.slice(0, term ? 6 : 8), ...create.slice(0, term ? 3 : 6), ...ask];
-  }, [q, hits, isOwner]);
+  }, [q, hits, isOwner, ai]);
 
   const go = (row: Row | undefined) => {
     if (!row) return;

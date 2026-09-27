@@ -4,6 +4,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { inboxReviewWhere, OUTBOX_WAITING } from "@/lib/queues";
+import { aiEnabled } from "@/lib/ai/enabled";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await requireStaff();
@@ -18,7 +19,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     const [outbox] = await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING]));
     return { tasks: tasks.n, inbox: inbox.n, outbox: outbox.n };
   });
-  const nav = { isOwner: user.role === "OWNER", counts, name: user.fullName ?? user.email, role: user.role === "OWNER" ? "Owner" : "VA" };
+  const nav = { isOwner: user.role === "OWNER", ai: aiEnabled(), counts, name: user.fullName ?? user.email, role: user.role === "OWNER" ? "Owner" : "VA" };
   return (
     <div className="flex min-h-svh">
       <SideNav {...nav} />
@@ -26,7 +27,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <MobileNav {...nav} />
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 pb-24 md:p-6 md:pb-6">{children}</main>
       </div>
-      <CommandPalette isOwner={nav.isOwner} />
+      <CommandPalette isOwner={nav.isOwner} ai={nav.ai} />
     </div>
   );
 }

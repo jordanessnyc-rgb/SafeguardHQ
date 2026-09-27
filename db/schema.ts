@@ -963,6 +963,9 @@ export const freshbooksConnection = pgTable("freshbooks_connection", {
   // callbackId → { event, verified, verifierEnc }. Each callback's verifier (sent during the
   // handshake) is also the HMAC key FreshBooks signs that callback's deliveries with.
   webhookCallbacks: jsonb("webhook_callbacks").$type<Record<string, { event: string; verified: boolean; verifierEnc?: string }>>(),
+  // Invoice history import (Settings → FreshBooks): the owner requests it, the worker runs it.
+  historyRequestedAt: timestamp("history_requested_at", { withTimezone: true }),
+  historyStatus: jsonb("history_status").$type<HistoryImportStatus>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -1095,6 +1098,14 @@ export const pricingRules = pgTable("pricing_rules", {
 
 export type FieldReading = { area: string; moisture?: string | null; rh?: string | null; temp?: string | null; note?: string | null };
 export type FieldPhoto = { path: string; caption: string; area?: string | null; contentType: string; width?: number; height?: number };
+export type HistoryImportStatus = {
+  startedAt: string;
+  finishedAt?: string | null;
+  error?: string | null;
+  invoices: number;
+  jobsCreated: number;
+  payments: number;
+};
 
 // ---------------------------------------------------------------------------
 // Phase 5 — government bids (SPEC §8, §9.6)

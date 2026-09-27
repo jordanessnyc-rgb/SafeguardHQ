@@ -10,9 +10,10 @@ import { Status } from "@/components/status";
 import { PageHeader } from "@/components/page-header";
 import { requireOwner } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
+import type { HistoryImportStatus } from "@/db/schema";
 import { fbConfigFromEnv } from "@/lib/integrations/freshbooks";
 import { fmtDate, personName } from "@/lib/labels";
-import { createAllClients, disconnectFreshbooks, importClients, reopenClient, reregisterWebhooks, resolveClient } from "./actions";
+import { createAllClients, disconnectFreshbooks, importClients, reopenClient, requestInvoiceHistory, reregisterWebhooks, resolveClient } from "./actions";
 
 export const metadata = { title: "FreshBooks" };
 
@@ -107,6 +108,26 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
           </CardContent>
         </Card>
       </div>
+
+      {d.conn && (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>Invoice history</CardTitle>
+            <CardDescription>
+              Brings in every FreshBooks invoice and payment. Each past invoice becomes a closed job on the client&apos;s building, so clients, companies and buildings show
+              their real history and the reports include past revenue. Nothing is sent to anyone. Safe to run again: invoices already imported are only refreshed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <HistoryStatus requestedAt={d.conn.historyRequestedAt} status={d.conn.historyStatus} />
+            <ActionForm action={requestInvoiceHistory} className="flex flex-col items-start gap-1">
+              <SubmitButton size="sm" variant={d.conn.historyStatus?.finishedAt ? "outline" : "default"}>
+                {d.conn.historyStatus?.finishedAt ? "Import again" : "Import invoice history"}
+              </SubmitButton>
+            </ActionForm>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="mt-4">
         <CardHeader>
@@ -211,5 +232,24 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function HistoryStatus({ requestedAt, status }: { requestedAt: Date | null; status: HistoryImportStatus | null }) {
+  if (!requestedAt) return <p className="text-muted-foreground">Not imported yet.</p>;
+  const counts = status ? `${status.invoices} invoices, ${status.jobsCreated} past jobs created, ${status.payments} payments` : null;
+  // Requested after the last run started → the worker picks it up within a minute.
+  if (!status || new Date(status.startedAt) < requestedAt) return <p><Status tone="warn">Waiting</Status> The worker starts within a minute.</p>;
+  if (!status.finishedAt) return <p><Status tone="warn">Running</Status> {counts} so far…</p>;
+  if (status.error)
+    return (
+      <p>
+        <Status tone="error">Stopped</Status> {counts} before an error: <span className="text-destructive">{status.error}</span>
+      </p>
+    );
+  return (
+    <p>
+      <Status tone="ok">Done</Status> {counts} · finished {fmtDate(new Date(status.finishedAt), true)}
+    </p>
   );
 }

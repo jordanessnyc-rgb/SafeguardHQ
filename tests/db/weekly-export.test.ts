@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import PizZip from "pizzip";
 import * as s from "@/db/schema";
-import { buildExport, csvField, KEEP, runWeeklyExport, toCsv } from "@/lib/backup/export";
+import { buildExport, csvField, driveTarget, KEEP, runWeeklyExport, toCsv } from "@/lib/backup/export";
 import type { DriveClient } from "@/lib/integrations/google-drive";
 import { hasTestDb, setupTestDb, type TestDb } from "../helpers/db";
 
@@ -48,14 +48,14 @@ describe.skipIf(!hasTestDb)("weekly export (database)", () => {
       uploadToFolder: async (_f: string, name: string, data: Buffer) => (uploads.push(name), expect(data.length).toBeGreaterThan(100), "new1"),
       trash: async (id: string) => void trashed.push(id),
     } as unknown as DriveClient;
-    const r = await runWeeklyExport(t.pool, drive, "folder", new Date("2026-09-27T06:00:00Z"));
+    const r = await runWeeklyExport(t.pool, driveTarget(drive, "folder"), new Date("2026-09-27T06:00:00Z"));
     expect(r).toMatchObject({ name: "ess-crm-export-2026-09-27.zip", uploaded: true, trashed: 1 });
     expect(uploads).toEqual(["ess-crm-export-2026-09-27.zip"]);
     expect(trashed).toEqual([`old${KEEP - 1}`]); // the oldest one beyond the newest KEEP
 
     files.unshift({ id: "new1", name: "ess-crm-export-2026-09-27.zip", mimeType: "application/zip", createdTime: "" });
     files.pop();
-    const again = await runWeeklyExport(t.pool, drive, "folder", new Date("2026-09-27T07:00:00Z"));
+    const again = await runWeeklyExport(t.pool, driveTarget(drive, "folder"), new Date("2026-09-27T07:00:00Z"));
     expect(again.uploaded).toBe(false); // a retry the same day doesn't upload twice
     expect(uploads).toHaveLength(1);
   });
