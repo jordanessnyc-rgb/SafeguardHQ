@@ -6,7 +6,7 @@
  *    Sent → job Invoiced; fully paid → job Paid, review-request draft + task, held report released.
  * Everything runs on the privileged connection (worker/webhooks) and is idempotent.
  */
-import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import type { FbInvoice, FbPayment, FreshBooksClient } from "@/lib/integrations/freshbooks";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
@@ -20,7 +20,27 @@ type LineItem = { description: string; quantity: number; unitPrice: number };
 const money = (v: { amount?: string } | undefined | null) => (v?.amount != null ? Number(v.amount).toFixed(2) : null);
 
 /** The CRM's billing party for a job → FreshBooks client id (links or creates, never duplicates by email). */
-export async function ensureFreshbooksClient(db: Db, fb: FreshBooksClient, job: { clientOrgId: string | null; clientContactId: string | null }): Promise<string> {
+export async function ensureFreshbooksClient(
+  db: Db,
+  fb: FreshBooksClient,
+  job: { clientOrgId: string | null; clientContactId: string | null; propertyId?: string | null },
+): Promise<string> {
+  // Per-building billing: a FreshBooks client tied to this job's building and this job's client wins.
+  if (job.propertyId && (job.clientOrgId || job.clientContactId)) {
+    const [perBuilding] = await db
+      .select({ id: s.freshbooksClients.freshbooksClientId })
+      .from(s.freshbooksClients)
+      .where(
+        and(
+          eq(s.freshbooksClients.propertyId, job.propertyId),
+          inArray(s.freshbooksClients.matchStatus, ["LINKED", "CREATED"]),
+          job.clientOrgId ? eq(s.freshbooksClients.linkedOrgId, job.clientOrgId) : eq(s.freshbooksClients.linkedContactId, job.clientContactId!),
+        ),
+      )
+      .orderBy(desc(s.freshbooksClients.importedAt))
+      .limit(1);
+    if (perBuilding) return perBuilding.id;
+  }
   const [org] = job.clientOrgId ? await db.select().from(s.organizations).where(eq(s.organizations.id, job.clientOrgId)) : [];
   const [contact] = job.clientContactId ? await db.select().from(s.contacts).where(eq(s.contacts.id, job.clientContactId)) : [];
   if (org?.freshbooksClientId) return org.freshbooksClientId;

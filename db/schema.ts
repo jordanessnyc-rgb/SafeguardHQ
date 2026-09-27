@@ -981,6 +981,9 @@ export const freshbooksClients = pgTable("freshbooks_clients", {
   matchReason: text("match_reason"),
   linkedOrgId: uuid("linked_org_id").references(() => organizations.id, { onDelete: "set null" }),
   linkedContactId: uuid("linked_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  // The building this FreshBooks client stands for, when Jordan keeps one FreshBooks client per
+  // building (e.g. 26 × Marbrose Realty). Invoices for jobs there go to this client.
+  propertyId: uuid("property_id").references(() => properties.id, { onDelete: "set null" }),
   raw: jsonb("raw"),
   importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

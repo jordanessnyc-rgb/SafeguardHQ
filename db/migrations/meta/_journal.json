@@ -190,6 +190,13 @@
       "when": 1790360998882,
       "tag": "0026_remove_owner_mfa",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790549602696,
+      "tag": "0027_fb_client_property",
+      "breakpoints": true
     }
   ]
 }
