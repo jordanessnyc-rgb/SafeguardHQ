@@ -11,7 +11,7 @@ import { FreshBooksClient, pythonJsonDumps, signFreshbooks, verifyFreshbooksSign
 import { createDraftInvoiceForJob, invoiceDeliveredJobs, reportHeld } from "@/lib/money/invoicing";
 import { handleFreshbooksWebhook } from "@/lib/money/freshbooks-webhook";
 import { registerWebhooks } from "@/lib/money/freshbooks-setup";
-import { importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
+import { createAllUnmatched, importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
 import { FakeFreshBooks } from "../helpers/fake-freshbooks";
 import { createUser, hasTestDb, setupTestDb, type TestDb, type TestUser } from "../helpers/db";
 
@@ -294,6 +294,24 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       await importFreshbooksClients(t.db, fb);
       const after = Object.fromEntries((await t.db.select().from(s.freshbooksClients)).map((r) => [r.freshbooksClientId, r.matchStatus]));
       expect(after).toMatchObject({ "501": "LINKED", "503": "LINKED", "504": "IGNORED" });
+    });
+
+    it("'Create all as new' creates every unmatched client, leaves suggested duplicates and nameless rows for review", async () => {
+      fake.clients.push(
+        { id: 510, organization: "Bulk Realty LLC", email: "ap@bulk.com", vis_state: 0 },
+        { id: 511, fname: "Sam", lname: "Kowalczyk", email: "sam@example.com", vis_state: 0 },
+        { id: 512, email: "noname@example.com", vis_state: 0 },
+      );
+      await importFreshbooksClients(t.db, fb);
+      const out = await owner.as((tx) => createAllUnmatched(tx));
+      expect(out.created).toBeGreaterThanOrEqual(2);
+      expect(out.skipped).toBeGreaterThanOrEqual(1);
+      const st = Object.fromEntries((await t.db.select().from(s.freshbooksClients)).map((r) => [r.freshbooksClientId, r.matchStatus]));
+      expect(st).toMatchObject({ "502": "PENDING", "510": "CREATED", "511": "CREATED", "512": "PENDING" });
+      const [bulk] = await t.db.select().from(s.organizations).where(eq(s.organizations.name, "Bulk Realty LLC"));
+      expect(bulk.freshbooksClientId).toBe("510");
+      const [sam] = await t.db.select().from(s.contacts).where(eq(s.contacts.lastName, "Kowalczyk"));
+      expect(sam).toMatchObject({ orgId: null, freshbooksClientId: "511", emails: ["sam@example.com"] });
     });
 
     it("a VA can see the review list but can't resolve it", async () => {

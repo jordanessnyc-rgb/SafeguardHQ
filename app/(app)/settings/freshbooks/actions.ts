@@ -8,7 +8,7 @@ import { adminDb, schema as s } from "@/lib/db";
 import { requireOwner } from "@/lib/auth/session";
 import { formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
-import { importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
+import { createAllUnmatched, importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
 import { registerWebhooks } from "@/lib/money/freshbooks-setup";
 import { siteOrigin } from "@/lib/site";
 
@@ -55,6 +55,17 @@ export async function resolveClient(fbId: string, _prev: ActionState, form: Form
     const r = resolveSchema.parse(formObject(form));
     await user.db((tx) => resolveImportedClient(tx, fbId, r));
     return { ok: true, message: r.action === "ignore" ? "Ignored." : r.action === "create" ? "Created in the CRM." : "Linked." };
+  });
+  revalidatePath(PATH);
+  return res;
+}
+
+/** One click for a fresh CRM: every client with no likely duplicate becomes a CRM record. */
+export async function createAllClients(_prev: ActionState): Promise<ActionState> {
+  const user = await requireOwner();
+  const res = await safeAction(async () => {
+    const { created, skipped } = await user.db((tx) => createAllUnmatched(tx));
+    return { ok: true, message: `Created ${created} clients in the CRM.${skipped ? ` ${skipped} have no name or company — decide those below.` : ""} Possible duplicates are still listed for review.` };
   });
   revalidatePath(PATH);
   return res;
