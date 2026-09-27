@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc, count, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, ne } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { requireOwner } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { fbConfigFromEnv } from "@/lib/integrations/freshbooks";
 import { fmtDate, personName } from "@/lib/labels";
-import { disconnectFreshbooks, importClients, reopenClient, reregisterWebhooks, resolveClient } from "./actions";
+import { createAllClients, disconnectFreshbooks, importClients, reopenClient, reregisterWebhooks, resolveClient } from "./actions";
 
 export const metadata = { title: "FreshBooks" };
 
@@ -23,6 +23,12 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
     pending: await tx.select().from(s.freshbooksClients).where(eq(s.freshbooksClients.matchStatus, "PENDING")).orderBy(asc(s.freshbooksClients.organization), asc(s.freshbooksClients.lastName)),
     resolved: await tx.select().from(s.freshbooksClients).where(ne(s.freshbooksClients.matchStatus, "PENDING")).orderBy(desc(s.freshbooksClients.updatedAt)).limit(200),
     resolvedCount: (await tx.select({ n: count() }).from(s.freshbooksClients).where(ne(s.freshbooksClients.matchStatus, "PENDING")))[0].n,
+    pendingUnmatched: (
+      await tx
+        .select({ n: count() })
+        .from(s.freshbooksClients)
+        .where(and(eq(s.freshbooksClients.matchStatus, "PENDING"), isNull(s.freshbooksClients.suggestedOrgId), isNull(s.freshbooksClients.suggestedContactId)))
+    )[0].n,
     orgs: await tx.select({ id: s.organizations.id, name: s.organizations.name }).from(s.organizations).where(isNull(s.organizations.archivedAt)).orderBy(asc(s.organizations.name)),
     contacts: await tx
       .select({ id: s.contacts.id, firstName: s.contacts.firstName, lastName: s.contacts.lastName, emails: s.contacts.emails })
@@ -112,6 +118,15 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
           {d.conn && (
             <ActionForm action={importClients} className="flex flex-col items-start gap-1">
               <SubmitButton size="sm">Import / refresh clients from FreshBooks</SubmitButton>
+            </ActionForm>
+          )}
+          {d.pendingUnmatched > 0 && (
+            <ActionForm action={createAllClients} className="flex flex-col items-start gap-1 rounded-md border bg-muted/40 p-3">
+              <p className="text-sm">
+                <span className="font-medium">{d.pendingUnmatched}</span> clients have no likely duplicate in the CRM. Create them all at once instead of one by one;
+                possible duplicates stay below for you to decide.
+              </p>
+              <SubmitButton size="sm" variant="secondary">Create all {d.pendingUnmatched} as new</SubmitButton>
             </ActionForm>
           )}
           {d.pending.length > 0 ? (

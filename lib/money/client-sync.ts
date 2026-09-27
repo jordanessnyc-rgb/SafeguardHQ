@@ -100,6 +100,29 @@ export async function refreshImportedClient(db: Db, fb: FreshBooksClient, id: st
 
 export type Resolution = { action: "link"; orgId?: string | null; contactId?: string | null } | { action: "create" } | { action: "ignore" };
 
+/**
+ * "Create all as new": every PENDING FreshBooks client with no suggested duplicate becomes a CRM
+ * organization/contact in one go. Rows with a suggested match stay in the review list, and rows with
+ * no name or company are skipped (they stay PENDING for a manual decision).
+ */
+export async function createAllUnmatched(conn: Conn): Promise<{ created: number; skipped: number }> {
+  const rows = await conn
+    .select({ id: s.freshbooksClients.freshbooksClientId, org: s.freshbooksClients.organization, first: s.freshbooksClients.firstName, last: s.freshbooksClients.lastName })
+    .from(s.freshbooksClients)
+    .where(and(eq(s.freshbooksClients.matchStatus, "PENDING"), isNull(s.freshbooksClients.suggestedOrgId), isNull(s.freshbooksClients.suggestedContactId)));
+  let created = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    if (!r.org && !r.first && !r.last) {
+      skipped++;
+      continue;
+    }
+    await resolveImportedClient(conn, r.id, { action: "create" });
+    created++;
+  }
+  return { created, skipped };
+}
+
 export async function resolveImportedClient(conn: Conn, fbId: string, r: Resolution) {
   const [row] = await conn.select().from(s.freshbooksClients).where(eq(s.freshbooksClients.freshbooksClientId, fbId));
   if (!row) throw new Error("FreshBooks client not found in the import list.");
