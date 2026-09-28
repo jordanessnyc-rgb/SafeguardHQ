@@ -483,3 +483,16 @@ changes worth knowing:
   - Steps are counted by follow-up tasks since the stage started, so moving back to Proposal sent starts over.
 - **Reports → Win / loss.** Leads from the last 12 months by source and by service: won, lost, open, win rate, days to win. Also a count of loss reasons.
 - **Not built.** Housecall Pro-style contact-attempt stages (1st/2nd/3rd contact). The touch counter and the last-contact dot cover the same need without adding stages. Ask Jordan before adding stages.
+
+## Titan calendar on the schedule (2026-09-28)
+
+- **Read live, not stored.** `/schedule` reads the Titan calendars over CalDAV each time it loads (8 s timeout). If Titan is slow or down, the page still loads with a note instead of the events. Titan events are never copied into our database, so they can't go stale and there's nothing to sync back.
+- **Titan ignores CalDAV `expand`.** Verified 2026-09-28: with `<C:expand>` the REPORT returns objects with no VEVENTs. So we fetch the raw objects for the time range and expand repeats ourselves with `ical.js` (RRULE, EXDATE, edited occurrences via RECURRENCE-ID, cancelled occurrences, per-event TZID; `lib/calendar/read.ts`).
+- **CRM visits aren't shown twice.** Events whose UID ends `@crm.ess-nyc.com` are the CRM's own copies and are left out; the schedule already shows those as jobs.
+- **Read-only.** The CRM never edits or deletes Jordan's own Titan events. Clicking one shows its details and says to change it in Titan.
+- **Settings → Titan calendar** (owner, migration 0032: `settings.calendar_write_url`, `settings.calendar_hidden_urls`).
+  - Pick which calendars show on the schedule. On the page itself, the calendar chips hide or show a calendar for that visit only.
+  - Pick which calendar CRM visits are written to. Until one is picked, the old rule applies: `TITAN_CALDAV_CALENDAR_URL`, then `TITAN_CALDAV_CALENDAR_NAME`, then the first calendar Titan lists (jordan@ess-nyc.com).
+  - Changing the write calendar deletes the CRM's copies from the old calendar and lets the worker write them to the new one on its next run (5 min).
+- **VAs see Titan events on the schedule** (they already see the schedule). Titan events are Jordan's own calendar, not pricing or AIRnyc records. A calendar Jordan doesn't want VAs to see can be unticked under "Show on schedule".
+- **Web needs `TITAN_CALDAV_ENABLED=true` too**, not just the worker, since the page reads Titan directly.

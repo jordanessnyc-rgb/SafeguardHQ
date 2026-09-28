@@ -225,6 +225,13 @@
       "when": 1790560445775,
       "tag": "0031_proposal_followups",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790562363117,
+      "tag": "0032_titan_calendar_settings",
+      "breakpoints": true
     }
   ]
 }

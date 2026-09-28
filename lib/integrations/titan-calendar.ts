@@ -10,6 +10,13 @@
  * <collection>/<uid>.ics, which is an idempotent upsert.
  */
 import { createDAVClient } from "tsdav";
+import { eventsFromIcs, type ExternalEvent } from "@/lib/calendar/read";
+
+export type CalendarInfo = { url: string; name: string; color: string | null };
+
+// Discovery (a few PROPFINDs) is cached per server process; calendars rarely change.
+const DISCOVERY_TTL = 10 * 60_000;
+let discovered: { key: string; at: number; calendars: Promise<CalendarInfo[]> } | null = null;
 
 export type CalendarConfig = { serverUrl: string; username: string; password: string; calendarUrl?: string; calendarName?: string };
 
@@ -44,22 +51,57 @@ export class TitanCalendar implements CalendarSink {
     return `Basic ${Buffer.from(`${this.cfg.username}:${this.cfg.password}`).toString("base64")}`;
   }
 
-  /** The calendar collection URL (discovered once, then cached). */
-  async calendarUrl(): Promise<string> {
-    if (this.collection) return this.collection;
-    const client = await createDAVClient({
+  private client() {
+    return createDAVClient({
       serverUrl: this.cfg.serverUrl,
       credentials: { username: this.cfg.username, password: this.cfg.password },
       authMethod: "Basic",
       defaultAccountType: "caldav",
       fetch: this.fetchImpl,
     });
-    const cals = (await client.fetchCalendars()).filter((c) => !c.components || c.components.includes("VEVENT"));
+  }
+
+  /** Every event calendar in the mailbox, with Titan's display name and color. */
+  async listCalendars(): Promise<CalendarInfo[]> {
+    const key = `${this.cfg.serverUrl}|${this.cfg.username}`;
+    if (!discovered || discovered.key !== key || Date.now() - discovered.at > DISCOVERY_TTL) {
+      const calendars = this.client()
+        .then((c) => c.fetchCalendars())
+        .then((cals) =>
+          cals
+            .filter((c) => !c.components || c.components.includes("VEVENT"))
+            .map((c) => ({ url: c.url.replace(/\/?$/, "/"), name: String(c.displayName ?? "Calendar").trim(), color: (c as { calendarColor?: string }).calendarColor ?? null })),
+        );
+      discovered = { key, at: Date.now(), calendars };
+      calendars.catch(() => (discovered = null)); // don't cache a failure
+    }
+    return discovered.calendars;
+  }
+
+  /** The collection CRM visits are written to: pinned by settings/env, else by name, else the first. */
+  async calendarUrl(): Promise<string> {
+    if (this.collection) return this.collection;
+    const cals = await this.listCalendars();
     const want = this.cfg.calendarName?.toLowerCase();
-    const pick = (want && cals.find((c) => String(c.displayName ?? "").toLowerCase() === want)) || cals[0];
+    const pick = (want && cals.find((c) => c.name.toLowerCase() === want)) || cals[0];
     if (!pick) throw new Error("No CalDAV calendar found for this Titan mailbox.");
-    this.collection = pick.url.replace(/\/?$/, "/");
+    this.collection = pick.url;
     return this.collection;
+  }
+
+  /**
+   * Events in [start, end) from the given calendars, repeats expanded. Events the CRM wrote itself
+   * (UID …@crm.ess-nyc.com) are left out: the schedule already shows those as jobs.
+   */
+  async fetchEvents(calendars: CalendarInfo[], range: { start: Date; end: Date }): Promise<ExternalEvent[]> {
+    const client = await this.client();
+    const lists = await Promise.all(
+      calendars.map(async (cal) => {
+        const objs = await client.fetchCalendarObjects({ calendar: { url: cal.url }, timeRange: { start: range.start.toISOString(), end: range.end.toISOString() } });
+        return objs.flatMap((o) => (typeof o.data === "string" ? eventsFromIcs(o.data, cal, range) : []));
+      }),
+    );
+    return lists.flat().filter((e) => !e.uid.endsWith("@crm.ess-nyc.com")).sort((a, b) => a.start.getTime() - b.start.getTime());
   }
 
   async put(filename: string, ics: string): Promise<void> {
@@ -75,7 +117,8 @@ export class TitanCalendar implements CalendarSink {
   }
 }
 
-export function titanCalendarFromEnv(): TitanCalendar | null {
+/** `calendarUrl` (from Settings → Calendar) overrides the env/auto-picked collection for writes. */
+export function titanCalendarFromEnv(calendarUrl?: string | null): TitanCalendar | null {
   const cfg = calendarConfigFromEnv();
-  return cfg ? new TitanCalendar(cfg) : null;
+  return cfg ? new TitanCalendar(calendarUrl ? { ...cfg, calendarUrl } : cfg) : null;
 }

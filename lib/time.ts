@@ -1,8 +1,8 @@
 /** ESS works in New York time; servers run in UTC. These convert form inputs both ways. */
 export const TZ = "America/New_York";
 
-function offsetMinutes(at: Date): number {
-  const name = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "longOffset" })
+function offsetMinutes(at: Date, tz = TZ): number {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
     .formatToParts(at)
     .find((p) => p.type === "timeZoneName")!.value; // "GMT-04:00"
   const m = name.match(/GMT([+-])(\d{2}):(\d{2})/);
@@ -16,6 +16,22 @@ export function fromNyInput(value: string, defaultTime = "17:00"): Date {
   const first = new Date(guess.getTime() - offsetMinutes(guess) * 60000);
   // Re-check the offset at the actual instant (matters on DST-change days).
   return new Date(guess.getTime() - offsetMinutes(first) * 60000);
+}
+
+/**
+ * Wall-clock time in any IANA zone (e.g. "America/Puerto_Rico" from a calendar event) → Date.
+ * Unknown zone names fall back to New York.
+ */
+export function fromZonedParts(p: { year: number; month: number; day: number; hour?: number; minute?: number; second?: number }, tz: string = TZ): Date {
+  let zone = tz;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+  } catch {
+    zone = TZ;
+  }
+  const guess = new Date(Date.UTC(p.year, p.month - 1, p.day, p.hour ?? 0, p.minute ?? 0, p.second ?? 0));
+  const first = new Date(guess.getTime() - offsetMinutes(guess, zone) * 60000);
+  return new Date(guess.getTime() - offsetMinutes(first, zone) * 60000);
 }
 
 /** Date → "YYYY-MM-DDTHH:mm" in New York, for <input type="datetime-local">. */

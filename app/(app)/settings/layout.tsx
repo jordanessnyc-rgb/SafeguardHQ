@@ -35,6 +35,7 @@ export default async function SettingsLayout({ children }: LayoutProps<"/setting
       label: "Connections",
       items: [
         { href: "/settings/communications", label: "Phone, email & AI" },
+        ...(isOwner ? [{ href: "/settings/calendar", label: "Titan calendar" }] : []),
         ...(isOwner ? [{ href: "/settings/freshbooks", label: "FreshBooks", status: fbConnected ? { tone: "ok" as const, text: "Connected" } : { tone: "warn" as const, text: "Not connected" } }] : []),
         // ESS keeps files on Synology; the Drive settings only matter once Google credentials are set.
         ...(driveFromEnv() ? [{ href: sec("drive"), label: "Google Drive", status: on(Boolean(cfg?.driveJobsParentFolderId), "Set", "Not set") }] : []),
