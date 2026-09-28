@@ -14,7 +14,7 @@ import { optionalUuid, safeAction } from "@/lib/actions";
 import { personName } from "@/lib/labels";
 import { normalizeBbl } from "@/lib/integrations/nyc-open-data";
 import { enrichProperty } from "@/lib/properties/enrich";
-import { toE164 } from "@/lib/phone";
+import { formatPhone, toE164 } from "@/lib/phone";
 
 export type Created = { id: string; label: string; detail?: string | null; orgId?: string | null };
 type Result = { ok?: boolean; error?: string; created?: Created };
@@ -67,7 +67,7 @@ export async function quickCreateContact(input: z.input<typeof contactInput>): P
         .values({ firstName: v.firstName, lastName: v.lastName, orgId: v.orgId ?? null, emails: v.email ? [v.email] : [], phones: phone ? [phone] : [], source: "MANUAL", brand: "ESS" })
         .returning(),
     );
-    created = { id: row.id, label: personName(row), detail: row.emails[0] ?? row.phones[0] ?? null, orgId: row.orgId };
+    created = { id: row.id, label: personName(row), detail: row.emails[0] ?? (row.phones[0] ? formatPhone(row.phones[0]) : null), orgId: row.orgId };
   });
   return res.error ? res : { ok: true, created };
 }

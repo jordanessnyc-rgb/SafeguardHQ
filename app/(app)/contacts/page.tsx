@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { col } from "@/lib/db/sql";
 import { and, asc, count, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +30,7 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const sort = SORTS.find(([k]) => k === sp.sort)?.[0] ?? "name";
   const phone = toE164(q);
-  const jobCount = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_contact_id = ${s.contacts.id} and j.archived_at is null)`;
+  const jobCount = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_contact_id = ${col(s.contacts.id)} and j.archived_at is null)`;
   const where = and(
     isNull(s.contacts.archivedAt),
     q

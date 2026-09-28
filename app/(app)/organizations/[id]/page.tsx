@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { col } from "@/lib/db/sql";
 import { stageNamer } from "@/lib/pipeline/config";
 import { Timeline } from "@/components/timeline";
 import { ConfirmSubmit } from "@/components/confirm-submit";
@@ -38,7 +39,7 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
       .where(
         and(
           isNull(s.properties.archivedAt),
-          or(eq(s.properties.managementOrgId, id), sql`exists (select 1 from ${s.propertyRoles} r where r.property_id = ${s.properties.id} and r.org_id = ${id} and r.active)`),
+          or(eq(s.properties.managementOrgId, id), sql`exists (select 1 from ${s.propertyRoles} r where r.property_id = ${col(s.properties.id)} and r.org_id = ${id} and r.active)`),
         ),
       )
       .orderBy(asc(s.properties.addressLine));

@@ -18,6 +18,7 @@ import "dotenv/config";
 import { and, isNull, or, sql } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
 import { adminDb, adminPool, schema as s } from "@/lib/db";
+import { col } from "@/lib/db/sql";
 import { enrichProperty } from "@/lib/properties/enrich";
 import { triagePending } from "@/lib/ai/classify";
 import { extractPendingCalls } from "@/lib/ai/call-extract";
@@ -87,9 +88,9 @@ export async function activePropertyIds(): Promise<string[]> {
       and(
         isNull(s.properties.archivedAt),
         or(
-          sql`exists (select 1 from ${s.jobs} j where j.property_id = ${s.properties.id} and j.archived_at is null and j.stage <> 'LOST')`,
-          sql`exists (select 1 from ${s.propertyRoles} r where r.property_id = ${s.properties.id} and r.active and r.role in ('OWNER','MANAGER'))`,
-          sql`exists (select 1 from ${s.airnycCases} c where c.property_id = ${s.properties.id} and c.archived_at is null and c.stage not in ('PAID','LOST'))`,
+          sql`exists (select 1 from ${s.jobs} j where j.property_id = ${col(s.properties.id)} and j.archived_at is null and j.stage <> 'LOST')`,
+          sql`exists (select 1 from ${s.propertyRoles} r where r.property_id = ${col(s.properties.id)} and r.active and r.role in ('OWNER','MANAGER'))`,
+          sql`exists (select 1 from ${s.airnycCases} c where c.property_id = ${col(s.properties.id)} and c.archived_at is null and c.stage not in ('PAID','LOST'))`,
         ),
       ),
     );

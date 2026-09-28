@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { col } from "@/lib/db/sql";
 import { and, asc, count, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,9 +28,9 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const sort = SORTS.find(([k]) => k === sp.sort)?.[0] ?? "name";
   const type = s.organizations.type.enumValues.find((v) => v === sp.type) ?? "";
-  const contacts = sql<number>`(select count(*)::int from ${s.contacts} c where c.org_id = ${s.organizations.id} and c.archived_at is null)`;
-  const jobs = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_org_id = ${s.organizations.id} and j.archived_at is null)`;
-  const buildings = sql<number>`(select count(distinct r.property_id)::int from ${s.propertyRoles} r where r.org_id = ${s.organizations.id} and r.active)`;
+  const contacts = sql<number>`(select count(*)::int from ${s.contacts} c where c.org_id = ${col(s.organizations.id)} and c.archived_at is null)`;
+  const jobs = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_org_id = ${col(s.organizations.id)} and j.archived_at is null)`;
+  const buildings = sql<number>`(select count(distinct r.property_id)::int from ${s.propertyRoles} r where r.org_id = ${col(s.organizations.id)} and r.active)`;
   const where = and(
     isNull(s.organizations.archivedAt),
     q ? or(ilike(s.organizations.name, `%${q}%`), ilike(s.organizations.email, `%${q}%`)) : undefined,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { col } from "@/lib/db/sql";
 import { and, asc, count, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,9 +36,9 @@ export default async function PropertiesPage({ searchParams }: PageProps<"/prope
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const sort = SORTS.find(([k]) => k === sp.sort)?.[0] ?? "address";
   const show = SHOW.find(([k]) => k === sp.show)?.[0] ?? "";
-  const openCount = sql<number>`(select count(*)::int from ${s.propertyViolations} v where v.property_id = ${s.properties.id} and v.is_open)`;
-  const jobCount = sql<number>`(select count(*)::int from ${s.jobs} j where j.property_id = ${s.properties.id} and j.archived_at is null)`;
-  const lastJob = sql<Date | null>`(select max(coalesce(j.delivered_at, j.created_at)) from ${s.jobs} j where j.property_id = ${s.properties.id} and j.archived_at is null)`;
+  const openCount = sql<number>`(select count(*)::int from ${s.propertyViolations} v where v.property_id = ${col(s.properties.id)} and v.is_open)`;
+  const jobCount = sql<number>`(select count(*)::int from ${s.jobs} j where j.property_id = ${col(s.properties.id)} and j.archived_at is null)`;
+  const lastJob = sql<Date | null>`(select max(coalesce(j.delivered_at, j.created_at)) from ${s.jobs} j where j.property_id = ${col(s.properties.id)} and j.archived_at is null)`;
 
   const where = and(
     isNull(s.properties.archivedAt),
@@ -72,7 +73,8 @@ export default async function PropertiesPage({ searchParams }: PageProps<"/prope
       })
       .from(s.properties)
       .where(where)
-      .orderBy(...order, asc(s.properties.addressLine), asc(s.properties.unit), asc(s.properties.id))
+      // Street name first, then house number as a number: "2 W 3 ST" before "10 W 3 ST", both after "W 2 ST".
+      .orderBy(...order, sql`regexp_replace(${s.properties.addressLine}, '^[0-9-]+[A-Z]?[[:space:]]+', '')`, sql`nullif(substring(${s.properties.addressLine} from '^[0-9]+'), '')::int nulls last`, asc(s.properties.addressLine), asc(s.properties.unit), asc(s.properties.id))
       .limit(PAGE_SIZE)
       .offset(win.offset);
     return { total: n, rows, win };

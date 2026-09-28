@@ -1,4 +1,5 @@
 import { asc, eq, isNull, isNotNull, sql } from "drizzle-orm";
+import { col } from "@/lib/db/sql";
 import { schema as s, type Tx } from "@/lib/db";
 import { formatPhone } from "@/lib/phone";
 import { personName } from "@/lib/labels";
@@ -10,7 +11,7 @@ import type { JobOptions } from "@/app/(app)/jobs/job-fields";
  * another: they share the request's transaction.
  */
 export async function loadJobOptions(tx: Tx): Promise<JobOptions> {
-  const buildingOrgs = sql<string[]>`coalesce((select array_agg(r.org_id order by (r.role = 'MANAGER') desc, r.created_at) from ${s.propertyRoles} r where r.property_id = ${s.properties.id} and r.active and r.org_id is not null and r.role in ('OWNER','MANAGER')), '{}')`;
+  const buildingOrgs = sql<string[]>`coalesce((select array_agg(r.org_id order by (r.role = 'MANAGER') desc, r.created_at) from ${s.propertyRoles} r where r.property_id = ${col(s.properties.id)} and r.active and r.org_id is not null and r.role in ('OWNER','MANAGER')), '{}')`;
   const properties = await tx
     .select({ id: s.properties.id, a: s.properties.addressLine, u: s.properties.unit, b: s.properties.borough, zip: s.properties.zip, orgIds: buildingOrgs })
     .from(s.properties)
