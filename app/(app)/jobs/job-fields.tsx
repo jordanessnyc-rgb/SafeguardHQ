@@ -2,13 +2,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Field } from "@/components/forms";
+import { ClientPickers, type ContactOption, type PropertyOption } from "@/components/client-pickers";
 import { toNyInput } from "@/lib/time";
 import { BRAND_LABELS, SERVICE_LABELS, SOURCE_LABELS } from "@/lib/labels";
 
 export type JobOptions = {
-  properties: { id: string; label: string }[];
+  properties: PropertyOption[];
   orgs: { id: string; name: string; type: string }[];
-  contacts: { id: string; label: string }[];
+  contacts: ContactOption[];
   staff: { id: string; label: string }[];
 };
 
@@ -47,24 +48,12 @@ export function JobFields({ job = {}, options, editing = false }: { job?: Job; o
           {Object.entries(BRAND_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </NativeSelect>
       </Field>
-      <Field label="Property" className="sm:col-span-2">
-        <NativeSelect name="propertyId" defaultValue={job.propertyId ?? ""}>
-          <option value="">— none yet —</option>
-          {options.properties.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </NativeSelect>
-      </Field>
-      <Field label="Client organization">
-        <NativeSelect name="clientOrgId" defaultValue={job.clientOrgId ?? ""}>
-          <option value="">—</option>
-          {options.orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </NativeSelect>
-      </Field>
-      <Field label="Client contact">
-        <NativeSelect name="clientContactId" defaultValue={job.clientContactId ?? ""}>
-          <option value="">—</option>
-          {options.contacts.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-        </NativeSelect>
-      </Field>
+      <ClientPickers
+        properties={options.properties}
+        orgs={options.orgs.map((o) => ({ id: o.id, label: o.name }))}
+        contacts={options.contacts}
+        defaults={{ propertyId: job.propertyId, clientOrgId: job.clientOrgId, clientContactId: job.clientContactId }}
+      />
       <Field label="Priority">
         <NativeSelect name="priority" defaultValue={job.priority ?? "NORMAL"}>
           {["LOW", "NORMAL", "HIGH", "URGENT"].map((p) => <option key={p} value={p}>{p.charAt(0) + p.slice(1).toLowerCase()}</option>)}

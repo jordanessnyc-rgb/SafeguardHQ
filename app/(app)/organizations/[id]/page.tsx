@@ -1,8 +1,12 @@
 import Link from "next/link";
+import { col } from "@/lib/db/sql";
+import { stageNamer } from "@/lib/pipeline/config";
+import { Timeline } from "@/components/timeline";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { notFound } from "next/navigation";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionForm, Field, SubmitButton } from "@/components/forms";
 import { Input } from "@/components/ui/input";
@@ -11,7 +15,7 @@ import { daysUntil } from "@/lib/compliance/expiry";
 import { PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
-import { fmtDate, label, ORG_TYPE_LABELS, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
+import { fmtDate, label, ORG_TYPE_LABELS, personName, SERVICE_LABELS, usd } from "@/lib/labels";
 import { archiveOrganization, saveSubProfile, updateOrganization } from "../actions";
 import { OrgFields } from "../org-fields";
 
@@ -28,19 +32,51 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
       .leftJoin(s.properties, eq(s.properties.id, s.jobs.propertyId))
       .where(and(eq(s.jobs.clientOrgId, id), isNull(s.jobs.archivedAt)))
       .orderBy(desc(s.jobs.createdAt));
-    const managed = await tx.select().from(s.properties).where(and(eq(s.properties.managementOrgId, id), isNull(s.properties.archivedAt)));
+    // Buildings this company manages or owns (management field, or an active owner/manager link).
+    const managed = await tx
+      .select()
+      .from(s.properties)
+      .where(
+        and(
+          isNull(s.properties.archivedAt),
+          or(eq(s.properties.managementOrgId, id), sql`exists (select 1 from ${s.propertyRoles} r where r.property_id = ${col(s.properties.id)} and r.org_id = ${id} and r.active)`),
+        ),
+      )
+      .orderBy(asc(s.properties.addressLine));
+    const people = contacts.map((c) => c.id);
+    const jobIds = jobs.map((j) => j.job.id);
+    const activities = await tx
+      .select()
+      .from(s.activities)
+      .where(or(people.length ? inArray(s.activities.contactId, people) : undefined, jobIds.length ? inArray(s.activities.jobId, jobIds) : undefined, sql`false`))
+      .orderBy(desc(s.activities.occurredAt))
+      .limit(100);
+    // Owner only by RLS (a VA gets no rows): what this company has been billed and still owes.
+    const [billing] = await tx
+      .select({ billed: sql<string | null>`sum(${s.invoicesCache.amount})`, owed: sql<string | null>`sum(${s.invoicesCache.outstanding})`, n: sql<number>`count(*)::int` })
+      .from(s.invoicesCache)
+      .where(and(eq(s.invoicesCache.orgId, id), sql`coalesce(${s.invoicesCache.status}, '') not in ('draft', 'deleted', 'void')`));
+    const stageName = await stageNamer(tx);
     const [sub] = org.type === "SUBCONTRACTOR" ? await tx.select().from(s.subProfiles).where(eq(s.subProfiles.orgId, id)) : [];
-    return { org, contacts, jobs, managed, sub };
+    return { org, contacts, jobs, managed, sub, activities, billing, stageName };
   });
   if (!data) notFound();
-  const { org, contacts, jobs, managed, sub } = data;
+  const { org, contacts, jobs, managed, sub, activities, billing, stageName } = data;
+  const isOwner = user.role === "OWNER";
   const coiDays = sub?.insuranceExpires ? daysUntil(sub.insuranceExpires, new Date()) : null;
 
   return (
     <>
       <PageHeader
         title={org.name}
-        description={label(ORG_TYPE_LABELS, org.type)}
+        description={
+          <>
+            {label(ORG_TYPE_LABELS, org.type)}
+            {isOwner && billing?.n ? (
+              <span> · {billing.n} invoices, {usd(billing.billed)} billed{Number(billing.owed) > 0 ? <>, <span className="font-medium text-amber-700 dark:text-amber-400">{usd(billing.owed)} owed</span></> : ""}</span>
+            ) : null}
+          </>
+        }
         actions={
           <>
             <Link href={`/contacts/new?orgId=${id}`} className={buttonVariants({ variant: "outline" })}>Add contact</Link>
@@ -61,20 +97,23 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Jobs</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardHeader><CardTitle>Jobs <span className="text-sm font-normal text-muted-foreground">({jobs.length})</span></CardTitle></CardHeader>
+          <CardContent className="max-h-96 space-y-2 overflow-y-auto text-sm">
             {jobs.length === 0 && <p className="text-muted-foreground">None yet.</p>}
             {jobs.map(({ job, address }) => (
               <Link key={job.id} href={`/jobs/${job.id}`} className="flex justify-between gap-2 hover:underline">
-                <span><span className="font-mono text-xs">{job.jobNumber}</span> {label(SERVICE_LABELS, job.serviceCode)}{address ? ` · ${address}` : ""}</span>
-                <Badge variant="secondary">{titleCase(job.stage)}</Badge>
+                <span>
+                  <span className="font-mono text-xs">{job.jobNumber}</span> {label(SERVICE_LABELS, job.serviceCode)}{address ? ` · ${address}` : ""}
+                  <span className="block text-xs text-muted-foreground">{fmtDate(job.deliveredAt ?? job.createdAt)}</span>
+                </span>
+                <Badge variant="secondary">{stageName(job)}</Badge>
               </Link>
             ))}
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Buildings managed</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardHeader><CardTitle>Buildings <span className="text-sm font-normal text-muted-foreground">({managed.length})</span></CardTitle></CardHeader>
+          <CardContent className="max-h-96 space-y-2 overflow-y-auto text-sm">
             {managed.length === 0 && <p className="text-muted-foreground">None linked.</p>}
             {managed.map((p) => (
               <Link key={p.id} href={`/properties/${p.id}`} className="block hover:underline">{p.addressLine}, {p.borough}</Link>
@@ -82,6 +121,13 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
           </CardContent>
         </Card>
       </div>
+      <Card className="mt-4">
+        <CardHeader><CardTitle>History</CardTitle></CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-muted-foreground">Calls, texts, emails and job updates for this company&apos;s people and jobs. Latest 100.</p>
+          <Timeline items={activities} viewerIsOwner={isOwner} />
+        </CardContent>
+      </Card>
       {org.type === "SUBCONTRACTOR" && (
         <Card className="mt-4 max-w-2xl">
           <CardHeader>
@@ -119,7 +165,7 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
             <SubmitButton size="sm">Save</SubmitButton>
           </ActionForm>
           <form action={archiveOrganization.bind(null, id)}>
-            <Button type="submit" variant="destructive" size="sm">Archive organization</Button>
+            <ConfirmSubmit variant="destructive" size="sm" title="Archive this organization?" description="It disappears from lists and search. Its jobs, people and history stay." confirmLabel="Archive organization">Archive organization</ConfirmSubmit>
           </form>
         </CardContent>
       </Card>

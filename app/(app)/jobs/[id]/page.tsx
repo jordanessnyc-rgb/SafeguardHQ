@@ -1,4 +1,6 @@
 import { aiEnabled } from "@/lib/ai/enabled";
+import { invoiceStatus } from "@/lib/labels";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
@@ -335,7 +337,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                 <CardContent className="space-y-1.5 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground">Quoted</span><span className="tabular-nums">{financials?.quotedAmount ? usd(financials.quotedAmount) : "—"}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Gross margin</span><span className="font-semibold tabular-nums">{financials?.grossMargin ? usd(financials.grossMargin) : "—"}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Invoice</span><span>{financials?.freshbooksInvoiceId ? (financials.invoiceStatus ?? "draft") : "Not yet"}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Invoice</span><span>{financials?.freshbooksInvoiceId ? invoiceStatus(financials.invoiceStatus) : "Not yet"}</span></div>
                   {money?.held && !financials?.reportReleasedAt && <p className="text-xs text-amber-700 dark:text-amber-400">Report held until paid.</p>}
                   <Link href={`/jobs/${id}?tab=money`} className="block pt-1 font-medium text-primary hover:underline">Quote, costs &amp; invoice →</Link>
                 </CardContent>
@@ -376,7 +378,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                         </a>
                         <div className="mt-0.5">{i + 1}. {p.area ? `${p.area} — ` : ""}{p.caption}</div>
                         <form action={removeFieldPhoto.bind(null, id, i)}>
-                          <button className="text-muted-foreground underline" type="submit">remove</button>
+                          <ConfirmSubmit variant="link" size="xs" className="h-auto p-0 text-xs text-muted-foreground" title="Remove this photo?" description="It comes off the job and out of the report's photo log." confirmLabel="Remove photo">remove</ConfirmSubmit>
                         </form>
                       </li>
                     ))}
@@ -665,7 +667,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
               {financials?.freshbooksInvoiceId ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span>#{money?.invoice?.invoiceNumber ?? financials.freshbooksInvoiceId}</span>
-                  <Badge variant={financials.paidAt ? "default" : "secondary"}>{financials.invoiceStatus ?? "draft"}</Badge>
+                  <Badge variant={financials.paidAt ? "default" : "secondary"}>{invoiceStatus(financials.invoiceStatus)}</Badge>
                   {money?.invoice?.amount && (
                     <span className="text-muted-foreground">
                       {usd(money.invoice.amount)}

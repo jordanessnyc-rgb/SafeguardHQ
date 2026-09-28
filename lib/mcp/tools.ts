@@ -4,14 +4,15 @@
  * tool results go to an AI, and SPEC §9.4 / CLAUDE.md rule 5 keep AIRnyc data out of the AI layer.
  */
 import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { col } from "@/lib/db/sql";
 import { schema as s, type Tx } from "@/lib/db";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
 import { arAging } from "@/lib/money/reports";
 
 const notAirnycJob = and(isNull(s.jobs.airnycCaseId), sql`${s.jobs.serviceCode} <> 'AIRNYC'`);
 /** Contacts tied to AIRnyc (member contacts, sealed messages) are never returned. */
-const notAirnycContact = sql`not exists (select 1 from ${s.activities} a where a.contact_id = ${s.contacts.id} and (a.sensitive or a.airnyc_case_id is not null))
-  and not exists (select 1 from ${s.jobs} j where j.client_contact_id = ${s.contacts.id} and (j.airnyc_case_id is not null or j.service_code = 'AIRNYC'))`;
+const notAirnycContact = sql`not exists (select 1 from ${s.activities} a where a.contact_id = ${col(s.contacts.id)} and (a.sensitive or a.airnyc_case_id is not null))
+  and not exists (select 1 from ${s.jobs} j where j.client_contact_id = ${col(s.contacts.id)} and (j.airnyc_case_id is not null or j.service_code = 'AIRNYC'))`;
 
 const addr = (p: { addressLine: string | null; unit: string | null; borough: string | null } | null) => (p?.addressLine ? [p.addressLine, p.unit && `Apt ${p.unit}`, p.borough].filter(Boolean).join(", ") : null);
 const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
@@ -96,7 +97,7 @@ export async function propertyViolations(tx: Tx, a: { address?: string; bbl?: st
   const props = await tx
     .select()
     .from(s.properties)
-    .where(and(isNull(s.properties.archivedAt), a.bbl ? eq(s.properties.bbl, a.bbl) : a.address ? ilike(s.properties.addressLine, `%${a.address.trim()}%`) : sql`false`, sql`not exists (select 1 from ${s.jobs} j where j.property_id = ${s.properties.id} and (j.airnyc_case_id is not null or j.service_code = 'AIRNYC'))`))
+    .where(and(isNull(s.properties.archivedAt), a.bbl ? eq(s.properties.bbl, a.bbl) : a.address ? ilike(s.properties.addressLine, `%${a.address.trim()}%`) : sql`false`, sql`not exists (select 1 from ${s.jobs} j where j.property_id = ${col(s.properties.id)} and (j.airnyc_case_id is not null or j.service_code = 'AIRNYC'))`))
     .limit(5);
   const out = [];
   for (const p of props) {

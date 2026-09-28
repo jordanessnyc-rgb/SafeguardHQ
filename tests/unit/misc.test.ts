@@ -4,6 +4,8 @@ import { decryptField, encryptField } from "@/lib/crypto";
 import { formatPhone, toE164 } from "@/lib/phone";
 import { DriveClient, airnycFolderName, jobFolderName } from "@/lib/integrations/google-drive";
 import { guessServiceCode } from "@/lib/money/history";
+import { listHref, pageFrom, pageWindow } from "@/lib/list";
+import { invoiceStatus, words } from "@/lib/labels";
 import { storageTarget } from "@/lib/backup/export";
 
 describe("AIRnyc field encryption", () => {
@@ -215,5 +217,29 @@ describe("backup storage target (no Google Drive)", () => {
     await t.remove(["ess-crm-export-2026-09-13.zip"]);
     expect(calls.filter((c) => !c.startsWith("bucket:"))).toEqual(["up:ess-crm-export-2026-09-27.zip", "rm:ess-crm-export-2026-09-13.zip"]);
     expect(new Set(calls.filter((c) => c.startsWith("bucket:")))).toEqual(new Set(["bucket:backups"]));
+  });
+});
+
+describe("list paging and plain labels (7b)", () => {
+  it("windows pages and clamps past the end", () => {
+    expect(pageWindow(663, 1)).toMatchObject({ page: 1, pages: 14, offset: 0, from: 1, to: 50 });
+    expect(pageWindow(663, 14)).toMatchObject({ page: 14, offset: 650, from: 651, to: 663 });
+    expect(pageWindow(663, 99)).toMatchObject({ page: 14 });
+    expect(pageWindow(0, 1)).toMatchObject({ page: 1, pages: 1, from: 0, to: 0 });
+    expect(pageFrom("3")).toBe(3);
+    expect(pageFrom("-1")).toBe(1);
+    expect(pageFrom("abc")).toBe(1);
+  });
+  it("builds list links without empty params or page 1", () => {
+    expect(listHref("/properties", { q: "43rd", sort: undefined, show: "", page: 1 })).toBe("/properties?q=43rd");
+    expect(listHref("/properties", { page: 2 })).toBe("/properties?page=2");
+    expect(listHref("/contacts", {})).toBe("/contacts");
+  });
+  it("shows FreshBooks statuses and codes in plain words", () => {
+    expect(invoiceStatus(null)).toBe("Draft (not sent)");
+    expect(invoiceStatus("partial")).toBe("Partly paid");
+    expect(invoiceStatus("auto-paid")).toBe("Paid (autopay)");
+    expect(words("CITY_RECORD")).toBe("City record");
+    expect(words("GO_NO_GO")).toBe("Go no go");
   });
 });

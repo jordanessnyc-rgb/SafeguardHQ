@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { stageNamer } from "@/lib/pipeline/config";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
@@ -36,10 +38,10 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       .where(or(eq(s.activities.contactId, id)))
       .orderBy(desc(s.activities.occurredAt))
       .limit(100);
-    return { contact, org, orgs, properties, jobs, activities, compose: await loadComposeData(tx) };
+    return { contact, org, orgs, properties, jobs, activities, compose: await loadComposeData(tx), stageName: await stageNamer(tx) };
   });
   if (!data) notFound();
-  const { contact: c, org, orgs, properties, jobs, activities, compose } = data;
+  const { contact: c, org, orgs, properties, jobs, activities, compose, stageName } = data;
 
   return (
     <>
@@ -76,7 +78,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
             {jobs.map((j) => (
               <Link key={j.id} href={`/jobs/${j.id}`} className="flex justify-between gap-2 hover:underline">
                 <span><span className="font-mono text-xs">{j.jobNumber}</span> {label(SERVICE_LABELS, j.serviceCode)}</span>
-                <Badge variant="secondary">{titleCase(j.stage)}</Badge>
+                <Badge variant="secondary">{stageName(j)}</Badge>
               </Link>
             ))}
           </CardContent>
@@ -114,7 +116,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
               <SubmitButton size="sm">Save</SubmitButton>
             </ActionForm>
             <form action={archiveContact.bind(null, id)}>
-              <Button type="submit" variant="destructive" size="sm">Archive contact</Button>
+              <ConfirmSubmit variant="destructive" size="sm" title="Archive this contact?" description="They disappear from lists and search. Their jobs and history stay." confirmLabel="Archive contact">Archive contact</ConfirmSubmit>
             </form>
           </CardContent>
         </Card>

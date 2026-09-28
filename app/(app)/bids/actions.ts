@@ -114,7 +114,7 @@ export async function uploadRfp(id: string, _prev: ActionState, form: FormData):
     if (!aiEnabled()) return { ok: true, message: "Saved. (AI isn't configured, so fill in the details by hand.)" };
     const r = await analyzeRfp(adminDb(), id, buf);
     if (r.status !== "ok") return { error: `Saved the PDF, but the analysis failed: ${r.reason}` };
-    return { ok: true, message: `Analyzed. AI recommendation: ${r.goNoGo.recommendation.replace("_", "-")} — ${r.goNoGo.summary}` };
+    return { ok: true, message: `Analyzed. AI recommendation: ${r.goNoGo.recommendation === "NO_GO" ? "No-go" : r.goNoGo.recommendation === "GO" ? "Go" : "Needs review"} — ${r.goNoGo.summary}` };
   });
   revalidatePath(`/bids/${id}`);
   return res;

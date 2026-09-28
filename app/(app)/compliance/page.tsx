@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -130,7 +131,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
                 </ActionForm>
                 {isOwner && (
                   <form action={archiveCredential.bind(null, c.id)} className="text-right">
-                    <Button size="xs" variant="ghost" type="submit">Remove</Button>
+                    <ConfirmSubmit title={`Remove ${c.name}?`} description="You'll stop getting expiry reminders for it." confirmLabel="Remove">Remove</ConfirmSubmit>
                   </form>
                 )}
               </div>

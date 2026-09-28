@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { words } from "@/lib/labels";
 import { asc, isNull, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -51,9 +52,9 @@ export default async function BidsPage() {
                     <div className="text-xs text-muted-foreground">{[b.agency, b.solicitationNumber].filter(Boolean).join(" · ")}</div>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Countdown at={b.dueAt} />
-                      {b.goNoGo && <Badge variant="outline">AI: {b.goNoGo.recommendation.replace("_", "-")}</Badge>}
+                      {b.goNoGo && <Badge variant="outline">AI: {b.goNoGo.recommendation === "NO_GO" ? "No-go" : words(b.goNoGo.recommendation)}</Badge>}
                       {b.certGaps.length > 0 && <Badge variant="destructive">{b.certGaps.length} cert gap{b.certGaps.length > 1 ? "s" : ""}</Badge>}
-                      {b.source !== "MANUAL" && <Badge variant="secondary">{b.source.replace("_", " ").toLowerCase()}</Badge>}
+                      {b.source !== "MANUAL" && <Badge variant="secondary">{words(b.source)}</Badge>}
                     </div>
                   </Link>
                 ))}
@@ -85,7 +86,7 @@ export default async function BidsPage() {
               {closed.map((b) => (
                 <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                   <Link href={`/bids/${b.id}`} className="hover:underline">{b.title}</Link>
-                  <span className="text-xs text-muted-foreground">{b.status.replace("_", " ").toLowerCase()} · due {fmtDate(b.dueAt)}</span>
+                  <span className="text-xs text-muted-foreground">{words(b.status)} · due {fmtDate(b.dueAt)}</span>
                 </li>
               ))}
             </ul>
