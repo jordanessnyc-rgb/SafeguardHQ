@@ -3,6 +3,7 @@ import {
   BarChart3,
   Building2,
   CalendarClock,
+  CalendarDays,
   CheckSquare,
   ClipboardList,
   Gavel,
@@ -28,6 +29,7 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; items: NavItem[] 
     label: "Today",
     items: [
       { href: "/", label: "Dashboard", icon: Home },
+      { href: "/schedule", label: "Schedule", icon: CalendarDays },
       { href: "/tasks", label: "Tasks", icon: CheckSquare, count: "tasks" },
       { href: "/route", label: "Route", icon: Route },
     ],

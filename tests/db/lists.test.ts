@@ -43,3 +43,29 @@ describe.skipIf(!hasTestDb)("list counts and pickers", () => {
     expect(opts.properties.find((p) => p.id === b2.id)?.orgIds).toEqual([]);
   });
 });
+
+describe.skipIf(!hasTestDb)("schedule data", () => {
+  let t: TestDb;
+  let owner: TestUser;
+  beforeAll(async () => {
+    t = await setupTestDb();
+    owner = await createUser(t, "OWNER");
+  });
+  afterAll(async () => t?.close());
+
+  it("places visits by New York time, lists open unbooked jobs (ready-to-book first) and hides closed ones", async () => {
+    const [prop] = await t.db.insert(s.properties).values({ addressLine: "47-58 43 STREET", borough: "Queens" }).returning();
+    // 9:30 AM New York on a DST day = 13:30 UTC.
+    const [booked] = await t.db.insert(s.jobs).values({ serviceCode: "LEAD_RA", pipelineKey: "INSPECTION", stage: "SCHEDULED", propertyId: prop.id, scheduledAt: new Date("2026-10-01T13:30:00Z"), durationMinutes: 90 }).returning();
+    const [lead] = await t.db.insert(s.jobs).values({ serviceCode: "LEAD_RA", pipelineKey: "INSPECTION", stage: "LEAD" }).returning();
+    const [signed] = await t.db.insert(s.jobs).values({ serviceCode: "LEAD_RA", pipelineKey: "INSPECTION", stage: "SIGNED" }).returning();
+    await t.db.insert(s.jobs).values({ serviceCode: "LEAD_RA", pipelineKey: "INSPECTION", stage: "CLOSED" });
+
+    const { loadSchedule, scheduleDays } = await import("@/lib/schedule/load");
+    const d = await owner.as((tx) => loadSchedule(tx, scheduleDays("2026-10-01", "week")));
+    expect(d.scheduled).toEqual([expect.objectContaining({ id: booked.id, day: "2026-10-01", minutes: 9 * 60 + 30, durationMinutes: 90, address: "47-58 43 STREET" })]);
+    expect(d.unscheduled.map((j) => j.id)).toEqual([signed.id, lead.id]);
+    expect(d.unscheduled[0].movesTo).toBe("Scheduled");
+    expect(d.unscheduled[1].movesTo).toBeNull();
+  });
+});

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { ClipboardList, Home, Inbox, LogOut, Menu, Plus, Route, Settings } from "lucide-react";
+import { CalendarDays, ClipboardList, Home, Inbox, LogOut, Menu, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -139,7 +139,7 @@ export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean;
 const TABS = [
   { href: "/", label: "Today", icon: Home },
   { href: "/jobs", label: "Jobs", icon: ClipboardList },
-  { href: "/route", label: "Route", icon: Route },
+  { href: "/schedule", label: "Schedule", icon: CalendarDays },
   { href: "/inbox", label: "Queue", icon: Inbox, also: ["/outbox"] },
 ];
 

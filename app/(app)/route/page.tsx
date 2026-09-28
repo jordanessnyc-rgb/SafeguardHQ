@@ -3,8 +3,8 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
+import { FilterForm } from "@/components/filter-form";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { label, SERVICE_LABELS } from "@/lib/labels";
@@ -43,10 +43,10 @@ export default async function RoutePage({ searchParams }: PageProps<"/route">) {
   return (
     <>
       <PageHeader title="Route" description="A suggested order for the day's inspections — straight-line distances from the office, so drive times are rough estimates (no traffic)." />
-      <form className="mb-4 flex items-end gap-2">
+      <FilterForm action="/route" className="mb-4">
         <Input type="date" name="date" defaultValue={day} className="w-44" aria-label="Day" />
-        <Button type="submit" variant="secondary">Show</Button>
-      </form>
+        <Link href={`/schedule?view=day&date=${day}`} className="text-sm text-primary underline">Open this day on the schedule</Link>
+      </FilterForm>
       <Card>
         <CardHeader>
           <CardTitle>{new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</CardTitle>
