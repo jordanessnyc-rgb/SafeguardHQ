@@ -34,7 +34,6 @@ import {
   addJobNote,
   addSample,
   addSubQuote,
-  buildQuote,
   createJobDriveFolder,
   createJobInvoice,
   draftReportAction,
@@ -44,7 +43,6 @@ import {
   refreshSignature,
   removeFieldPhoto,
   saveFieldData,
-  saveFinancials,
   selectSubQuote,
   sendForSignature,
   setDocumentStatus,
@@ -53,6 +51,7 @@ import {
 } from "../actions";
 import { JobFields } from "../job-fields";
 import { JobActions } from "./job-actions";
+import { QuoteEditor } from "./quote-editor";
 
 const SAMPLE_TYPES = s.sampleTypeEnum.enumValues;
 const SAMPLE_STATUSES = s.sampleStatusEnum.enumValues;
@@ -95,6 +94,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
           held: await reportHeld(tx, row.job, fin),
           connected: (await tx.select({ id: s.freshbooksConnection.id }).from(s.freshbooksConnection)).length > 0,
           rule: (await tx.select().from(s.pricingRules).where(and(eq(s.pricingRules.serviceCode, row.job.serviceCode), eq(s.pricingRules.active, true))))[0],
+          priceList: await tx.select().from(s.pricingRules).where(eq(s.pricingRules.active, true)).orderBy(asc(s.pricingRules.serviceCode)),
           subQuotes: await tx
             .select({ q: s.subCosts, name: s.organizations.name })
             .from(s.subCosts)
@@ -554,56 +554,28 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
             <Badge variant="outline">Owner only</Badge>
           </CardHeader>
           <CardContent>
-            <ActionForm action={saveFinancials.bind(null, id)} className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-4">
-                <Field label="Quoted $"><Input name="quotedAmount" inputMode="decimal" defaultValue={financials?.quotedAmount ?? ""} /></Field>
-                <Field label="Sub cost $"><Input name="subCost" inputMode="decimal" defaultValue={financials?.subCost ?? ""} /></Field>
-                <Field label="Lab cost $"><Input name="labCost" inputMode="decimal" defaultValue={financials?.labCost ?? ""} /></Field>
-                <Field label="Other cost $"><Input name="otherCost" inputMode="decimal" defaultValue={financials?.otherCost ?? ""} /></Field>
-              </div>
-              <Field label="Line items" hint="One per line: Description | qty | unit price. These become the FreshBooks invoice lines (else one line for the quoted amount).">
-                <Textarea
-                  name="lineItems"
-                  rows={3}
-                  defaultValue={financials?.lineItems.map((l) => `${l.description} | ${l.quantity} | ${l.unitPrice}`).join("\n")}
-                />
-              </Field>
-              <Field label="Hold report until paid" className="max-w-xs">
-                <NativeSelect name="holdReportUntilPaid" defaultValue={financials?.holdReportUntilPaid == null ? "" : String(financials.holdReportUntilPaid)}>
-                  <option value="">Client / Settings default ({money?.held && financials?.holdReportUntilPaid == null ? "hold" : "don't hold"})</option>
-                  <option value="true">Hold until paid</option>
-                  <option value="false">Don&apos;t hold</option>
-                </NativeSelect>
-              </Field>
-              <div className="flex items-center justify-between">
-                <SubmitButton size="sm">Save financials</SubmitButton>
-                {financials && <span className="text-sm">Gross margin: <strong>${financials.grossMargin}</strong></span>}
-              </div>
-            </ActionForm>
+            <QuoteEditor
+              key={financials?.updatedAt?.toISOString() ?? "new"}
+              jobId={id}
+              serviceName={label(SERVICE_LABELS, job.serviceCode)}
+              rule={money?.rule ?? null}
+              priceList={(money?.priceList ?? []).map((r) => ({ serviceCode: r.serviceCode, label: label(SERVICE_LABELS, r.serviceCode), baseAmount: r.baseAmount, defaultScope: r.defaultScope }))}
+              holdDefault={Boolean(money?.held && financials?.holdReportUntilPaid == null)}
+              initial={{
+                lines: financials?.lineItems ?? [],
+                quotedAmount: financials?.quotedAmount ?? null,
+                subCost: financials?.subCost ?? null,
+                labCost: financials?.labCost ?? null,
+                otherCost: financials?.otherCost ?? null,
+                holdReportUntilPaid: financials?.holdReportUntilPaid ?? null,
+                sqft: financials?.quoteInputs?.sqft ?? null,
+                samples: financials?.quoteInputs?.samples ?? (samples.length || null),
+                scope: financials?.quoteInputs?.scope ?? null,
+                validDays: financials?.quoteInputs?.validDays ?? null,
+              }}
+            />
 
             <div className="mt-4 space-y-3 border-t pt-3 text-sm">
-              <div className="font-medium">Quote builder</div>
-              <p className="text-xs text-muted-foreground">
-                {money?.rule
-                  ? `Rule for this service: base ${usd(money.rule.baseAmount)}${money.rule.perSqft ? ` · ${usd(money.rule.perSqft)}/sq ft over ${money.rule.includedSqft.toLocaleString("en-US")}` : ""}${money.rule.perSample ? ` · ${usd(money.rule.perSample)}/sample over ${money.rule.includedSamples}` : ""}${money.rule.minimumAmount ? ` · minimum ${usd(money.rule.minimumAmount)}` : ""}.`
-                  : "No pricing rule for this service yet (Settings → Pricing) — only extra lines are priced."}{" "}
-                Building the quote replaces the line items above.
-              </p>
-              <ActionForm action={buildQuote.bind(null, id)} className="grid gap-2 sm:grid-cols-4">
-                <Field label="Area (sq ft)"><Input name="sqft" inputMode="numeric" defaultValue={financials?.quoteInputs?.sqft ?? ""} /></Field>
-                <Field label="Samples"><Input name="samples" inputMode="numeric" defaultValue={financials?.quoteInputs?.samples ?? samples.length ?? ""} /></Field>
-                <Field label="Valid (days)"><Input name="validDays" inputMode="numeric" defaultValue={financials?.quoteInputs?.validDays ?? 30} /></Field>
-                <div />
-                <Field label="Extra lines" hint="Description | qty | unit price" className="sm:col-span-2">
-                  <Textarea name="extras" rows={2} defaultValue={financials?.quoteInputs?.extras?.map((l) => `${l.description} | ${l.quantity} | ${l.unitPrice}`).join("\n")} />
-                </Field>
-                <Field label="Scope (shown on the proposal)" className="sm:col-span-2">
-                  <Textarea name="scope" rows={2} defaultValue={financials?.quoteInputs?.scope ?? money?.rule?.defaultScope ?? ""} />
-                </Field>
-                <div className="flex flex-wrap items-center gap-2 sm:col-span-4">
-                  <SubmitButton size="sm" variant="secondary">Build quote</SubmitButton>
-                </div>
-              </ActionForm>
               {(financials?.lineItems.length ?? 0) > 0 && (
                 <ActionForm action={generateProposalDoc.bind(null, id)} className="flex flex-col items-start gap-1">
                   <SubmitButton size="sm">Generate proposal (Word)</SubmitButton>

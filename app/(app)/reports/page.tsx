@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
 import { requireOwner } from "@/lib/auth/session";
-import { fmtDate, label, SERVICE_LABELS, usd } from "@/lib/labels";
+import { fmtDate, label, SERVICE_LABELS, SOURCE_LABELS, usd } from "@/lib/labels";
+import { loadPipelines } from "@/lib/pipeline/config";
+import { winLoss, type WinLossRow } from "@/lib/pipeline/stats";
 import { AGING_BUCKETS, arAging, CLIENT_TYPES, margins, type MarginRow } from "@/lib/money/reports";
 import { nyDate } from "@/lib/money/digest";
 import { fromNyInput } from "@/lib/time";
@@ -27,8 +29,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const from = typeof sp.from === "string" && ym.test(sp.from) ? sp.from : `${today.slice(0, 4)}-01`;
   const to = typeof sp.to === "string" && ym.test(sp.to) && sp.to >= from ? sp.to : today.slice(0, 7);
 
-  const { ar, m } = await user.db(async (tx) => ({
+  const { ar, m, wl } = await user.db(async (tx) => ({
     ar: await arAging(tx),
+    wl: await winLoss(tx, await loadPipelines(tx)),
     m: await margins(tx, { from: fromNyInput(`${from}-01T00:00`), to: fromNyInput(`${nextMonth(to)}-01T00:00`) }),
   }));
 
@@ -127,7 +130,86 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
           <MarginTable title="By month" rows={m.byMonth} keyLabel={monthName} total={m.total} />
         </CardContent>
       </Card>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Win / loss</CardTitle>
+          <CardDescription>
+            Leads that came in over the last 12 months. Won = moved past the sales stages (Lead, Qualified, Proposal sent); lost = marked Lost. Imported FreshBooks history isn&apos;t
+            included. Win rate counts only leads that were decided.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {wl.total.leads === 0 ? (
+            <p className="text-sm text-muted-foreground">No leads yet in the last 12 months. As leads come in (web form, calls, jobs you create), this fills in.</p>
+          ) : (
+            <>
+              <WinLossTable title="By lead source" rows={wl.bySource} keyLabel={(k) => (k === "UNKNOWN" ? "Not recorded" : label(SOURCE_LABELS, k))} total={wl.total} />
+              <WinLossTable title="By service" rows={wl.byService} keyLabel={(k) => label(SERVICE_LABELS, k)} total={wl.total} />
+              <div>
+                <div className="mb-1 text-sm font-medium">Why jobs were lost</div>
+                {wl.lossReasons.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">None lost.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {wl.lossReasons.map((r) => (
+                      <li key={r.reason} className="flex justify-between gap-4 border-b pb-1 last:border-0">
+                        <span>{r.reason}</span>
+                        <span className="tabular-nums">{r.n}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </>
+  );
+}
+
+function WinLossTable({ title, rows, keyLabel, total }: { title: string; rows: WinLossRow[]; keyLabel: (k: string) => string; total: WinLossRow }) {
+  const cells = (r: WinLossRow) => (
+    <>
+      <TableCell className="text-right tabular-nums">{r.leads}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.won}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.lost}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.open}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.winRate == null ? "—" : `${r.winRate}%`}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.avgDaysToWin == null ? "—" : `${r.avgDaysToWin}d`}</TableCell>
+    </>
+  );
+  return (
+    <div>
+      <div className="mb-1 text-sm font-medium">{title}</div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead />
+            <TableHead className="text-right">Leads</TableHead>
+            <TableHead className="text-right">Won</TableHead>
+            <TableHead className="text-right">Lost</TableHead>
+            <TableHead className="text-right">Still open</TableHead>
+            <TableHead className="text-right">Win rate</TableHead>
+            <TableHead className="text-right">Days to win</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((r) => (
+            <TableRow key={r.key}>
+              <TableCell>{keyLabel(r.key)}</TableCell>
+              {cells(r)}
+            </TableRow>
+          ))}
+        </TableBody>
+        <TableFooter>
+          <TableRow>
+            <TableCell>Total</TableCell>
+            {cells(total)}
+          </TableRow>
+        </TableFooter>
+      </Table>
+    </div>
   );
 }
 

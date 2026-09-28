@@ -10,7 +10,6 @@ import { z } from "zod";
 import { adminDb, schema as s } from "@/lib/db";
 import { freshbooksFromEnv } from "@/lib/integrations/freshbooks";
 import { createDraftInvoiceForJob, invoiceDeliveredJobs, syncInvoice } from "@/lib/money/invoicing";
-import { computeQuote } from "@/lib/money/quote";
 import { draftReport } from "@/lib/ai/report";
 import { docusignConfigFromEnv, docusignFromEnv } from "@/lib/integrations/docusign";
 import { processEnvelope, sendProposalForSignature } from "@/lib/docs/esign";
@@ -20,7 +19,6 @@ import { imageSize } from "@/lib/docs/image-size";
 import { generateProposal } from "@/lib/docs/proposal";
 import { createSubCopy } from "@/lib/docs/sub-copy-job";
 import { storageDownloader, storageUploader } from "@/lib/supabase/service";
-import { label, SERVICE_LABELS } from "@/lib/labels";
 import { requireOwner, requireStaff } from "@/lib/auth/session";
 import { checkbox, formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { pipelineForService } from "@/lib/pipeline/config";
@@ -264,93 +262,60 @@ const money = z
   .transform((v) => (v ? v.replace(/[$,\s]/g, "") : undefined))
   .refine((v) => v === undefined || /^\d+(\.\d{1,2})?$/.test(v), "Enter an amount like 1850 or 1850.00");
 
-const lineItems = z
-  .string()
-  .optional()
-  .transform((v, ctx) =>
-    (v ?? "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => {
-        // "Description | qty | unit price"
-        const [description, qty, price] = l.split("|").map((x) => x.trim());
-        const quantity = Number(qty ?? 1);
-        const unitPrice = Number((price ?? "").replace(/[$,]/g, ""));
-        if (!description || !Number.isFinite(quantity) || !Number.isFinite(unitPrice)) {
-          ctx.addIssue({ code: "custom", message: `Line item "${l}" should look like: Description | 1 | 450.00` });
-        }
-        return { description, quantity, unitPrice };
-      }),
-  );
-
-const finSchema = z.object({
-  quotedAmount: money,
-  subCost: money,
-  labCost: money,
-  otherCost: money,
-  lineItems,
-  // "" = inherit (client organization, then Settings default)
-  holdReportUntilPaid: z
-    .enum(["", "true", "false"])
-    .optional()
-    .transform((v) => (v === "true" ? true : v === "false" ? false : null)),
-});
-
-export async function saveFinancials(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
-  const user = await requireOwner();
-  const res = await safeAction(async () => {
-    const f = finSchema.parse(formObject(form));
-    const values = {
-      quotedAmount: f.quotedAmount ?? null,
-      subCost: f.subCost ?? null,
-      labCost: f.labCost ?? null,
-      otherCost: f.otherCost ?? null,
-      lineItems: f.lineItems,
-      holdReportUntilPaid: f.holdReportUntilPaid,
-    };
-    await user.db((tx) =>
-      tx.insert(s.jobFinancials).values({ jobId, ...values }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: values }),
-    );
-    return { ok: true, message: "Financials saved." };
-  });
-  revalidatePath(`/jobs/${jobId}`);
-  return res;
-}
-
 // ---------------------------------------------------------------------------------------------
 // Quote builder, sub quotes, proposals and sub copies (SPEC §10) — OWNER only
 // ---------------------------------------------------------------------------------------------
 
-const quoteSchema = z.object({
-  sqft: z.coerce.number().int().min(0).max(10_000_000).optional(),
-  samples: z.coerce.number().int().min(0).max(1000).optional(),
-  extras: lineItems,
-  scope: z.string().max(5000).optional(),
-  validDays: z.coerce.number().int().min(1).max(365).optional(),
+const quoteLine = z.object({
+  description: z.string().trim().min(1, "Every line needs a description").max(300),
+  quantity: z.number().positive("Quantity must be more than 0").max(1_000_000),
+  unitPrice: z.number().min(0, "Prices can't be negative").max(10_000_000),
 });
+const optMoney = z.number().min(0).max(10_000_000).nullable();
+const quoteEditorSchema = z.object({
+  lines: z.array(quoteLine).max(100),
+  // Only used when there are no lines: a single quoted amount.
+  quotedAmount: optMoney,
+  subCost: optMoney,
+  labCost: optMoney,
+  otherCost: optMoney,
+  holdReportUntilPaid: z.boolean().nullable(),
+  inputs: z.object({
+    sqft: z.number().int().min(0).max(10_000_000).nullable(),
+    samples: z.number().int().min(0).max(1000).nullable(),
+    scope: z.string().max(5000).nullable(),
+    validDays: z.number().int().min(1).max(365).nullable(),
+  }),
+});
+const cents = (n: number) => Math.round(n * 100) / 100;
 
-/** Prices the job from Jordan's rule for its service; replaces the job's line items and quoted total. */
-export async function buildQuote(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+/**
+ * Saves the quote editor in one go: line items (these become the proposal and the FreshBooks invoice
+ * lines), the quoted total (the sum of the lines), costs, and the builder inputs. Owner only.
+ */
+export async function saveQuote(jobId: string, raw: z.input<typeof quoteEditorSchema>): Promise<ActionState> {
   const user = await requireOwner();
   const res = await safeAction(async () => {
-    const v = quoteSchema.parse(formObject(form));
-    const inputs = { sqft: v.sqft ?? null, samples: v.samples ?? null, extras: v.extras, scope: v.scope ?? null, validDays: v.validDays ?? null };
-    const note = await user.db(async (tx) => {
-      const [job] = await tx.select({ serviceCode: s.jobs.serviceCode }).from(s.jobs).where(eq(s.jobs.id, jobId));
-      if (!job) throw new Error("Job not found.");
-      const [rule] = await tx.select().from(s.pricingRules).where(and(eq(s.pricingRules.serviceCode, job.serviceCode), eq(s.pricingRules.active, true)));
-      const q = computeQuote(label(SERVICE_LABELS, job.serviceCode), rule ?? null, inputs);
-      if (!q.lines.length) throw new Error("Nothing to price: add a pricing rule for this service (Settings → Pricing) or extra lines.");
-      const values = { lineItems: q.lines, quotedAmount: q.total.toFixed(2), quoteInputs: inputs };
-      await tx.insert(s.jobFinancials).values({ jobId, ...values }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: values });
-      return q.notes.join(" ");
-    });
-    return { ok: true, message: `Quote updated.${note ? ` ${note}` : ""}` };
+    const v = quoteEditorSchema.parse(raw);
+    const lines = v.lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: cents(l.unitPrice) }));
+    const total = lines.length ? cents(lines.reduce((n, l) => n + l.quantity * l.unitPrice, 0)) : v.quotedAmount;
+    const fix = (n: number | null) => (n === null ? null : cents(n).toFixed(2));
+    const values = {
+      lineItems: lines,
+      quotedAmount: fix(total),
+      subCost: fix(v.subCost),
+      labCost: fix(v.labCost),
+      otherCost: fix(v.otherCost),
+      holdReportUntilPaid: v.holdReportUntilPaid,
+      quoteInputs: { sqft: v.inputs.sqft, samples: v.inputs.samples, scope: v.inputs.scope, validDays: v.inputs.validDays, extras: [] },
+    };
+    await user.db((tx) => tx.insert(s.jobFinancials).values({ jobId, ...values }).onConflictDoUpdate({ target: s.jobFinancials.jobId, set: values }));
+    return { ok: true, message: total !== null ? `Quote saved: ${total.toLocaleString("en-US", { style: "currency", currency: "USD" })}.` : "Saved." };
   });
   revalidatePath(`/jobs/${jobId}`);
   return res;
 }
+
 
 export async function generateProposalDoc(jobId: string, _prev: ActionState): Promise<ActionState> {
   await requireOwner();
