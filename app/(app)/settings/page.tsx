@@ -43,13 +43,14 @@ const DAYS = [
   ["sun", "Sunday"],
 ] as const;
 
-const PAGE_SECTIONS = ["approvals", "digest", "airnyc", "drive", "budget", "hours", "team", "pipeline", "checklist"] as const;
+const PAGE_SECTIONS = ["approvals", "digest", "followups", "airnyc", "drive", "budget", "hours", "team", "pipeline", "checklist"] as const;
 type PageSection = (typeof PAGE_SECTIONS)[number];
 const OWNER_ONLY: PageSection[] = ["budget"];
 
 const TITLES: Record<PageSection, [string, string]> = {
   approvals: ["Approvals & auto-send", "Nothing reaches a client unless you turn it on here. With a switch off, drafts wait in the Review queue for a person."],
   digest: ["Daily digest", "A weekday summary of stale jobs, lab results waiting, unpaid invoices and going-cold leads. Internal only."],
+  followups: ["Proposal follow-ups", "When a proposal gets no reply, a follow-up text or email is drafted in the Outbox and a task reminds you. Drafts wait for your OK unless auto-send is on."],
   airnyc: ["AIRnyc & AI", "AIRnyc members' data is sensitive. These settings decide whether the AI may read it and how cases arrive."],
   drive: ["Google Drive", "Where job and AIRnyc case folders are created."],
   budget: ["AI budget", "A monthly ceiling on AI spend. AI features pause when it's reached."],
@@ -141,6 +142,21 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                   <Input name="digestTime" type="time" defaultValue={cfg.digestTime.slice(0, 5)} />
                 </Field>
               </div>
+            </CardContent>
+          </Card>,
+        )}
+
+      {section === "followups" &&
+        sectionForm(
+          <Card>
+            <CardContent className="space-y-4">
+              <SwitchRow name="followUpEnabled" label="Draft proposal follow-ups" defaultChecked={cfg.followUpEnabled} disabled={!isOwner} hint="Only for jobs in Proposal sent with no call, text or email back from the client since it went out. Never for AIRnyc or do-not-contact." />
+              <Field label="Days after the proposal" hint="Comma-separated, up to 4. Default: 3, 7 (a first nudge, then a second one)." className="max-w-xs">
+                <Input name="followUpDays" defaultValue={cfg.followUpDays.join(", ")} disabled={!isOwner} />
+              </Field>
+              <p className="text-sm text-muted-foreground">
+                The wording is in the <Link href="/settings/communications" className="underline">Proposal follow-up</Link> templates (text and email) — edit them there.
+              </p>
             </CardContent>
           </Card>,
         )}

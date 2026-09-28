@@ -36,6 +36,12 @@ const settingsSchema = z.object({
   driveJobsParentFolderId: folderId,
   driveAirnycParentFolderId: folderId,
   driveTemplateFolderId: folderId,
+  followUpEnabled: checkbox,
+  followUpDays: z
+    .string()
+    .optional()
+    .transform((v) => [...new Set((v ?? "").split(/[,\s]+/).filter(Boolean).map(Number))].sort((a, b) => a - b))
+    .pipe(z.array(z.number().int().min(1, "Days must be 1 or more").max(90, "90 days at most")).max(4, "Up to 4 follow-ups")),
   aiMonthlyCostCapUsd: z
     .string()
     .optional()
@@ -51,11 +57,12 @@ export const SETTINGS_SECTIONS = {
   airnyc: ["airnycAiAllowed", "airnycMode"],
   drive: ["driveJobsParentFolderId", "driveAirnycParentFolderId", "driveTemplateFolderId"],
   budget: ["aiMonthlyCostCapUsd"],
+  followups: ["followUpEnabled", "followUpDays"],
   hours: [],
 } as const satisfies Record<string, readonly Field[]>;
 export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
 
-const CHECKBOXES: Field[] = ["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "airnycAiAllowed", "digestEnabled", "digestSmsEnabled"];
+const CHECKBOXES: Field[] = ["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "airnycAiAllowed", "digestEnabled", "digestSmsEnabled", "followUpEnabled"];
 
 export const isSettingsSection = (v: unknown): v is SettingsSection => typeof v === "string" && Object.hasOwn(SETTINGS_SECTIONS, v);
 

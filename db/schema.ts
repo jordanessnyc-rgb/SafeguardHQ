@@ -809,6 +809,9 @@ export const settings = pgTable("settings", {
     .array()
     .notNull()
     .default(sql`'{mold,asbestos,lead,"industrial hygiene",environmental,abatement,"hazardous material","air monitoring","air sampling","indoor air",radon,"gas piping","local law 152",parapet,"local law 126","lead-based paint",microbial}'::text[]`),
+  // Phase 7d: proposal follow-up DRAFTS (never sent unless auto-send is on), N days after Proposal sent.
+  followUpEnabled: boolean("follow_up_enabled").notNull().default(true),
+  followUpDays: integer("follow_up_days").array().notNull().default(sql`'{3,7}'::int[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });

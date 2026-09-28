@@ -455,3 +455,31 @@ changes worth knowing:
 - **Booking moves the stage only one step:** a job moves to the next stage only when that stage is the "scheduled" one (Signed → Scheduled, Consent → Assessment scheduled, Signed → Site visit). A lead or a job with a proposal out keeps its stage. Taking a visit off the schedule never moves the stage back.
 - **Titan sync is unchanged.** The worker copies scheduled jobs to the Titan calendar every 5 minutes with no attendees, so nobody is ever invited or notified. A visit that failed to sync shows a warning on the calendar.
 - **Phone tab bar:** Schedule replaces Route. Route is still in More, and linked from the day view.
+
+## 2026-09-28 — Phase 7d: quote editor, pipeline board, follow-ups, win/loss
+
+- **Quote editor.** The Money tab replaces the "Description | qty | price" text boxes with an editable table.
+  - **Price it** fills the table from the pricing rule, using the sq ft and samples entered. Lines added by hand are kept.
+  - **Add from price list** adds any other service's base price as a line. Per-unit work (lead XRF per apartment) is just quantity × unit price.
+  - Totals and margin update live.
+  - One `saveQuote` action stores the lines, the total (the sum of the lines), costs, scope, validity and the hold-report choice. It's owner only.
+  - The old `saveFinancials` / `buildQuote` actions are removed.
+  - Pricing settings now show each service's history from the imported jobs: count, median, middle half, and the most common line price.
+- **Pipeline board.**
+  - Won / lost in the last 30 days.
+  - Win rate over 90 days.
+  - Open value in the sales stages (owner only; `job_financials` RLS gives a VA nulls).
+  - Each card shows its value (owner), a last-contact dot (green under 2 days, amber under 7, red after), a count of outbound touches, and the next open task.
+  - Sort by newest, longest in stage, longest since contact, or value.
+  - A "Mine" filter.
+- **Won and lost definitions.** "Sales stages" are the stages before Signed. Won = moved from a sales stage to a later one, not Lost. Lost = marked Lost. Jobs that never started in a sales stage (imported history) aren't counted.
+- **Proposal follow-ups** (settings `follow_up_enabled` and `follow_up_days`, migration 0031; default on, days 3 and 7).
+  - What triggers one: a job in Proposal sent with no inbound call, text or email (on the job or from its contact) since it got there.
+  - What it creates: a follow-up DRAFT (text if there's a mobile number and a line, else email) and an owner task at each step.
+  - When it runs: only during business hours.
+  - What's excluded: AIRnyc and do-not-contact.
+  - Nothing is sent unless auto-send is on (CLAUDE.md rule 6).
+  - Wording is in two new editable templates: `PROPOSAL_FOLLOWUP` and `PROPOSAL_FOLLOWUP_EMAIL`.
+  - Steps are counted by follow-up tasks since the stage started, so moving back to Proposal sent starts over.
+- **Reports → Win / loss.** Leads from the last 12 months by source and by service: won, lost, open, win rate, days to win. Also a count of loss reasons.
+- **Not built.** Housecall Pro-style contact-attempt stages (1st/2nd/3rd contact). The touch counter and the last-contact dot cover the same need without adding stages. Ask Jordan before adding stages.

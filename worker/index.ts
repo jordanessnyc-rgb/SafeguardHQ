@@ -6,6 +6,7 @@
  *  - mail health check → SMS alert to Jordan (every 5 min)
  *  - FreshBooks draft invoices for Delivered jobs (every minute, SPEC §6.2); invoice history import on request
  *  - weekday daily digest (checked every 5 min, sent once per day, SPEC §9.7)
+ *  - proposal follow-up drafts + tasks (every 30 min, business hours; never sent without approval)
  *  - compliance cycles for Closed jobs + license/COI expiry alerts (SPEC §6.6, §10), every 15 min
  *  - scheduled inspections → Titan calendar over CalDAV (SPEC §6.3), every 5 min
  *  - DocuSign webhook deliveries left unprocessed are retried (SPEC §6.7), every 20 min
@@ -30,6 +31,7 @@ import { invoiceDeliveredJobs } from "@/lib/money/invoicing";
 import { runRequestedHistoryImport } from "@/lib/money/history";
 import { sendDigestIfDue } from "@/lib/money/digest";
 import { scheduleNextCycles } from "@/lib/compliance/cycles";
+import { draftProposalFollowUps } from "@/lib/pipeline/followups";
 import { raiseExpiryAlerts } from "@/lib/compliance/expiry";
 import { syncCalendar } from "@/lib/calendar/sync";
 import { titanCalendarFromEnv } from "@/lib/integrations/titan-calendar";
@@ -188,6 +190,13 @@ async function main() {
     every(5 * 60_000, "digest", async () => {
       const r = await sendDigestIfDue(adminDb(), { mail: mailSenderFromEnv(), quo: quoFromEnv() });
       if (r === "sent" || r === "no-recipients") console.log(`[digest] ${r}`);
+    }),
+  );
+
+  timers.push(
+    every(30 * 60_000, "follow-ups", async () => {
+      const drafted = await draftProposalFollowUps(adminDb());
+      if (drafted.length) console.log(`[follow-ups] ${drafted.length} proposal follow-up(s) drafted`);
     }),
   );
 

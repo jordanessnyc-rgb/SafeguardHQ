@@ -11,7 +11,9 @@ import { Pager } from "@/components/pager";
 import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
-import { label, personName, SERVICE_LABELS } from "@/lib/labels";
+import { label, personName, SERVICE_LABELS, usd } from "@/lib/labels";
+import { col } from "@/lib/db/sql";
+import { boardStats } from "@/lib/pipeline/stats";
 import { loadPipelines } from "@/lib/pipeline/config";
 import { daysInStage, isStale } from "@/lib/pipeline/rules";
 import { cn } from "@/lib/utils";
@@ -24,6 +26,12 @@ const SORTS = [
   ["days", "Longest in stage"],
   ["number", "Job number"],
   ["stage", "Stage order"],
+] as const;
+const BOARD_SORTS = [
+  ["newest", "Newest first"],
+  ["days", "Longest in stage"],
+  ["quiet", "Longest since contact"],
+  ["value", "Highest value"],
 ] as const;
 const STATUSES = [
   ["open", "Open jobs"],
@@ -45,20 +53,37 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const status = STATUSES.find(([k]) => k === sp.status)?.[0] ?? "open";
   const sort = SORTS.some(([k]) => k === sp.sort) ? String(sp.sort) : "newest";
   const view = sp.view === "list" || stageFilter.length || service || staleOnly || sp.status ? "list" : "board";
+  const mine = sp.mine === "1";
+  const bsort = BOARD_SORTS.find(([k]) => k === sp.bsort)?.[0] ?? "newest";
+  const isOwner = user.role === "OWNER";
 
-  const { pipelines, rows } = await user.db(async (tx) => {
+  const { pipelines, rows, stats } = await user.db(async (tx) => {
     const pipelines = (await loadPipelines(tx)).filter((p) => p.key !== "AIRNYC");
     const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
     const terminal = [...new Set(pipelines.flatMap((p) => p.stages.filter((st) => st.isTerminal).map((st) => st.key)))];
+    const jobId = col(s.jobs.id);
     const rows = await tx
-      .select({ job: s.jobs, address: s.properties.addressLine, unit: s.properties.unit, orgName: s.organizations.name, contact: { firstName: s.contacts.firstName, lastName: s.contacts.lastName } })
+      .select({
+        job: s.jobs,
+        address: s.properties.addressLine,
+        unit: s.properties.unit,
+        orgName: s.organizations.name,
+        contact: { firstName: s.contacts.firstName, lastName: s.contacts.lastName },
+        // Owner only: job_financials is invisible to a VA under RLS, so this is null for them.
+        value: s.jobFinancials.quotedAmount,
+        lastTouch: sql<string | null>`(select max(a.occurred_at) from ${s.activities} a where a.job_id = ${jobId} and a.type <> 'STAGE_CHANGE')`,
+        touches: sql<number>`(select count(*)::int from ${s.activities} a where a.job_id = ${jobId} and a.direction = 'OUTBOUND')`,
+        nextTask: sql<string | null>`(select t.title || '|' || coalesce(to_char(t.due_at at time zone 'America/New_York', 'Mon DD'), '') from ${s.tasks} t where t.job_id = ${jobId} and t.status in ('OPEN', 'IN_PROGRESS') and t.archived_at is null order by t.due_at nulls last limit 1)`,
+      })
       .from(s.jobs)
+      .leftJoin(s.jobFinancials, eq(s.jobFinancials.jobId, s.jobs.id))
       .leftJoin(s.properties, eq(s.properties.id, s.jobs.propertyId))
       .leftJoin(s.organizations, eq(s.organizations.id, s.jobs.clientOrgId))
       .leftJoin(s.contacts, eq(s.contacts.id, s.jobs.clientContactId))
       .where(
         and(
           isNull(s.jobs.archivedAt),
+          mine ? eq(s.jobs.assignedTo, user.id) : undefined,
           view === "board" ? eq(s.jobs.pipelineKey, pipelineKey) : undefined,
           view === "board" && terminal.length
             ? or(notInArray(s.jobs.stage, terminal), gt(s.jobs.stageEnteredAt, sql`now() - make_interval(days => ${BOARD_TERMINAL_DAYS})`))
@@ -79,13 +104,14 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
       )
       .orderBy(desc(s.jobs.createdAt))
       .limit(5000);
-    return { pipelines, rows, pipelineKey };
+    const stats = view === "board" && pipelineKey ? await boardStats(tx, pipelines.find((p) => p.key === pipelineKey)!) : null;
+    return { pipelines, rows, pipelineKey, stats };
   });
   const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
   const pipeline = pipelines.find((p) => p.key === pipelineKey)!;
   const stageByKey = new Map(pipelines.flatMap((p) => p.stages.map((st) => [`${p.key}:${st.key}`, st] as const)));
 
-  const toCard = ({ job, address, unit, orgName, contact }: (typeof rows)[number]): BoardJob => {
+  const toCard = ({ job, address, unit, orgName, contact, value, lastTouch, touches, nextTask }: (typeof rows)[number]): BoardJob => {
     const st = stageByKey.get(`${job.pipelineKey}:${job.stage}`);
     return {
       id: job.id,
@@ -97,13 +123,21 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
       daysInStage: daysInStage(job.stageEnteredAt),
       stale: !st?.isTerminal && isStale(job.stageEnteredAt, st?.staleAfterDays ?? null),
       priority: job.priority,
+      value: value != null ? Number(value) : null,
+      lastTouchDays: lastTouch ? daysInStage(new Date(lastTouch)) : null,
+      touches,
+      nextTask: nextTask ? { title: nextTask.split("|")[0], due: nextTask.split("|")[1] || null } : null,
     };
   };
 
+  const boardCards = view === "board" ? rows.map(toCard) : [];
+  if (bsort === "days") boardCards.sort((a, b) => b.daysInStage - a.daysInStage);
+  else if (bsort === "quiet") boardCards.sort((a, b) => (b.lastTouchDays ?? b.daysInStage) - (a.lastTouchDays ?? a.daysInStage));
+  else if (bsort === "value") boardCards.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, status: status === "open" ? undefined : status, sort: sort === "newest" ? undefined : sort };
   const qs = (o: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const merged = { view, pipeline: pipelineKey, q: q || undefined, ...(view === "list" ? listParams : {}), ...o };
+    const merged = { view, pipeline: pipelineKey, q: q || undefined, mine: mine ? "1" : undefined, bsort: view === "board" && bsort !== "newest" ? bsort : undefined, ...(view === "list" ? listParams : {}), ...o };
     Object.entries(merged).forEach(([k, v]) => v && p.set(k, v));
     return `/jobs?${p}`;
   };
@@ -143,6 +177,15 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           ))}
         <FilterForm action="/jobs" className={view === "board" ? "ml-auto w-full sm:w-auto" : "w-full"}>
           <input type="hidden" name="view" value={view} />
+          <label className="flex h-8 items-center gap-2 rounded-lg border px-2.5 text-sm">
+            <input type="checkbox" name="mine" value="1" defaultChecked={mine} className="size-4 accent-primary" />
+            Mine
+          </label>
+          {view === "board" && (
+            <NativeSelect name="bsort" defaultValue={bsort} aria-label="Sort cards by" className="w-auto">
+              {BOARD_SORTS.filter(([k]) => isOwner || k !== "value").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </NativeSelect>
+          )}
           {view === "board" && <input type="hidden" name="pipeline" value={pipelineKey} />}
           <Input type="search" name="q" defaultValue={q} placeholder="Search job #, address, client" aria-label="Search jobs" className="w-full sm:w-64" />
           {view === "list" && (
@@ -182,9 +225,18 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
               </EmptyState>
             </div>
           )}
+          {stats && (
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Stat label="Won · last 30 days" value={String(stats.won)} sub={isOwner && stats.wonValue ? usd(stats.wonValue, false) : undefined} tone="good" />
+              <Stat label="Lost · last 30 days" value={String(stats.lost)} sub={stats.topLossReason ? `Top reason: ${stats.topLossReason}` : undefined} />
+              <Stat label="Win rate · 90 days" value={stats.winRate === null ? "—" : `${stats.winRate}%`} sub={`${stats.decided90} decided`} />
+              <Stat label="Open in sales stages" value={String(stats.openSales)} sub={isOwner && stats.openValue ? `${usd(stats.openValue, false)} quoted` : undefined} />
+            </div>
+          )}
           <Kanban
             columns={pipeline.stages.map(({ key, name, isTerminal }) => ({ key, name: isTerminal ? `${name} · last ${BOARD_TERMINAL_DAYS} days` : name, isTerminal }))}
-            jobs={rows.map(toCard)}
+            jobs={boardCards}
+            showValue={isOwner}
           />
         </>
       ) : listRows.length === 0 ? (
@@ -225,5 +277,15 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         </>
       )}
     </>
+  );
+}
+
+function Stat({ label: title, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{title}</div>
+      <div className={cn("text-lg font-semibold tabular-nums", tone === "good" && "text-primary")}>{value}</div>
+      {sub && <div className="truncate text-[11px] text-muted-foreground">{sub}</div>}
+    </div>
   );
 }

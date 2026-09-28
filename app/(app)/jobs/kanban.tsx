@@ -20,6 +20,13 @@ export type BoardJob = {
   daysInStage: number;
   stale: boolean;
   priority: string;
+  /** Quoted amount — owner only (null for a VA). */
+  value?: number | null;
+  /** Days since the last call, text, email or note on the job. */
+  lastTouchDays?: number | null;
+  /** Calls, texts and emails sent for this job. */
+  touches?: number;
+  nextTask?: { title: string; due: string | null } | null;
 };
 
 type Column = { key: string; name: string; isTerminal: boolean };
@@ -28,7 +35,11 @@ type Column = { key: string; name: string; isTerminal: boolean };
  * Drag a card to another column to move it, or use the card's ⋯ menu (works on touch screens and keyboards,
  * where HTML drag-and-drop doesn't). Stage rules are enforced server-side (DB trigger).
  */
-export function Kanban({ columns, jobs }: { columns: Column[]; jobs: BoardJob[] }) {
+const usd0 = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+/** Green under 2 days since contact, amber under a week, red after. */
+const fresh = (d: number | null | undefined) => (d == null ? "bg-zinc-300 dark:bg-zinc-600" : d < 2 ? "bg-emerald-500" : d < 7 ? "bg-amber-500" : "bg-red-500");
+
+export function Kanban({ columns, jobs, showValue = false }: { columns: Column[]; jobs: BoardJob[]; showValue?: boolean }) {
   const [optimistic, applyMove] = useOptimistic(jobs, (state, m: { id: string; stage: string }) =>
     state.map((j) => (j.id === m.id ? { ...j, stage: m.stage, daysInStage: 0, stale: false } : j)),
   );
@@ -83,7 +94,10 @@ export function Kanban({ columns, jobs }: { columns: Column[]; jobs: BoardJob[] 
             >
               <div className="mb-2 flex items-center justify-between px-1 text-xs font-medium">
                 <span>{col.name}</span>
-                <span className="text-muted-foreground">{cards.length}</span>
+                <span className="text-muted-foreground">
+                  {showValue && !col.isTerminal && cards.some((j) => j.value) ? `${usd0(cards.reduce((n, j) => n + (j.value ?? 0), 0))} · ` : ""}
+                  {cards.length}
+                </span>
               </div>
               <div className="flex min-h-16 flex-col gap-2">
                 {cards.map((j) => (
@@ -95,7 +109,15 @@ export function Kanban({ columns, jobs }: { columns: Column[]; jobs: BoardJob[] 
                   >
                     <Link href={`/jobs/${j.id}`} className="block p-2 pr-8">
                       <div className="flex items-center gap-1">
+                        {!col.isTerminal && (
+                          <span
+                            className={cn("size-2 shrink-0 rounded-full", fresh(j.lastTouchDays))}
+                            title={j.lastTouchDays == null ? "No calls, texts or emails logged yet" : `Last contact ${j.lastTouchDays === 0 ? "today" : `${j.lastTouchDays}d ago`}`}
+                            aria-label={j.lastTouchDays == null ? "No contact logged" : `Last contact ${j.lastTouchDays} days ago`}
+                          />
+                        )}
                         <span className="font-mono">{j.jobNumber}</span>
+                        {showValue && j.value ? <span className="ml-auto font-medium tabular-nums">{usd0(j.value)}</span> : null}
                         {j.priority === "URGENT" || j.priority === "HIGH" ? <Badge variant="destructive">{j.priority.toLowerCase()}</Badge> : null}
                       </div>
                       <div className="mt-1 font-medium">{j.service}</div>
@@ -103,7 +125,14 @@ export function Kanban({ columns, jobs }: { columns: Column[]; jobs: BoardJob[] 
                       {j.client && <div className="truncate text-muted-foreground">{j.client}</div>}
                       <div className={cn("mt-1 text-[11px]", j.stale ? "font-medium text-destructive" : "text-muted-foreground")}>
                         {j.daysInStage}d in stage{j.stale ? " · stale" : ""}
+                        {!col.isTerminal && j.touches ? <span className="text-muted-foreground"> · {j.touches} {j.touches === 1 ? "touch" : "touches"}</span> : null}
                       </div>
+                      {!col.isTerminal && j.nextTask && (
+                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={j.nextTask.title}>
+                          Next: {j.nextTask.title}
+                          {j.nextTask.due ? ` · ${j.nextTask.due}` : ""}
+                        </div>
+                      )}
                     </Link>
                     <DropdownMenu>
                       <DropdownMenuTrigger
