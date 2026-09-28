@@ -444,3 +444,14 @@ changes worth knowing:
   - The draft buttons were already gated.
   - Nothing is removed; setting the key brings it all back.
 - **Google Drive settings are hidden** unless Google credentials are set.
+
+## 2026-09-28 — Phase 7c: schedule calendar
+
+- **`/schedule` has week and day views in New York time.** Weekends only take a column when something is booked on them.
+  - Drag a job from "To schedule" onto a time slot to book it.
+  - Drag a booked visit to move it.
+  - Click a visit, or a job's book button, to set the day, start time, length and who's going. This works on phones and with a keyboard, where drag-and-drop doesn't.
+- **Visit length is now per job:** `jobs.duration_minutes`, migration 0030. When it's empty the visit is 2 hours, the old fixed length. The Titan event's end time follows it.
+- **Booking moves the stage only one step:** a job moves to the next stage only when that stage is the "scheduled" one (Signed → Scheduled, Consent → Assessment scheduled, Signed → Site visit). A lead or a job with a proposal out keeps its stage. Taking a visit off the schedule never moves the stage back.
+- **Titan sync is unchanged.** The worker copies scheduled jobs to the Titan calendar every 5 minutes with no attendees, so nobody is ever invited or notified. A visit that failed to sync shows a warning on the calendar.
+- **Phone tab bar:** Schedule replaces Route. Route is still in More, and linked from the day view.

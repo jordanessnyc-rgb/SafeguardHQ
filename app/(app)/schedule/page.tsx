@@ -1,0 +1,53 @@
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
+import { requireStaff } from "@/lib/auth/session";
+import { loadSchedule, scheduleDays, shiftDay } from "@/lib/schedule/load";
+import { nyDate } from "@/lib/time";
+import { cn } from "@/lib/utils";
+import { ScheduleBoard } from "./schedule-board";
+
+export const metadata = { title: "Schedule" };
+
+const fmt = (d: string, o: Intl.DateTimeFormatOptions) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", ...o });
+
+export default async function SchedulePage({ searchParams }: PageProps<"/schedule">) {
+  const user = await requireStaff();
+  const sp = await searchParams;
+  const view = sp.view === "day" ? "day" : "week";
+  const today = nyDate(new Date());
+  const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
+  const days = scheduleDays(date, view);
+  const data = await user.db((tx) => loadSchedule(tx, days));
+  const step = view === "day" ? 1 : 7;
+  const href = (d: string, v = view) => `/schedule?view=${v}&date=${d}`;
+  const title =
+    view === "day"
+      ? fmt(date, { weekday: "long", month: "long", day: "numeric" })
+      : `${fmt(days[0], { month: "short", day: "numeric" })} – ${fmt(days[6], { month: "short", day: "numeric", year: "numeric" })}`;
+
+  return (
+    <>
+      <PageHeader
+        title="Schedule"
+        description={title}
+        actions={
+          <>
+            <div className="flex rounded-lg border p-0.5">
+              <Link href={href(date, "day")} className={buttonVariants({ size: "sm", variant: view === "day" ? "secondary" : "ghost" })}>Day</Link>
+              <Link href={href(date, "week")} className={buttonVariants({ size: "sm", variant: view === "week" ? "secondary" : "ghost" })}>Week</Link>
+            </div>
+            <div className="flex gap-1">
+              <Link href={href(shiftDay(date, -step))} className={buttonVariants({ size: "sm", variant: "outline" })} aria-label={`Previous ${view}`}>‹</Link>
+              <Link href={href(today)} className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>Today</Link>
+              <Link href={href(shiftDay(date, step))} className={buttonVariants({ size: "sm", variant: "outline" })} aria-label={`Next ${view}`}>›</Link>
+            </div>
+            {view === "day" && <Link href={`/route?date=${date}`} className={buttonVariants({ size: "sm", variant: "outline" })}>Route for this day</Link>}
+          </>
+        }
+      />
+      {/* Keyed by the range so the board's local state resets when you change week or day. */}
+      <ScheduleBoard key={days.join()} days={days} today={data.today} scheduled={data.scheduled} unscheduled={data.unscheduled} staff={data.staff} meId={user.id} />
+    </>
+  );
+}

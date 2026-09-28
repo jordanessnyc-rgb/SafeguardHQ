@@ -73,6 +73,11 @@ describe.skipIf(!hasTestDb)("calendar sync (database)", () => {
     expect(events.get(`ess-${job.id}.ics`)).toContain("DTSTART:20260930T130000Z");
     expect(events.get(`ess-${job.id}.ics`)).toContain("SEQUENCE:1");
 
+    // A longer visit set on the schedule changes the event's end time.
+    await t.db.update(s.jobs).set({ durationMinutes: 240 }).where(eq(s.jobs.id, job.id));
+    expect(await syncCalendar(t.db, sink, now, "https://crm.example")).toMatchObject({ written: 1 });
+    expect(events.get(`ess-${job.id}.ics`)).toContain("DTEND:20260930T170000Z");
+
     await t.db.update(s.jobs).set({ scheduledAt: null }).where(eq(s.jobs.id, job.id));
     expect(await syncCalendar(t.db, sink, now)).toMatchObject({ removed: 1 });
     expect(events.has(`ess-${job.id}.ics`)).toBe(false);

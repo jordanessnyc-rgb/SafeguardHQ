@@ -436,6 +436,8 @@ export const jobs = pgTable(
       onDelete: "set null",
     }),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    // Length of the field visit on the schedule and the Titan calendar; null = the 2-hour default.
+    durationMinutes: integer("duration_minutes"),
     fieldCompletedAt: timestamp("field_completed_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     driveFolderUrl: text("drive_folder_url"),

@@ -12,6 +12,7 @@ import { formatPhone } from "@/lib/phone";
 import type { CalendarSink } from "@/lib/integrations/titan-calendar";
 import { buildIcs } from "./ics";
 
+/** Default visit length when a job has no duration_minutes. */
 export const EVENT_MINUTES = 120;
 const filename = (jobId: string) => `ess-${jobId}.ics`;
 
@@ -40,14 +41,15 @@ export async function syncCalendar(db: Db, cal: CalendarSink, now = new Date(), 
     ]
       .filter(Boolean)
       .join("\n");
-    const content = { summary: `${label(SERVICE_LABELS, job.serviceCode)} — ${job.jobNumber}${prop ? ` — ${prop.addressLine}` : ""}`, location: address, description, start: job.scheduledAt!.toISOString() };
+    const minutes = job.durationMinutes ?? EVENT_MINUTES;
+    const content = { summary: `${label(SERVICE_LABELS, job.serviceCode)} — ${job.jobNumber}${prop ? ` — ${prop.addressLine}` : ""}`, location: address, description, start: job.scheduledAt!.toISOString(), minutes };
     const hash = createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 32);
     if (hash === job.calendarHash) continue;
     const sequence = job.calendarHash ? job.calendarSequence + 1 : 0;
     try {
       await cal.put(
         filename(job.id),
-        buildIcs({ uid: `${job.id}@crm.ess-nyc.com`, start: job.scheduledAt!, end: new Date(job.scheduledAt!.getTime() + EVENT_MINUTES * 60_000), summary: content.summary, location: address, description, url: appUrl ? `${appUrl}/jobs/${job.id}` : null, sequence }, now),
+        buildIcs({ uid: `${job.id}@crm.ess-nyc.com`, start: job.scheduledAt!, end: new Date(job.scheduledAt!.getTime() + minutes * 60_000), summary: content.summary, location: address, description, url: appUrl ? `${appUrl}/jobs/${job.id}` : null, sequence }, now),
       );
       await db.update(s.jobs).set({ calendarHash: hash, calendarSequence: sequence, calendarError: null }).where(eq(s.jobs.id, job.id));
       out.written++;
