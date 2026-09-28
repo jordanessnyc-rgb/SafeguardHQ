@@ -29,6 +29,7 @@
     "dotenv": "^18.0.4",
     "drizzle-orm": "^0.45.3",
     "google-auth-library": "^11.1.0",
+    "ical.js": "2.2.1",
     "imapflow": "^2.0.6",
     "lucide-react": "^1.48.0",
     "mailparser": "^3.9.28",

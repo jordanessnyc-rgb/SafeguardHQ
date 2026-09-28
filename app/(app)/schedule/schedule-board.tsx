@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
+import type { ScheduleCalendar, ScheduleExternal } from "@/lib/schedule/external";
 import type { ScheduleJob } from "@/lib/schedule/load";
 import { DURATIONS, durationLabel } from "@/lib/schedule/rules";
 import { scheduleJob } from "./actions";
@@ -39,11 +40,16 @@ const clock = (m: number) => {
 const dayLabel = (d: string, style: "short" | "long" = "short") =>
   new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: style === "long" ? "long" : "short", month: style === "long" ? "long" : "numeric", day: "numeric" });
 
-/** Side-by-side lanes for overlapping visits on one day. */
-function lanes(jobs: ScheduleJob[]) {
+/** Titan colors come as #rrggbb or #rrggbbaa; anything else gets a neutral grey. */
+const calColor = (c: string | null | undefined) => (c && /^#[0-9a-f]{6}/i.test(c) ? c.slice(0, 7) : "#71717a");
+
+type Timed = { id: string; minutes: number | null; durationMinutes: number };
+
+/** Side-by-side lanes for overlapping visits and Titan events on one day. */
+function lanes(jobs: Timed[]) {
   const sorted = [...jobs].sort((a, b) => a.minutes! - b.minutes!);
   const out = new Map<string, { lane: number; of: number }>();
-  let group: ScheduleJob[] = [];
+  let group: Timed[] = [];
   let groupEnd = -1;
   const flush = () => {
     const ends: number[] = [];
@@ -68,7 +74,29 @@ function lanes(jobs: ScheduleJob[]) {
 
 type Editing = { job: ScheduleJob; day: string; minutes: number; duration: number; assignedTo: string };
 
-export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId }: { days: string[]; today: string; scheduled: ScheduleJob[]; unscheduled: ScheduleJob[]; staff: Staff[]; meId: string }) {
+export function ScheduleBoard({
+  days,
+  today,
+  scheduled,
+  unscheduled,
+  staff,
+  meId,
+  external = [],
+  calendars = [],
+  calendarError = null,
+  isOwner = false,
+}: {
+  days: string[];
+  today: string;
+  scheduled: ScheduleJob[];
+  unscheduled: ScheduleJob[];
+  staff: Staff[];
+  meId: string;
+  external?: ScheduleExternal[];
+  calendars?: ScheduleCalendar[];
+  calendarError?: string | null;
+  isOwner?: boolean;
+}) {
   const router = useRouter();
   const [events, setEvents] = useState(scheduled);
   const [waiting, setWaiting] = useState(unscheduled);
@@ -76,16 +104,23 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
   const [q, setQ] = useState("");
   const [over, setOver] = useState<{ day: string; minutes: number } | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [viewing, setViewing] = useState<ScheduleExternal | null>(null);
+  const [offCals, setOffCals] = useState<Set<string>>(new Set());
   const [pending, start] = useTransition();
 
   const color = useMemo(() => new Map(staff.map((u, i) => [u.id, COLORS[i % COLORS.length]])), [staff]);
   const swatch = useMemo(() => new Map(staff.map((u, i) => [u.id, SWATCH[i % SWATCH.length]])), [staff]);
+  const cal = useMemo(() => new Map(calendars.map((c) => [c.url, c])), [calendars]);
+  const titan = external.filter((e) => !offCals.has(e.calendarUrl));
+  const titanTimed = titan.filter((e) => !e.allDay);
+  const titanAllDay = titan.filter((e) => e.allDay);
   // Weekends only take room when something is booked then (or it's today).
-  const shown = days.length === 1 ? days : days.filter((d, i) => i < 5 || d === today || events.some((e) => e.day === d));
+  const shown = days.length === 1 ? days : days.filter((d, i) => i < 5 || d === today || events.some((e) => e.day === d) || titan.some((e) => e.day === d));
   const visible = events.filter((e) => who === "all" || (who === "none" ? !e.assignedTo : e.assignedTo === who));
   // Show business hours, stretched to fit anything booked earlier or later.
-  const first = Math.min(7 * 60, ...visible.map((e) => Math.floor(e.minutes! / 60) * 60));
-  const last = Math.max(19 * 60, ...visible.map((e) => Math.ceil((e.minutes! + e.durationMinutes) / 60) * 60));
+  const timed: Timed[] = [...visible, ...titanTimed];
+  const first = Math.min(7 * 60, ...timed.map((e) => Math.floor(e.minutes! / 60) * 60));
+  const last = Math.max(19 * 60, ...timed.map((e) => Math.min(24 * 60, Math.ceil((e.minutes! + e.durationMinutes) / 60) * 60)));
   const rows = (last - first) / SLOT;
   const all = [...events, ...waiting];
 
@@ -149,6 +184,37 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
             </button>
           ))}
         </div>
+        {(calendars.length > 0 || calendarError) && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-muted-foreground">Titan:</span>
+            {calendars.map((c) => {
+              const on = !offCals.has(c.url);
+              return (
+                <button
+                  key={c.url}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setOffCals((s) => (s.delete(c.url) ? new Set(s) : new Set(s).add(c.url)))}
+                  className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1", on ? "hover:bg-muted" : "text-muted-foreground line-through opacity-60 hover:bg-muted")}
+                  title={on ? "Hide these events" : "Show these events"}
+                >
+                  <span className="size-2.5 rounded-full" style={{ background: calColor(c.color) }} aria-hidden />
+                  {c.name}
+                </button>
+              );
+            })}
+            {calendarError && (
+              <span className="flex items-center gap-1 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="size-3.5" aria-hidden /> Titan events aren&apos;t showing: {calendarError}
+              </span>
+            )}
+            {isOwner && (
+              <Link href="/settings/calendar" className="ml-1 text-muted-foreground underline">
+                Calendar settings
+              </Link>
+            )}
+          </div>
+        )}
         <div className="overflow-x-auto rounded-lg border">
           <div className="grid" style={{ gridTemplateColumns: `3.25rem repeat(${shown.length}, minmax(${shown.length > 1 ? "6.5rem" : "12rem"}, 1fr))`, minWidth: shown.length > 1 ? `${3.25 + shown.length * 6.5}rem` : undefined }}>
             <div className="sticky left-0 z-10 border-b bg-background" />
@@ -163,6 +229,29 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
                 <span className="ml-1 font-normal text-muted-foreground">{events.filter((e) => e.day === d).length || ""}</span>
               </Link>
             ))}
+            {titanAllDay.some((e) => shown.includes(e.day)) && (
+              <>
+                <div className="sticky left-0 z-10 border-b bg-background pr-1.5 pt-1 text-right text-[10px] text-muted-foreground">all day</div>
+                {shown.map((d) => (
+                  <div key={d} className="space-y-0.5 border-b border-l p-0.5">
+                    {titanAllDay
+                      .filter((e) => e.day === d)
+                      .map((e) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          onClick={() => setViewing(e)}
+                          className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] hover:ring-2 hover:ring-primary/40"
+                          style={{ background: `${calColor(cal.get(e.calendarUrl)?.color)}26`, borderLeft: `3px solid ${calColor(cal.get(e.calendarUrl)?.color)}` }}
+                          title={`${e.title} (Titan: ${cal.get(e.calendarUrl)?.name ?? "calendar"})`}
+                        >
+                          {e.title}
+                        </button>
+                      ))}
+                  </div>
+                ))}
+              </>
+            )}
             <div className="sticky left-0 z-10 bg-background">
               {Array.from({ length: rows }, (_, i) => (
                 <div key={i} style={{ height: ROW }} className="pr-1.5 text-right text-[10px] leading-none text-muted-foreground">
@@ -172,7 +261,8 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
             </div>
             {shown.map((d) => {
               const dayJobs = visible.filter((e) => e.day === d);
-              const lane = lanes(dayJobs);
+              const dayTitan = titanTimed.filter((e) => e.day === d);
+              const lane = lanes([...dayJobs, ...dayTitan]);
               return (
                 <div
                   key={d}
@@ -202,6 +292,25 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
                       <span className="px-1">{clock(over.minutes)}</span>
                     </div>
                   )}
+                  {dayTitan.map((e) => {
+                    const l = lane.get(e.id)!;
+                    const c = calColor(cal.get(e.calendarUrl)?.color);
+                    const height = Math.max(ROW, (Math.min(e.durationMinutes, last - e.minutes) / SLOT) * ROW - 2);
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => setViewing(e)}
+                        style={{ top: ((e.minutes - first) / SLOT) * ROW + 1, height, left: `calc(${(l.lane / l.of) * 100}% + 2px)`, width: `calc(${100 / l.of}% - 4px)`, background: `${c}1f`, borderColor: `${c}66`, borderLeftColor: c }}
+                        className="absolute overflow-hidden rounded-md border border-l-4 border-dashed px-1.5 py-1 text-left text-[11px] leading-tight hover:ring-2 hover:ring-primary/40"
+                        aria-label={`${e.title}, ${e.when}. From Titan (${cal.get(e.calendarUrl)?.name ?? "calendar"}).`}
+                      >
+                        <span className="block font-medium">{clock(e.minutes)}</span>
+                        <span className="block truncate">{e.title}</span>
+                        {height > 3 * ROW && e.location && <span className="block truncate text-muted-foreground">{e.location}</span>}
+                      </button>
+                    );
+                  })}
                   {dayJobs.map((j) => {
                     const l = lane.get(j.id)!;
                     const height = Math.max(ROW, (j.durationMinutes / SLOT) * ROW - 2);
@@ -236,6 +345,7 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Drag a job onto the calendar to book it, or drag a booked visit to move it. Click a visit to change its time, length or who&apos;s going. Changes reach the Titan calendar within 5 minutes; clients are never notified.
+          {calendars.length > 0 && " Events with dashed borders come from your Titan calendars; change those in Titan."}
         </p>
       </div>
 
@@ -266,6 +376,38 @@ export function ScheduleBoard({ days, today, scheduled, unscheduled, staff, meId
           ))}
         </ul>
       </aside>
+
+      {viewing && (
+        <Dialog open onOpenChange={(o) => o || setViewing(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <span className="size-3 shrink-0 rounded-full" style={{ background: calColor(cal.get(viewing.calendarUrl)?.color) }} aria-hidden />
+                {viewing.title}
+              </DialogTitle>
+              <DialogDescription>{viewing.when}</DialogDescription>
+            </DialogHeader>
+            <dl className="grid grid-cols-[6rem_1fr] gap-y-1.5 text-sm">
+              {viewing.location && (
+                <>
+                  <dt className="text-muted-foreground">Where</dt>
+                  <dd>
+                    <a className="underline" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(viewing.location)}`} target="_blank" rel="noreferrer">
+                      {viewing.location}
+                    </a>
+                  </dd>
+                </>
+              )}
+              <dt className="text-muted-foreground">Calendar</dt>
+              <dd>{cal.get(viewing.calendarUrl)?.name ?? "Titan"}</dd>
+            </dl>
+            <p className="text-xs text-muted-foreground">This event is on your Titan calendar, not a CRM job. Change or delete it in Titan; the schedule picks up changes when it next loads.</p>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setViewing(null)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {editing && (
         <Dialog open onOpenChange={(o) => o || setEditing(null)}>

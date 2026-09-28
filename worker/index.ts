@@ -208,11 +208,12 @@ async function main() {
     }),
   );
 
-  const cal = titanCalendarFromEnv();
-  if (cal) {
+  if (titanCalendarFromEnv()) {
     timers.push(
       every(5 * 60_000, "calendar", async () => {
-        const r = await syncCalendar(adminDb(), cal);
+        // The calendar picked in Settings → Calendar (read each run, so a change applies without a restart).
+        const [cfg] = await adminDb().select({ url: s.settings.calendarWriteUrl }).from(s.settings);
+        const r = await syncCalendar(adminDb(), titanCalendarFromEnv(cfg?.url)!);
         if (r.written || r.removed || r.errors) console.log(`[calendar] ${r.written} written, ${r.removed} removed, ${r.errors} errors`);
       }),
     );

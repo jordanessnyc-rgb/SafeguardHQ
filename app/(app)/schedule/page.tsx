@@ -2,6 +2,9 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth/session";
+import { schema as s } from "@/lib/db";
+import { titanCalendarFromEnv } from "@/lib/integrations/titan-calendar";
+import { loadExternal } from "@/lib/schedule/external";
 import { loadSchedule, scheduleDays, shiftDay } from "@/lib/schedule/load";
 import { nyDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -18,7 +21,9 @@ export default async function SchedulePage({ searchParams }: PageProps<"/schedul
   const today = nyDate(new Date());
   const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
   const days = scheduleDays(date, view);
-  const data = await user.db((tx) => loadSchedule(tx, days));
+  const { data, cfg } = await user.db(async (tx) => ({ data: await loadSchedule(tx, days), cfg: (await tx.select({ hidden: s.settings.calendarHiddenUrls }).from(s.settings))[0] }));
+  // Jordan's own Titan events, read live (not stored); a Titan outage only hides them.
+  const titan = await loadExternal(titanCalendarFromEnv(), days, cfg?.hidden ?? []);
   const step = view === "day" ? 1 : 7;
   const href = (d: string, v = view) => `/schedule?view=${v}&date=${d}`;
   const title =
@@ -47,7 +52,12 @@ export default async function SchedulePage({ searchParams }: PageProps<"/schedul
         }
       />
       {/* Keyed by the range so the board's local state resets when you change week or day. */}
-      <ScheduleBoard key={days.join()} days={days} today={data.today} scheduled={data.scheduled} unscheduled={data.unscheduled} staff={data.staff} meId={user.id} />
+      <ScheduleBoard key={days.join()} days={days} today={data.today} scheduled={data.scheduled} unscheduled={data.unscheduled} staff={data.staff} meId={user.id}
+        external={titan.events}
+        calendars={titan.calendars}
+        calendarError={titan.error}
+        isOwner={user.role === "OWNER"}
+      />
     </>
   );
 }

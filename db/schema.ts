@@ -812,6 +812,9 @@ export const settings = pgTable("settings", {
   // Phase 7d: proposal follow-up DRAFTS (never sent unless auto-send is on), N days after Proposal sent.
   followUpEnabled: boolean("follow_up_enabled").notNull().default(true),
   followUpDays: integer("follow_up_days").array().notNull().default(sql`'{3,7}'::int[]`),
+  // Titan calendar (Settings → Calendar): where CRM visits are written, and which calendars the schedule hides.
+  calendarWriteUrl: text("calendar_write_url"),
+  calendarHiddenUrls: text("calendar_hidden_urls").array().notNull().default(sql`'{}'::text[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by"),
 });
