@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, ilike, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { FilterForm } from "@/components/filter-form";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, PageHeader } from "@/components/page-header";
+import { Pager } from "@/components/pager";
+import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
@@ -23,6 +25,13 @@ const SORTS = [
   ["number", "Job number"],
   ["stage", "Stage order"],
 ] as const;
+const STATUSES = [
+  ["open", "Open jobs"],
+  ["closed", "Closed & past jobs"],
+  ["all", "All jobs"],
+] as const;
+/** Closed/Lost cards stay on the board this long, so the board isn't buried under years of history. */
+const BOARD_TERMINAL_DAYS = 30;
 
 export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const user = await requireStaff();
@@ -33,12 +42,14 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const stageFilter = str(sp.stage).split(",").filter(Boolean);
   const service = s.jobs.serviceCode.enumValues.find((v) => v === str(sp.service)) ?? "";
   const staleOnly = sp.stale === "1";
+  const status = STATUSES.find(([k]) => k === sp.status)?.[0] ?? "open";
   const sort = SORTS.some(([k]) => k === sp.sort) ? String(sp.sort) : "newest";
-  const view = sp.view === "list" || stageFilter.length || service || staleOnly ? "list" : "board";
+  const view = sp.view === "list" || stageFilter.length || service || staleOnly || sp.status ? "list" : "board";
 
   const { pipelines, rows } = await user.db(async (tx) => {
     const pipelines = (await loadPipelines(tx)).filter((p) => p.key !== "AIRNYC");
     const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
+    const terminal = [...new Set(pipelines.flatMap((p) => p.stages.filter((st) => st.isTerminal).map((st) => st.key)))];
     const rows = await tx
       .select({ job: s.jobs, address: s.properties.addressLine, unit: s.properties.unit, orgName: s.organizations.name, contact: { firstName: s.contacts.firstName, lastName: s.contacts.lastName } })
       .from(s.jobs)
@@ -49,6 +60,11 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         and(
           isNull(s.jobs.archivedAt),
           view === "board" ? eq(s.jobs.pipelineKey, pipelineKey) : undefined,
+          view === "board" && terminal.length
+            ? or(notInArray(s.jobs.stage, terminal), gt(s.jobs.stageEnteredAt, sql`now() - make_interval(days => ${BOARD_TERMINAL_DAYS})`))
+            : undefined,
+          view === "list" && status === "open" && terminal.length && !stageFilter.length ? notInArray(s.jobs.stage, terminal) : undefined,
+          view === "list" && status === "closed" && terminal.length && !stageFilter.length ? inArray(s.jobs.stage, terminal) : undefined,
           view === "list" && stageFilter.length ? inArray(s.jobs.stage, stageFilter) : undefined,
           view === "list" && service ? eq(s.jobs.serviceCode, service) : undefined,
           q
@@ -62,7 +78,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         ),
       )
       .orderBy(desc(s.jobs.createdAt))
-      .limit(500);
+      .limit(5000);
     return { pipelines, rows, pipelineKey };
   });
   const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
@@ -84,7 +100,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
     };
   };
 
-  const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, sort: sort === "newest" ? undefined : sort };
+  const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, status: status === "open" ? undefined : status, sort: sort === "newest" ? undefined : sort };
   const qs = (o: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
     const merged = { view, pipeline: pipelineKey, q: q || undefined, ...(view === "list" ? listParams : {}), ...o };
@@ -98,7 +114,11 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   if (sort === "days") listRows.sort((a, b) => b.c.daysInStage - a.c.daysInStage);
   else if (sort === "number") listRows.sort((a, b) => a.c.jobNumber.localeCompare(b.c.jobNumber));
   else if (sort === "stage") listRows.sort((a, b) => (stageRank.get(a.c.stage) ?? 99) - (stageRank.get(b.c.stage) ?? 99));
-  const filtered = Boolean(stageFilter.length || service || staleOnly || q);
+  const filtered = Boolean(stageFilter.length || service || staleOnly || q || status !== "open");
+  const win = pageWindow(listRows.length, pageFrom(sp.page));
+  const pageRows = listRows.slice(win.offset, win.offset + PAGE_SIZE);
+  const pageHref = (page: number) => listHref("/jobs", { view: "list", q, ...listParams, page });
+  const openOnBoard = view === "board" ? rows.filter((r) => !stageByKey.get(`${r.job.pipelineKey}:${r.job.stage}`)?.isTerminal).length : 0;
 
   return (
     <>
@@ -127,6 +147,9 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           <Input type="search" name="q" defaultValue={q} placeholder="Search job #, address, client" aria-label="Search jobs" className="w-full sm:w-64" />
           {view === "list" && (
             <>
+              <NativeSelect name="status" defaultValue={status} aria-label="Open or closed" className="w-auto">
+                {STATUSES.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </NativeSelect>
               <NativeSelect name="stage" defaultValue={stageFilter.join(",")} aria-label="Stage" className="w-auto">
                 <option value="">All stages</option>
                 {stageFilter.length > 1 && <option value={stageFilter.join(",")}>{stageFilter.map((k) => stageOptions.find((st) => st.key === k)?.name ?? k).join(" + ")}</option>}
@@ -150,10 +173,25 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
       </div>
 
       {view === "board" ? (
-        <Kanban columns={pipeline.stages.map(({ key, name, isTerminal }) => ({ key, name, isTerminal }))} jobs={rows.map(toCard)} />
+        <>
+          {openOnBoard === 0 && (
+            <div className="mb-3">
+              <EmptyState>
+                No open jobs in {pipeline.name}{q ? " match that search" : ""}. <Link href="/jobs/new" className="font-medium text-primary underline">Start a new job</Link>
+                {" "}or see <Link href="/jobs?view=list&status=closed" className="underline">past jobs</Link>.
+              </EmptyState>
+            </div>
+          )}
+          <Kanban
+            columns={pipeline.stages.map(({ key, name, isTerminal }) => ({ key, name: isTerminal ? `${name} · last ${BOARD_TERMINAL_DAYS} days` : name, isTerminal }))}
+            jobs={rows.map(toCard)}
+          />
+        </>
       ) : listRows.length === 0 ? (
         <EmptyState>No jobs match{filtered ? " these filters" : ""}.</EmptyState>
       ) : (
+        <>
+        <Pager total={win.pages ? listRows.length : 0} {...win} href={pageHref} noun={listRows.length === 1 ? "job" : "jobs"} />
         <Table>
           <TableHeader>
             <TableRow>
@@ -165,7 +203,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {listRows.map(({ r, c }) => {
+            {pageRows.map(({ r, c }) => {
               return (
                 <TableRow key={c.id}>
                   <TableCell>
@@ -183,6 +221,8 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
             })}
           </TableBody>
         </Table>
+        <Pager total={listRows.length} {...win} href={pageHref} noun="jobs" className="justify-end [&>span:first-child]:hidden" />
+        </>
       )}
     </>
   );

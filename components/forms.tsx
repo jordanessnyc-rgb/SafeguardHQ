@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, type ReactNode } from "react";
+import { useActionState, useEffect, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,7 +10,7 @@ import type { ActionState } from "@/lib/actions";
 
 type Action = (prev: ActionState, form: FormData) => Promise<ActionState>;
 
-/** A <form> bound to a server action that shows the action's error/success message inline. */
+/** A <form> bound to a server action: errors show inline, success shows as a toast. */
 export function ActionForm({
   action,
   children,
@@ -22,17 +23,16 @@ export function ActionForm({
   successMessage?: string;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(action, {});
+  // Every successful save gets a "Saved" toast; errors stay next to the form, where the fix is.
+  useEffect(() => {
+    if (state.ok) toast.success(state.message || successMessage || "Saved");
+  }, [state, successMessage]);
   return (
     <form action={formAction} className={className}>
       {children}
       {state.error && (
         <p role="alert" className="basis-full text-sm text-destructive">
           {state.error}
-        </p>
-      )}
-      {state.ok && (state.message || successMessage) && (
-        <p role="status" className="basis-full text-sm text-primary">
-          {state.message || successMessage}
         </p>
       )}
     </form>

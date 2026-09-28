@@ -1,4 +1,5 @@
 import { desc, eq, inArray } from "drizzle-orm";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -152,7 +153,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
                       <Button size="xs" variant="outline" type="submit">Retry</Button>
                     </form>
                     <form action={dismissJob.bind(null, j.id)}>
-                      <Button size="xs" variant="ghost" type="submit">Dismiss</Button>
+                      <ConfirmSubmit title="Dismiss this failed job?" description="It won't be retried." confirmLabel="Dismiss">Dismiss</ConfirmSubmit>
                     </form>
                   </span>
                 </li>

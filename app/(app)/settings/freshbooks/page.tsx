@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { and, asc, count, desc, eq, isNull, ne } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -72,7 +73,7 @@ export default async function FreshbooksSettingsPage({ searchParams }: PageProps
                   {/* Plain <a>: this is a route handler that redirects to FreshBooks. */}
                   <a href="/api/freshbooks/connect" className={buttonVariants({ variant: "outline", size: "sm" })}>Reconnect</a>
                   <form action={disconnectFreshbooks}>
-                    <Button size="sm" variant="ghost" type="submit">Disconnect</Button>
+                    <ConfirmSubmit size="sm" title="Disconnect FreshBooks?" description="Draft invoices and payment updates stop until you reconnect. Nothing in FreshBooks is deleted." confirmLabel="Disconnect">Disconnect</ConfirmSubmit>
                   </form>
                 </div>
               </>

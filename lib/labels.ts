@@ -64,3 +64,30 @@ export const personName = (c: { firstName?: string | null; lastName?: string | n
 /** $1,234.50 — accepts numeric strings from Postgres. */
 export const usd = (v: number | string | null | undefined, cents = true) =>
   Number(v ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
+
+/** FreshBooks v3_status values, in plain words. */
+export const INVOICE_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft (not sent)",
+  sent: "Sent",
+  viewed: "Viewed by client",
+  paid: "Paid",
+  "auto-paid": "Paid (autopay)",
+  autopaid: "Paid (autopay)",
+  partial: "Partly paid",
+  overdue: "Overdue",
+  disputed: "Disputed",
+  resolved: "Resolved",
+  declined: "Payment declined",
+  failed: "Payment failed",
+  retry: "Retrying payment",
+  pending: "Payment pending",
+  deleted: "Deleted in FreshBooks",
+  void: "Void",
+};
+export const invoiceStatus = (v: string | null | undefined) => (v ? (INVOICE_STATUS_LABELS[v] ?? titleCase(v)) : INVOICE_STATUS_LABELS.draft);
+
+/** Any SNAKE_CASE value → "Snake case" words (every underscore, not just the first). */
+export const words = (v: string) => {
+  const t = v.replace(/_/g, " ").toLowerCase();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};

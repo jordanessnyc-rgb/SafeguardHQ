@@ -23,3 +23,10 @@ export async function pipelineForService(tx: Tx, serviceCode: string): Promise<P
 export async function stagesFor(tx: Tx, pipelineKey: string): Promise<Stage[]> {
   return tx.select().from(s.pipelineStages).where(eq(s.pipelineStages.pipelineKey, pipelineKey)).orderBy(asc(s.pipelineStages.position));
 }
+
+/** (pipeline, stage key) → the stage name Jordan configured, for pages that list jobs from several pipelines. */
+export async function stageNamer(tx: Tx): Promise<(job: { pipelineKey: string; stage: string }) => string> {
+  const stages = await tx.select({ p: s.pipelineStages.pipelineKey, k: s.pipelineStages.key, name: s.pipelineStages.name }).from(s.pipelineStages);
+  const names = new Map(stages.map((st) => [`${st.p}:${st.k}`, st.name]));
+  return (job) => names.get(`${job.pipelineKey}:${job.stage}`) ?? job.stage;
+}

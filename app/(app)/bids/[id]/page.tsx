@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { words } from "@/lib/labels";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +65,7 @@ export default async function BidPage({ params }: PageProps<"/bids/[id]">) {
             {g ? (
               <div className="space-y-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={g.recommendation === "GO" ? "default" : g.recommendation === "NO_GO" ? "destructive" : "secondary"}>AI: {g.recommendation.replace("_", "-")}</Badge>
+                  <Badge variant={g.recommendation === "GO" ? "default" : g.recommendation === "NO_GO" ? "destructive" : "secondary"}>AI: {g.recommendation === "NO_GO" ? "No-go" : words(g.recommendation)}</Badge>
                   <span>{g.summary}</span>
                 </div>
                 <ul className="space-y-1">

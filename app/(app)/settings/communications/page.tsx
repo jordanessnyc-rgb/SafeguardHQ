@@ -1,8 +1,8 @@
 import { aiEnabled } from "@/lib/ai/enabled";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import Link from "next/link";
 import { asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -114,7 +114,7 @@ export default async function CommsSettingsPage() {
               </ActionForm>
               {isOwner && (
                 <form action={deleteLine.bind(null, l.id)} className="mt-1 text-right">
-                  <Button size="xs" variant="ghost" type="submit">Remove line</Button>
+                  <ConfirmSubmit title={`Remove the ${l.label} line?`} description="Calls and texts on this number stop showing up in the CRM until it's added again." confirmLabel="Remove line">Remove line</ConfirmSubmit>
                 </form>
               )}
               </div>
@@ -207,7 +207,7 @@ export default async function CommsSettingsPage() {
               <fieldset disabled={!isOwner} className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Input name="name" defaultValue={t.name} aria-label="Name" />
-                  <Badge variant="outline">{t.channel}</Badge>
+                  <Badge variant="outline">{t.channel === "SMS" ? "Text" : t.channel === "EMAIL" ? "Email" : t.channel}</Badge>
                 </div>
                 <code className="text-[10px] text-muted-foreground">{t.key}</code>
                 {t.channel === "EMAIL" && <Input name="subject" defaultValue={t.subject ?? ""} placeholder="Subject" />}

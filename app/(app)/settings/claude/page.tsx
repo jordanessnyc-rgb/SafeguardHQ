@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { desc } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { requireStaff } from "@/lib/auth/session";
@@ -62,7 +62,7 @@ export default async function ClaudeSettingsPage() {
                     </span>
                     {!t.revokedAt && (
                       <form action={revokeToken.bind(null, t.id)}>
-                        <Button size="xs" variant="ghost" type="submit">Revoke</Button>
+                        <ConfirmSubmit title="Revoke this access token?" description="Anything using it loses access right away." confirmLabel="Revoke">Revoke</ConfirmSubmit>
                       </form>
                     )}
                   </li>

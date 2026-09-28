@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { stageNamer } from "@/lib/pipeline/config";
+import { Timeline } from "@/components/timeline";
+import { ConfirmSubmit } from "@/components/confirm-submit";
 import { notFound } from "next/navigation";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +18,8 @@ import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { fmtDate, label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
 import type { HpdRegistration } from "@/lib/integrations/nyc-open-data";
+import { ClientPickers } from "@/components/client-pickers";
+import { loadJobOptions } from "@/lib/jobs/options";
 import { addPropertyRole, deactivatePropertyRole, refreshProperty, updateProperty } from "../actions";
 
 export default async function PropertyPage({ params, searchParams }: PageProps<"/properties/[id]">) {
@@ -56,11 +61,19 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
       .leftJoin(s.organizations, eq(s.organizations.id, s.propertyRoles.orgId))
       .where(and(eq(s.propertyRoles.propertyId, id), eq(s.propertyRoles.active, true)));
     const orgs = await tx.select({ id: s.organizations.id, name: s.organizations.name }).from(s.organizations).where(isNull(s.organizations.archivedAt)).orderBy(asc(s.organizations.name));
-    const contacts = await tx.select({ id: s.contacts.id, firstName: s.contacts.firstName, lastName: s.contacts.lastName }).from(s.contacts).where(isNull(s.contacts.archivedAt)).orderBy(asc(s.contacts.lastName)).limit(500);
-    return { property, violations, counts, jobs, roles, orgs, contacts };
+    const contacts = (await loadJobOptions(tx)).contacts;
+    const jobIds = jobs.map((j) => j.id);
+    const activities = await tx
+      .select()
+      .from(s.activities)
+      .where(or(eq(s.activities.propertyId, id), jobIds.length ? inArray(s.activities.jobId, jobIds) : undefined))
+      .orderBy(desc(s.activities.occurredAt))
+      .limit(100);
+    const stageName = await stageNamer(tx);
+    return { property, violations, counts, jobs, roles, orgs, contacts, activities, stageName };
   });
   if (!data) notFound();
-  const { property: p, violations, counts, jobs, roles, orgs, contacts } = data;
+  const { property: p, violations, counts, jobs, roles, orgs, contacts, activities, stageName } = data;
   const reg = p.hpdRegistrationContacts as HpdRegistration | null;
   const totalOpen = counts.reduce((n, c) => n + c.open, 0);
 
@@ -163,7 +176,7 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
                   {org && <Link className="hover:underline" href={`/organizations/${org.id}`}>{contact ? ` (${org.name})` : org.name}</Link>}
                 </div>
                 <form action={deactivatePropertyRole.bind(null, id, role.id)}>
-                  <Button size="xs" variant="ghost" type="submit">Remove</Button>
+                  <ConfirmSubmit title="Remove this person from the building?" description="Only the link is removed; the contact or company stays." confirmLabel="Remove">Remove</ConfirmSubmit>
                 </form>
               </div>
             ))}
@@ -171,14 +184,15 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
               <NativeSelect name="role" defaultValue="MANAGER" aria-label="Role">
                 {["OWNER", "MANAGER", "TENANT", "SUPER", "BROKER"].map((r) => <option key={r} value={r}>{titleCase(r)}</option>)}
               </NativeSelect>
-              <NativeSelect name="contactId" defaultValue="" aria-label="Contact">
-                <option value="">— contact —</option>
-                {contacts.map((c) => <option key={c.id} value={c.id}>{personName(c)}</option>)}
-              </NativeSelect>
-              <NativeSelect name="orgId" defaultValue="" aria-label="Organization">
-                <option value="">— organization —</option>
-                {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </NativeSelect>
+              <ClientPickers
+                showProperty={false}
+                properties={[]}
+                orgs={orgs.map((o) => ({ id: o.id, label: o.name }))}
+                contacts={contacts}
+                defaults={{}}
+                names={{ org: "orgId", contact: "contactId" }}
+                labels={{ org: "Organization", contact: "Person" }}
+              />
               <SubmitButton size="sm" variant="secondary">Link</SubmitButton>
             </ActionForm>
           </CardContent>
@@ -239,16 +253,17 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Jobs</CardTitle>
+            <CardTitle>Jobs <span className="text-sm font-normal text-muted-foreground">({jobs.length})</span></CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="max-h-[28rem] space-y-2 overflow-y-auto text-sm">
             {jobs.length === 0 && <p className="text-muted-foreground">No jobs at this property yet.</p>}
             {jobs.map((j) => (
               <Link key={j.id} href={`/jobs/${j.id}`} className="flex justify-between gap-2 rounded-md border p-2 hover:bg-muted">
                 <span>
                   <span className="font-mono text-xs">{j.jobNumber}</span> · {label(SERVICE_LABELS, j.serviceCode)}
+                  <span className="block text-xs text-muted-foreground">{fmtDate(j.deliveredAt ?? j.createdAt)}</span>
                 </span>
-                <Badge variant="secondary">{titleCase(j.stage)}</Badge>
+                <Badge variant="secondary">{stageName(j)}</Badge>
               </Link>
             ))}
           </CardContent>
@@ -281,6 +296,15 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
           </CardContent>
         </Card>
       </div>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-muted-foreground">Calls, texts, emails and job updates for this building. Latest 100.</p>
+          <Timeline items={activities} viewerIsOwner={user.role === "OWNER"} />
+        </CardContent>
+      </Card>
     </>
   );
 }
