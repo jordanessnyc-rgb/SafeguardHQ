@@ -172,7 +172,7 @@ export default async function CompliancePage({ searchParams }: PageProps<"/compl
         </Card>
       </div>
 
-      <Card className="mt-4">
+      <Card className="mt-4" id="rules">
         <CardHeader>
           <CardTitle>Cycle rules</CardTitle>
           <CardDescription>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { and, count, eq, isNull, ne, notInArray, sql } from "drizzle-orm";
-import { Check } from "lucide-react";
+import { Check, Circle, CircleCheck } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/page-header";
@@ -8,6 +8,7 @@ import { setTaskStatus } from "@/app/(app)/tasks/actions";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { buildNeedsYou, type NeedsKind } from "@/lib/dashboard/needs-you";
+import { setupChecklist } from "@/lib/dashboard/setup";
 import { label, SERVICE_LABELS } from "@/lib/labels";
 import { loadPipelines } from "@/lib/pipeline/config";
 import { isStale } from "@/lib/pipeline/rules";
@@ -50,7 +51,8 @@ export default async function Dashboard() {
       .where(and(isNull(s.jobs.archivedAt), ne(s.jobs.stage, "LOST"), sql`(${s.jobs.scheduledAt} at time zone ${TZ})::date = ${today}::date`))
       .orderBy(s.jobs.scheduledAt);
     const needs = await buildNeedsYou(tx, { userId: user.id, isOwner });
-    return { pipelines, openJobs, openCases, stops, needs };
+    const setup = isOwner ? await setupChecklist(tx) : [];
+    return { pipelines, openJobs, openCases, stops, needs, setup };
   });
 
   const stageInfo = new Map(d.pipelines.flatMap((p) => p.stages.map((st) => [`${p.key}:${st.key}`, st] as const)));
@@ -91,6 +93,33 @@ export default async function Dashboard() {
           </>
         }
       />
+      {d.setup.some((i) => !i.done) && (
+        <Card className="mb-5 gap-0 border-primary/40 py-0">
+          <CardHeader className="border-b py-4">
+            <CardTitle>Finish setting up</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {d.setup.filter((i) => i.done).length} of {d.setup.length} done · this card goes away when everything is set
+            </p>
+          </CardHeader>
+          <CardContent className="px-0">
+            <ul className="divide-y">
+              {d.setup.map((i) => (
+                <li key={i.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 sm:flex-nowrap">
+                  {i.done ? <CircleCheck className="size-4 shrink-0 text-primary" aria-label="Done" /> : <Circle className="size-4 shrink-0 text-muted-foreground" aria-label="To do" />}
+                  <span className={cn("min-w-0 flex-1 basis-56 sm:basis-auto", i.done && "text-muted-foreground line-through")}>
+                    <span className="block text-sm font-medium">{i.title}</span>
+                    {!i.done && <span className="block text-xs text-muted-foreground">{i.why}</span>}
+                  </span>
+                  {!i.done && i.href && (
+                    <Link href={i.href} className={buttonVariants({ size: "sm", variant: "outline" })}>{i.action ?? "Open"}</Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5">
         {tiles.map((t) => (
           <Link key={t.k} href={t.href} className="group rounded-lg border bg-card p-3 hover:border-primary">

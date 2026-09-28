@@ -1,5 +1,6 @@
 "use server";
 
+import { aiEnabled } from "@/lib/ai/enabled";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -110,7 +111,7 @@ export async function uploadRfp(id: string, _prev: ActionState, form: FormData):
     const { error } = await supabase.storage.from("job-files").upload(path, buf, { contentType: "application/pdf" });
     if (error) throw new Error(`Upload failed: ${error.message}`);
     await user.db((tx) => tx.insert(s.documents).values({ bidId: id, kind: "OTHER", status: "FINAL", title: file.name, storageBucket: "job-files", storagePath: path }));
-    if (!process.env.ANTHROPIC_API_KEY) return { ok: true, message: "Saved. (AI isn't configured, so fill in the details by hand.)" };
+    if (!aiEnabled()) return { ok: true, message: "Saved. (AI isn't configured, so fill in the details by hand.)" };
     const r = await analyzeRfp(adminDb(), id, buf);
     if (r.status !== "ok") return { error: `Saved the PDF, but the analysis failed: ${r.reason}` };
     return { ok: true, message: `Analyzed. AI recommendation: ${r.goNoGo.recommendation.replace("_", "-")} — ${r.goNoGo.summary}` };

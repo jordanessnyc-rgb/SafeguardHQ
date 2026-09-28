@@ -416,3 +416,31 @@ changes worth knowing:
   tasks, saving settings and ⌘K. Two bugs found this way are fixed. Outline-style links had lost
   their border across the app (`buttonVariants` didn't merge classes). The board's Move menu crashed
   (Base UI requires a menu label inside a group).
+
+## 2026-09-27 — Phase 7a: invoice history, setup checklist, AI hidden when off, backups
+
+- **FreshBooks invoice history → past jobs.** FreshBooks API checked on 2026-09-27:
+  `GET /accounting/account/{id}/invoices/invoices?page&per_page&include[]=lines` and
+  `GET …/payments/payments?page&per_page`. Every invoice is cached. Every sent, non-deleted invoice becomes a job:
+  - Job number `FB-<invoice number>`, so imports don't use up the ESS-YYYY-#### counter.
+  - Stage **Closed**, on the building and client of its FreshBooks client (`freshbooks_clients.property_id`).
+  - Service type read from the line items. When none matches, it's a mold assessment and the job notes say it was guessed.
+  - Kept quiet on purpose: a terminal stage, so never "stale". `paid_at` is set for paid invoices, so there's no
+    review-request draft. `cycle_scheduled_at` is set, so a compliance rule added later doesn't create a task for
+    every old job.
+  - Drafts and deleted invoices get no job.
+  - The import runs in the worker, because it can take longer than a web request allows. Settings → FreshBooks sets
+    `history_requested_at`, and the worker claims the request with one conditional update.
+- **Weekly export goes to Supabase Storage when Google Drive isn't configured.** SPEC §13 said Drive; ESS uses
+  Synology, not Drive.
+  - The zip goes to a private `backups` bucket with no Storage policies. Only the service role can reach it: the worker,
+    and an owner-only download route that writes an audit row.
+  - The last 12 are kept.
+  - The worker makes the first export right away if none exists.
+  - Syncing a copy to Synology is left for the Synology integration.
+- **AI features are hidden while `ANTHROPIC_API_KEY` isn't set:**
+  - Ask the CRM in the nav and the ⌘K fallback.
+  - The AI triage fields, AI spend and the AI budget link in settings.
+  - The draft buttons were already gated.
+  - Nothing is removed; setting the key brings it all back.
+- **Google Drive settings are hidden** unless Google credentials are set.

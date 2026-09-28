@@ -1,3 +1,4 @@
+import { aiEnabled } from "@/lib/ai/enabled";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
@@ -109,7 +110,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
   });
   if (!data) notFound();
   const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, field, compose } = data;
-  const aiEnabled = Boolean(process.env.ANTHROPIC_API_KEY);
+  const aiOn = aiEnabled();
   const docusignReady = Boolean(docusignConfigFromEnv());
 
   const current = stages.find((st) => st.key === job.stage);
@@ -388,7 +389,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                   <datalist id="field-areas">{(field?.areas ?? []).map((a) => <option key={a} value={a} />)}</datalist>
                   <SubmitButton size="sm" variant="outline">Add photo</SubmitButton>
                 </ActionForm>
-                {aiEnabled && (
+                {aiOn && (
                   <ActionForm action={draftReportAction.bind(null, id)} className="flex flex-col items-start gap-1 border-t pt-3">
                     <SubmitButton size="sm">Draft report with AI</SubmitButton>
                     <span className="text-xs text-muted-foreground">Writes the findings, observations, results and recommendations from the field data, photos and samples into the report template as a DRAFT for Jordan to edit.</span>

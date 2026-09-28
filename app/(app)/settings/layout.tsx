@@ -1,3 +1,5 @@
+import { driveFromEnv } from "@/lib/integrations/google-drive";
+import { aiEnabled } from "@/lib/ai/enabled";
 import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
@@ -33,12 +35,13 @@ export default async function SettingsLayout({ children }: LayoutProps<"/setting
       items: [
         { href: "/settings/communications", label: "Phone, email & AI" },
         ...(isOwner ? [{ href: "/settings/freshbooks", label: "FreshBooks", status: fbConnected ? { tone: "ok" as const, text: "Connected" } : { tone: "warn" as const, text: "Not connected" } }] : []),
-        { href: sec("drive"), label: "Google Drive", status: on(Boolean(cfg?.driveJobsParentFolderId), "Set", "Not set") },
+        // ESS keeps files on Synology; the Drive settings only matter once Google credentials are set.
+        ...(driveFromEnv() ? [{ href: sec("drive"), label: "Google Drive", status: on(Boolean(cfg?.driveJobsParentFolderId), "Set", "Not set") }] : []),
         ...(isOwner && process.env.DOCUSIGN_INTEGRATION_KEY ? [{ href: "/api/docusign/consent", label: "DocuSign consent", external: true }] : []),
         { href: "/settings/claude", label: "Claude access" },
       ],
     },
-    ...(isOwner ? [{ label: "Owner only", items: [{ href: "/settings/pricing", label: "Pricing" }, { href: sec("budget"), label: "AI budget" }] }] : []),
+    ...(isOwner ? [{ label: "Owner only", items: [{ href: "/settings/pricing", label: "Pricing" }, ...(aiEnabled() ? [{ href: sec("budget"), label: "AI budget" }] : [])] }] : []),
   ];
 
   return (

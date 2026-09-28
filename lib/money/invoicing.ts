@@ -17,7 +17,7 @@ import { ownerTask } from "@/lib/tasks";
 
 type LineItem = { description: string; quantity: number; unitPrice: number };
 
-const money = (v: { amount?: string } | undefined | null) => (v?.amount != null ? Number(v.amount).toFixed(2) : null);
+export const money = (v: { amount?: string } | undefined | null) => (v?.amount != null ? Number(v.amount).toFixed(2) : null);
 
 /** The CRM's billing party for a job → FreshBooks client id (links or creates, never duplicates by email). */
 export async function ensureFreshbooksClient(
@@ -163,10 +163,11 @@ async function recordInvoice(db: Db, jobId: string, inv: FbInvoice) {
   await upsertInvoiceCache(db, inv, jobId);
 }
 
-async function upsertInvoiceCache(db: Db, inv: FbInvoice, jobId: string | null) {
+export async function upsertInvoiceCache(db: Db | Tx, inv: FbInvoice, jobId: string | null, orgId: string | null = null) {
   const values = {
     freshbooksInvoiceId: String(inv.id),
     jobId,
+    orgId,
     invoiceNumber: inv.invoice_number ?? null,
     freshbooksClientId: inv.customerid != null ? String(inv.customerid) : null,
     status: inv.vis_state === 1 ? "deleted" : (inv.v3_status ?? null),
@@ -184,7 +185,12 @@ async function upsertInvoiceCache(db: Db, inv: FbInvoice, jobId: string | null) 
     .values(values)
     .onConflictDoUpdate({
       target: s.invoicesCache.freshbooksInvoiceId,
-      set: { ...values, jobId: sql`coalesce(${s.invoicesCache.jobId}, excluded.job_id)`, updatedAt: new Date() },
+      set: {
+        ...values,
+        jobId: sql`coalesce(${s.invoicesCache.jobId}, excluded.job_id)`,
+        orgId: sql`coalesce(excluded.org_id, ${s.invoicesCache.orgId})`,
+        updatedAt: new Date(),
+      },
       // Never let an older snapshot overwrite a newer one (webhooks can arrive out of order).
       setWhere: sql`${s.invoicesCache.fbUpdatedAt} is null or excluded.fb_updated_at is null or excluded.fb_updated_at >= ${s.invoicesCache.fbUpdatedAt}`,
     });

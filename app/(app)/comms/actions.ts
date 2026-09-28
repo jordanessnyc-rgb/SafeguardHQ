@@ -1,5 +1,6 @@
 "use server";
 
+import { aiEnabled } from "@/lib/ai/enabled";
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -160,7 +161,7 @@ export async function reviewActivity(id: string, _prev: ActionState, form: FormD
 export async function draftAiReply(activityId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireStaff();
   const res = await safeAction(async () => {
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
+    if (!aiEnabled()) throw new Error("AI isn't configured (ANTHROPIC_API_KEY).");
     // Visibility check under the user's RLS first, then the privileged connection for logging/audit.
     const [a] = await user.db((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(eq(s.activities.id, activityId)));
     if (!a) throw new Error("Message not found.");

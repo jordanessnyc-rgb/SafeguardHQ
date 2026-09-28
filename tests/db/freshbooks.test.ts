@@ -12,6 +12,7 @@ import { createDraftInvoiceForJob, ensureFreshbooksClient, invoiceDeliveredJobs,
 import { handleFreshbooksWebhook } from "@/lib/money/freshbooks-webhook";
 import { registerWebhooks } from "@/lib/money/freshbooks-setup";
 import { createAllUnmatched, importFreshbooksClients, resolveImportedClient } from "@/lib/money/client-sync";
+import { runRequestedHistoryImport } from "@/lib/money/history";
 import { FakeFreshBooks } from "../helpers/fake-freshbooks";
 import { createUser, hasTestDb, setupTestDb, type TestDb, type TestUser } from "../helpers/db";
 
@@ -329,6 +330,66 @@ describe.skipIf(!hasTestDb)("FreshBooks integration", () => {
       const [b3] = await t.db.insert(s.properties).values({ addressLine: "1 NEW STREET" }).returning();
       expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null, propertyId: b3.id })).toBe("7001");
       expect(await ensureFreshbooksClient(t.db, fb, { clientOrgId: org.id, clientContactId: null })).toBe("7001");
+    });
+
+    it("invoice history: sent invoices become quiet Closed jobs on the client's building; re-running adds nothing", async () => {
+      const [org] = await t.db.insert(s.organizations).values({ name: "History Holdings LLC", type: "OWNER" }).returning();
+      const [bldg] = await t.db.insert(s.properties).values({ addressLine: "10 HISTORY LANE", borough: "Queens" }).returning();
+      await t.db.insert(s.freshbooksClients).values({ freshbooksClientId: "7100", organization: "History Holdings", matchStatus: "CREATED", linkedOrgId: org.id, propertyId: bldg.id });
+      const inv = (id: number, extra: Record<string, unknown>) => ({
+        id,
+        invoice_number: String(id),
+        customerid: 7100,
+        create_date: "2024-03-05",
+        vis_state: 0,
+        amount: { amount: "850.00", code: "USD" },
+        outstanding: { amount: "0.00", code: "USD" },
+        paid: { amount: "850.00", code: "USD" },
+        lines: [{ name: "LL152 gas piping inspection", description: "Periodic inspection", qty: "1", unit_cost: { amount: "850.00", code: "USD" } }],
+        ...extra,
+      });
+      fake.invoices.push(
+        inv(9001, { v3_status: "paid", payment_status: "paid", date_paid: "2024-03-20" }),
+        inv(9002, { v3_status: "overdue", payment_status: "unpaid", paid: { amount: "0.00", code: "USD" }, outstanding: { amount: "850.00", code: "USD" }, lines: [{ name: "Mold assessment", qty: "1", unit_cost: { amount: "850.00", code: "USD" } }] }),
+        inv(9003, { v3_status: "draft" }),
+        inv(9004, { v3_status: "paid", vis_state: 1 }),
+      );
+      fake.payments.push({ id: 9901, invoiceid: 9001, amount: { amount: "850.00", code: "USD" }, date: "2024-03-20", type: "Check", vis_state: 0 });
+
+      expect(await runRequestedHistoryImport(t.db, fb)).toBeNull(); // nobody asked
+      await t.db.update(s.freshbooksConnection).set({ historyRequestedAt: new Date() }).where(eq(s.freshbooksConnection.id, 1));
+      const counts = await runRequestedHistoryImport(t.db, fb);
+      expect(counts?.jobsCreated).toBe(2);
+      expect(await runRequestedHistoryImport(t.db, fb)).toBeNull(); // one run per request
+
+      const jobs = await t.db.select().from(s.jobs).where(like(s.jobs.jobNumber, "FB-900%"));
+      expect(jobs.map((j) => j.jobNumber).sort()).toEqual(["FB-9001", "FB-9002"]);
+      const gas = jobs.find((j) => j.jobNumber === "FB-9001")!;
+      expect(gas).toMatchObject({ serviceCode: "LL152", pipelineKey: "INSPECTION", stage: "CLOSED", propertyId: bldg.id, clientOrgId: org.id, title: "LL152 gas piping inspection" });
+      expect(gas.cycleScheduledAt).not.toBeNull(); // adding a compliance rule later won't flood tasks
+      expect(gas.stageEnteredAt.toISOString().slice(0, 10)).toBe("2024-03-05");
+      expect(jobs.find((j) => j.jobNumber === "FB-9002")!.serviceCode).toBe("MOLD_ASSESS");
+
+      const fins = await t.db.select().from(s.jobFinancials).where(and(eq(s.jobFinancials.jobId, gas.id)));
+      expect(fins[0]).toMatchObject({ quotedAmount: "850.00", freshbooksInvoiceId: "9001", amountPaid: "850.00" });
+      expect(fins[0].paidAt).not.toBeNull(); // already paid → no review-request draft if FreshBooks re-sends it
+      const [cache] = await t.db.select().from(s.invoicesCache).where(eq(s.invoicesCache.freshbooksInvoiceId, "9001"));
+      expect(cache).toMatchObject({ jobId: gas.id, orgId: org.id });
+      const [draft] = await t.db.select().from(s.invoicesCache).where(eq(s.invoicesCache.freshbooksInvoiceId, "9003"));
+      expect(draft.jobId).toBeNull();
+      const [pay] = await t.db.select().from(s.paymentsCache).where(eq(s.paymentsCache.freshbooksPaymentId, "9901"));
+      expect(pay.jobId).toBe(gas.id);
+      const [act] = await t.db.select().from(s.activities).where(eq(s.activities.jobId, gas.id));
+      expect(act.occurredAt.toISOString().slice(0, 10)).toBe("2024-03-05");
+      expect(await t.db.select().from(s.tasks).where(eq(s.tasks.jobId, gas.id))).toHaveLength(0);
+
+      // Idempotent: a second request refreshes the cache but creates no jobs.
+      await t.db.update(s.freshbooksConnection).set({ historyRequestedAt: new Date(Date.now() + 1000) }).where(eq(s.freshbooksConnection.id, 1));
+      expect((await runRequestedHistoryImport(t.db, fb))?.jobsCreated).toBe(0);
+      const [conn] = await t.db.select().from(s.freshbooksConnection);
+      expect(conn.historyStatus).toMatchObject({ jobsCreated: 0 });
+      expect(conn.historyStatus?.error).toBeFalsy();
+      expect(conn.historyStatus?.finishedAt).toBeTruthy();
     });
 
     it("a VA can see the review list but can't resolve it", async () => {

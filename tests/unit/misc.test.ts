@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { decryptField, encryptField } from "@/lib/crypto";
 import { formatPhone, toE164 } from "@/lib/phone";
 import { DriveClient, airnycFolderName, jobFolderName } from "@/lib/integrations/google-drive";
+import { guessServiceCode } from "@/lib/money/history";
+import { storageTarget } from "@/lib/backup/export";
 
 describe("AIRnyc field encryption", () => {
   beforeAll(() => {
@@ -174,5 +176,44 @@ describe("FreshBooks authorize URL", () => {
     expect(plain.searchParams.get("client_id")).toBe("cid");
     expect(plain.searchParams.get("redirect_uri")).toBe(cfg.redirectUri);
     expect(new URL(authorizeUrl(cfg, "st", "user:profile:read")).searchParams.get("scope")).toBe("user:profile:read");
+  });
+});
+
+describe("guessServiceCode (FreshBooks history)", () => {
+  const g = (name: string, notes?: string) => guessServiceCode({ lines: [{ name }], notes });
+  it("reads the service from invoice lines, most specific first", () => {
+    expect(g("Local Law 152 Gas Piping Inspection").code).toBe("LL152");
+    expect(g("Parapet observation").code).toBe("LL126");
+    expect(g("Post-remediation clearance (mold)").code).toBe("MOLD_CLEAR");
+    expect(g("Lead dust wipe clearance").code).toBe("LEAD_CLEAR");
+    expect(g("Lead in drinking water sampling").code).toBe("LEAD_WATER");
+    expect(g("XRF lead paint inspection").code).toBe("LEAD_RA");
+    expect(g("Asbestos ACP-5 survey").code).toBe("ASB_SURVEY");
+    expect(g("Mold remediation work plan").code).toBe("MOLD_PLAN");
+    expect(g("Mold assessment with air sampling").code).toBe("MOLD_ASSESS");
+    expect(g("HPD violation removal").code).toBe("VIOLATION");
+  });
+  it("falls back to a mold assessment and says it guessed", () => {
+    expect(g("Site visit")).toEqual({ code: "MOLD_ASSESS", guessed: true });
+    expect(guessServiceCode({ lines: [], notes: "AIRnyc referral" })).toEqual({ code: "AIRNYC", guessed: false });
+  });
+});
+
+describe("backup storage target (no Google Drive)", () => {
+  it("lists only CRM exports newest first, uploads to the private bucket and removes old ones", async () => {
+    const calls: string[] = [];
+    const bucket = {
+      list: async () => ({ data: [{ name: "ess-crm-export-2026-09-13.zip" }, { name: "other.zip" }, { name: "ess-crm-export-2026-09-20.zip" }], error: null }),
+      upload: async (name: string) => (calls.push(`up:${name}`), { error: null }),
+      remove: async (ids: string[]) => (calls.push(`rm:${ids.join(",")}`), { error: null }),
+    };
+    const sb = { storage: { from: (b: string) => (calls.push(`bucket:${b}`), bucket) } };
+    const t = storageTarget(sb as never);
+    expect((await t.list()).map((f) => f.name)).toEqual(["ess-crm-export-2026-09-20.zip", "ess-crm-export-2026-09-13.zip"]);
+    await t.upload("ess-crm-export-2026-09-27.zip", Buffer.from("x"));
+    await t.remove([]);
+    await t.remove(["ess-crm-export-2026-09-13.zip"]);
+    expect(calls.filter((c) => !c.startsWith("bucket:"))).toEqual(["up:ess-crm-export-2026-09-27.zip", "rm:ess-crm-export-2026-09-13.zip"]);
+    expect(new Set(calls.filter((c) => c.startsWith("bucket:")))).toEqual(new Set(["bucket:backups"]));
   });
 });

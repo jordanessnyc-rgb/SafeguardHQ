@@ -1,3 +1,4 @@
+import { aiEnabled } from "@/lib/ai/enabled";
 import Link from "next/link";
 import { asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,7 @@ export default async function CommsSettingsPage() {
     quo: Boolean(process.env.QUO_API_KEY),
     quoWebhook: Boolean(process.env.QUO_WEBHOOK_SECRET),
     titan: Boolean(process.env.TITAN_USER && process.env.TITAN_PASSWORD),
-    ai: Boolean(process.env.ANTHROPIC_API_KEY),
+    ai: aiEnabled(),
   };
 
   return (
@@ -72,10 +73,10 @@ export default async function CommsSettingsPage() {
           </div>
           <div>
             <div className="font-medium">AI triage</div>
-            <Status tone={env.ai ? "ok" : "error"}>{env.ai ? "API key set" : "API key missing (messages go to review)"}</Status>
+            <Status tone={env.ai ? "ok" : "off"}>{env.ai ? "On" : "Off — new messages wait in Inbox review"}</Status>
             <div className="text-xs">{d.pendingTriage} waiting</div>
           </div>
-          {isOwner && (
+          {isOwner && env.ai && (
             <div>
               <div className="font-medium">AI spend this month</div>
               <div className="text-xs">
@@ -168,13 +169,21 @@ export default async function CommsSettingsPage() {
                   <Field label="Default From for emails">
                     <Input name="defaultFromEmail" defaultValue={d.cfg.defaultFromEmail} />
                   </Field>
-                  <Field label="AI triage confidence threshold" hint="Below this → review queue.">
-                    <Input name="triageConfidenceThreshold" inputMode="decimal" defaultValue={d.cfg.triageConfidenceThreshold} />
-                  </Field>
+                  {env.ai ? (
+                    <Field label="AI triage confidence threshold" hint="Below this → review queue.">
+                      <Input name="triageConfidenceThreshold" inputMode="decimal" defaultValue={d.cfg.triageConfidenceThreshold} />
+                    </Field>
+                  ) : (
+                    <input type="hidden" name="triageConfidenceThreshold" value={d.cfg.triageConfidenceThreshold} />
+                  )}
                 </div>
-                <Field label="How Jordan writes (for AI reply drafts)" hint="Tone, greeting and sign-off, phrases you use or avoid. AI drafts always wait in the Outbox for approval.">
-                  <Textarea name="aiVoiceNotes" rows={3} defaultValue={d.cfg.aiVoiceNotes ?? ""} placeholder="e.g. Friendly but brief. First names. Sign emails 'Best, Jordan'. Never promise same-day results." />
-                </Field>
+                {env.ai ? (
+                  <Field label="How Jordan writes (for AI reply drafts)" hint="Tone, greeting and sign-off, phrases you use or avoid. AI drafts always wait in the Outbox for approval.">
+                    <Textarea name="aiVoiceNotes" rows={3} defaultValue={d.cfg.aiVoiceNotes ?? ""} placeholder="e.g. Friendly but brief. First names. Sign emails 'Best, Jordan'. Never promise same-day results." />
+                  </Field>
+                ) : (
+                  <input type="hidden" name="aiVoiceNotes" value={d.cfg.aiVoiceNotes ?? ""} />
+                )}
                 <Field label="AIRnyc sender domains" hint="Email from these domains is stored encrypted even without a case ID. Comma-separated.">
                   <Input name="airnycSenderDomains" defaultValue={d.cfg.airnycSenderDomains.join(", ")} placeholder="airnyc.org" />
                 </Field>

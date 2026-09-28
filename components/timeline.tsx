@@ -1,3 +1,4 @@
+import { aiEnabled } from "@/lib/ai/enabled";
 import { ArrowDownLeft, ArrowUpRight, Mail, MessageSquare, Paperclip, Phone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RevealSensitive } from "@/components/reveal-sensitive";
@@ -37,7 +38,7 @@ const mins = (sec?: number | null) => (sec ? `${Math.floor(sec / 60)}:${String(s
 
 /** Unified activity timeline (SPEC §4.6): calls, texts, emails, notes, stage changes. */
 export function Timeline({ items, viewerIsOwner = false }: { items: TimelineItem[]; viewerIsOwner?: boolean }) {
-  const aiReplies = Boolean(process.env.ANTHROPIC_API_KEY);
+  const aiReplies = aiEnabled();
   if (items.length === 0) return <p className="text-sm text-muted-foreground">No activity yet.</p>;
   return (
     <ol className="space-y-4 border-l pl-4">
