@@ -4,6 +4,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { inboxReviewWhere, OUTBOX_WAITING } from "@/lib/queues";
+import { nyDate, TZ } from "@/lib/time";
 import { aiEnabled } from "@/lib/ai/enabled";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -14,7 +15,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     const [tasks] = await tx
       .select({ n: count() })
       .from(s.tasks)
-      .where(and(isNull(s.tasks.archivedAt), inArray(s.tasks.status, ["OPEN", "IN_PROGRESS"]), or(eq(s.tasks.assignee, user.id), isNull(s.tasks.assignee)), sql`${s.tasks.dueAt} < now() + interval '1 day'`));
+      .where(and(isNull(s.tasks.archivedAt), inArray(s.tasks.status, ["OPEN", "IN_PROGRESS"]), or(eq(s.tasks.assignee, user.id), isNull(s.tasks.assignee)), sql`(${s.tasks.dueAt} at time zone ${TZ})::date <= ${nyDate(new Date())}::date`));
     const [inbox] = await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere);
     const [outbox] = await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING]));
     return { tasks: tasks.n, inbox: inbox.n, outbox: outbox.n };

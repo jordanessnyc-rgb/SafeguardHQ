@@ -14,10 +14,10 @@ export default async function NewJobPage({ searchParams }: PageProps<"/jobs/new"
   const options = await user.db(loadJobOptions);
   return (
     <div className="max-w-3xl">
-      <PageHeader title="New job" description="Starts in the first stage of its service's pipeline. A Drive folder is created automatically when Drive is set up." />
+      <PageHeader title="New job" description="Capture the request now. You can add scheduling, assignment, and other details later." />
       <ActionForm action={createJob} className="space-y-4">
         <JobFields options={options} job={{ propertyId: str("propertyId"), clientOrgId: str("clientOrgId"), clientContactId: str("clientContactId") }} />
-        <SubmitButton>Create job</SubmitButton>
+        <div className="flex items-center gap-3"><SubmitButton>Create job</SubmitButton><span className="text-xs text-muted-foreground">Creates a record. No client message is sent.</span></div>
       </ActionForm>
     </div>
   );
