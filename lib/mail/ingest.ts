@@ -14,6 +14,7 @@ import { schema as s, type Db, type Tx } from "@/lib/db";
 import { findContactByEmail } from "@/lib/comms/contacts";
 import { AIRNYC_CASE_ID_RE, sealContent } from "@/lib/comms/sensitive";
 import { applyEmslResults, isEmslReportFile, isLikelyEmsl } from "./emsl";
+import { emailHeaders, emailHtml, emailMeta } from "./meta";
 import { JOB_NUMBER_RE } from "./patterns";
 
 type Conn = Db | Tx;
@@ -166,11 +167,13 @@ export async function ingestEmail(
       threadKey: refs.at(-1) ?? messageId,
       occurredAt: m.date ?? opts.now ?? new Date(),
       attachments: stored,
-      raw: { headers: Object.fromEntries([...m.headers.entries()].filter(([k]) => ["from", "to", "cc", "date", "subject"].includes(k)).map(([k, v]) => [k, String(v)])) },
+      // The subject of AIRnyc mail is sealed below, so it stays out of the plain headers too.
+      raw: { headers: sensitive ? { ...emailHeaders(m), subject: undefined } : emailHeaders(m), email: emailMeta(m) },
       // Outbound copies and lab reports don't need AI triage; everything else inbound does (§9.1).
       triageStatus: outbound ? "SKIPPED" : emsl ? "AUTO" : "PENDING",
       triageCategory: emsl ? "LAB_RESULT" : null,
-      ...(sensitive ? sealContent({ subject, body: text }) : { subject, body: text }),
+      // AIRnyc mail keeps only the sealed text; its HTML is never stored (CLAUDE.md rule 5).
+      ...(sensitive ? sealContent({ subject, body: text }) : { subject, body: text, bodyHtml: emailHtml(m) }),
     })
     .returning({ id: s.activities.id });
 

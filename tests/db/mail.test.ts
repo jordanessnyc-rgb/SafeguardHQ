@@ -14,12 +14,14 @@ import { encryptMember } from "@/lib/airnyc/cases";
 import { createUser, hasTestDb, setupTestDb, type TestDb } from "../helpers/db";
 
 type Att = { filename: string; content: Buffer; contentType: string };
-const raw = (o: { from: string; to?: string; subject: string; text: string; messageId?: string; inReplyTo?: string; attachments?: Att[] }) =>
+const raw = (o: { from: string; to?: string; cc?: string; subject: string; text: string; html?: string; messageId?: string; inReplyTo?: string; attachments?: Att[] }) =>
   new MailComposer({
     from: o.from,
     to: o.to ?? "crm@ess-nyc.com",
+    ...(o.cc ? { cc: o.cc } : {}),
     subject: o.subject,
     text: o.text,
+    ...(o.html ? { html: o.html } : {}),
     messageId: o.messageId ?? `<${randomUUID()}@test>`,
     ...(o.inReplyTo ? { inReplyTo: o.inReplyTo, references: o.inReplyTo } : {}),
     attachments: o.attachments,
@@ -113,11 +115,26 @@ describe.skipIf(!hasTestDb)("ingestEmail", () => {
     expect(a).toMatchObject({ type: "EMAIL_OUT", triageStatus: "SKIPPED" });
   });
 
+  it("keeps sender names and the original HTML so the inbox can show it like an email", async () => {
+    const res = await ingest(
+      await raw({ from: "Maria Chen <maria@acmemgmt.com>", to: "Jordan Adhami <jordan@ess-nyc.com>", cc: "Joe Super <joe@acmemgmt.com>", subject: "Photos", text: "See below", html: "<p>See <b>below</b></p>" }),
+    );
+    const [a] = await t.db.select().from(s.activities).where(eq(s.activities.id, res.activityId!));
+    expect(a.bodyHtml).toContain("<b>below</b>");
+    expect(a.raw).toMatchObject({
+      headers: { from: `"Maria Chen" <maria@acmemgmt.com>`, cc: `"Joe Super" <joe@acmemgmt.com>`, subject: "Photos" },
+      email: { from: { name: "Maria Chen", address: "maria@acmemgmt.com" }, to: [{ name: "Jordan Adhami", address: "jordan@ess-nyc.com" }], cc: [{ name: "Joe Super", address: "joe@acmemgmt.com" }] },
+    });
+  });
+
   it("AIRnyc case emails are linked to the case and stored sealed", async () => {
     const [kase] = await t.db.insert(s.airnycCases).values({ caseId: "PHS_0148", ...encryptMember({ memberName: "Ana Lopez" }) }).returning();
-    const res = await ingest(await raw({ from: "cm@phsnetwork.org", subject: "PHS_0148 consent form", text: "Ana Lopez signed the tenant consent today." }));
+    const res = await ingest(
+      await raw({ from: "cm@phsnetwork.org", subject: "PHS_0148 consent form for Ana Lopez", text: "Ana Lopez signed the tenant consent today.", html: "<p>Ana Lopez signed</p>" }),
+    );
     expect(res).toMatchObject({ airnycCaseId: kase.id, sensitive: true });
     const { rows } = await t.pool.query(`select * from activities where id = $1`, [res.activityId]);
+    expect(rows[0].body_html).toBeNull();
     expect(JSON.stringify(rows[0])).not.toContain("Ana Lopez");
     expect(openContent(rows[0].sensitive_enc).body).toContain("Ana Lopez signed");
   });

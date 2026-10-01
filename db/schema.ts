@@ -711,6 +711,8 @@ export const activities = pgTable(
     channelLine: text("channel_line"),
     subject: text("subject"),
     body: text("body"),
+    // Original HTML of an email (not for AIRnyc/sensitive mail). Sanitized again when shown.
+    bodyHtml: text("body_html"),
     summary: text("summary"),
     nextSteps: text("next_steps").array(),
     externalId: text("external_id"),
