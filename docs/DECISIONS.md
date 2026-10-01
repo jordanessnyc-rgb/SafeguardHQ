@@ -496,3 +496,15 @@ changes worth knowing:
   - Changing the write calendar deletes the CRM's copies from the old calendar and lets the worker write them to the new one on its next run (5 min).
 - **VAs see Titan events on the schedule** (they already see the schedule). Titan events are Jordan's own calendar, not pricing or AIRnyc records. A calendar Jordan doesn't want VAs to see can be unticked under "Show on schedule".
 - **Web needs `TITAN_CALDAV_ENABLED=true` too**, not just the worker, since the page reads Titan directly.
+
+## Inbox review looks like an email (2026-10-01)
+
+- **Layout.** Mail-app style: message list on the left (sender, subject, preview, time, paperclip), the open message on the right. On a phone it's the list, then the message with a back button. `?id=` opens a message. `at` is its place in the list, so after it's filed the next one opens, like archiving. J/K move, A accepts the suggestion, / finds a job.
+- **Original HTML is kept** (`activities.body_html`, migration 0033) and shown in a sandboxed iframe.
+  - The HTML is cleaned with `sanitize-html` every time it's shown (`lib/mail/render.ts`): no scripts, forms, iframes, event handlers or `javascript:` links.
+  - The iframe has no `allow-scripts`, and a CSP inside it (`default-src 'none'`) blocks fetches. `allow-same-origin` without scripts only lets the page measure the email's height. Links open in a new tab.
+- **Remote pictures** load automatically only when the sender is a CRM contact. For anyone else there's a "Show pictures" bar, as in Gmail and Outlook, because they can be tracking pixels. `cid:` pictures (signature logos) weren't stored, so they're dropped.
+- **Plain-text emails** get clickable links, and the quoted thread ("On … wrote:", Outlook "From:/Sent:", `>` lines) folds behind "•••".
+- **Sender names.** Ingest used to save the From/To/Cc headers as the text "[object Object]". It now saves readable headers plus `raw.email` (`{from, to, cc}` with display names).
+- **AIRnyc mail.** Its HTML is never stored. Its subject is no longer saved in plain headers (before, the encrypted subject was also saved in plain text in `raw.headers.subject`; checked 2026-10-01, no production rows were affected).
+- **Backfill.** On connect, the mail worker finds older imports (last 120 days, non-AIRnyc) in INBOX by Message-ID and adds their HTML and sender names. Ones no longer in INBOX are marked `raw.backfill = "not-in-inbox"` and keep the text view.

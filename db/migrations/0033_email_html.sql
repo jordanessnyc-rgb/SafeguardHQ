@@ -1,0 +1,1 @@
+ALTER TABLE "activities" ADD COLUMN "body_html" text;

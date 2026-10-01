@@ -232,6 +232,13 @@
       "when": 1790562363117,
       "tag": "0032_titan_calendar_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790881192895,
+      "tag": "0033_email_html",
+      "breakpoints": true
     }
   ]
 }
