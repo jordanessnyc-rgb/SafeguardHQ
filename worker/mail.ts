@@ -84,6 +84,7 @@ const BACKFILL_BATCH = 100;
  * each by Message-ID in INBOX, re-parse, store. Ones no longer in INBOX are marked so they aren't
  * looked for again. AIRnyc (sensitive) mail is skipped: its HTML is never stored.
  */
+/** Returns how many rows it looked at (0 = nothing left to do). */
 export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<number> {
   const { db, cfg } = deps;
   const rows = await db
@@ -101,20 +102,30 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
     )
     .limit(BACKFILL_BATCH);
   if (!rows.length) return 0;
+  // Titan returned nothing for SEARCH HEADER Message-ID (checked 2026-10-01), so list the INBOX's
+  // envelopes for the period instead and match Message-IDs here.
   const found = new Map<string, Buffer>();
   const lock = await client.getMailboxLock(FOLDER);
   try {
-    for (const r of rows) {
-      if (!r.messageId || r.messageId.includes("@local>")) continue;
-      const uids = await client.search({ header: { "message-id": r.messageId } }, { uid: true });
-      if (!uids || !uids.length) continue;
-      const msg = await client.fetchOne(String(uids[0]), { source: true }, { uid: true });
-      if (msg && msg.source) found.set(r.id, msg.source as Buffer);
+    const since = new Date(Date.now() - (BACKFILL_DAYS + 2) * 86_400_000);
+    const uids = (await client.search({ since }, { uid: true })) || [];
+    const byMessageId = new Map<string, number>();
+    if (uids.length) {
+      for (const m of await client.fetchAll(uids, { envelope: true, uid: true }, { uid: true })) {
+        if (m.envelope?.messageId) byMessageId.set(m.envelope.messageId.trim(), m.uid);
+      }
     }
+    const want = new Map(rows.flatMap((r) => (r.messageId && byMessageId.has(r.messageId) ? [[byMessageId.get(r.messageId)!, r.id] as const] : [])));
+    if (want.size) {
+      for (const m of await client.fetchAll([...want.keys()], { source: true, uid: true }, { uid: true })) {
+        const id = want.get(m.uid);
+        if (id && m.source) found.set(id, m.source as Buffer);
+      }
+    }
+    deps.log?.(`[mail] backfill: ${uids.length} INBOX messages since ${since.toISOString().slice(0, 10)}, ${found.size} of ${rows.length} matched`);
   } finally {
     lock.release();
   }
-  let n = 0;
   for (const r of rows) {
     const src = found.get(r.id);
     const base = (r.raw ?? {}) as Record<string, unknown>;
@@ -124,9 +135,8 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
     }
     const m = await simpleParser(src);
     await db.update(s.activities).set({ bodyHtml: emailHtml(m), raw: { ...base, headers: emailHeaders(m), email: emailMeta(m) } }).where(eq(s.activities.id, r.id));
-    n++;
   }
-  return n;
+  return rows.length;
 }
 
 /** Runs forever: connect → catch up → IDLE → on close/error reconnect with backoff. */
@@ -154,9 +164,7 @@ export async function runMailListener(deps: Deps, signal?: AbortSignal): Promise
         .then(async () => {
           // Older imports: HTML + sender names, a batch at a time until none are left.
           for (let i = 0; i < 20; i++) {
-            const done = await backfillEmailHtml(client, deps);
-            if (done) log("[mail] backfilled HTML for", done, "emails");
-            if (done === 0) break;
+            if (!(await backfillEmailHtml(client, deps))) break;
           }
         })
         .catch((e) => log("[mail] backfill error", (e as Error).message));
