@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import MailComposer from "nodemailer/lib/mail-composer";
 import type { ImapFlow } from "imapflow";
 import * as s from "@/db/schema";
-import { loadState, processNew } from "@/worker/mail";
+import { backfillEmailHtml, loadState, processNew } from "@/worker/mail";
 import { mailHealthCheck } from "@/worker/health";
 import { hasTestDb, setupTestDb, type TestDb } from "../helpers/db";
 
@@ -93,5 +93,29 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
     await t.db.update(s.mailSyncState).set({ lastOkAt: new Date(), lastAlertAt: null, lastError: "IMAP authentication failed" });
     const sendSms = vi.fn(async () => ({ id: "AC2" }));
     expect(await mailHealthCheck(t.db, cfg.user, { sendSms } as never)).toBe("alerted");
+  });
+
+  it("backfill: finds older imports in INBOX by Message-ID and adds their HTML and sender names", async () => {
+    const html = (n: number) =>
+      new MailComposer({ from: `Pat ${n} <p${n}@example.com>`, to: cfg.user, subject: `old ${n}`, text: "hi", html: `<p>hello <b>${n}</b></p>`, messageId: `<old${n}@test>` }).compile().build();
+    const old = (n: number) => ({ type: "EMAIL_IN" as const, channelLine: cfg.user, externalId: `<old${n}@test>`, subject: `old ${n}`, body: "hi", raw: { headers: { from: "[object Object]" } }, occurredAt: new Date(Date.now() - 86_400_000) });
+    const [found, gone, airnyc] = await t.db.insert(s.activities).values([old(1), old(2), { ...old(3), sensitive: true }]).returning({ id: s.activities.id });
+    const source = await html(1);
+    const client = {
+      getMailboxLock: vi.fn(async () => ({ release: () => undefined })),
+      search: vi.fn(async () => [41, 42]),
+      fetchAll: vi.fn(async (uids: number[], q: { envelope?: boolean; source?: boolean }) =>
+        q.envelope ? [{ uid: 41, envelope: { messageId: "<old1@test>" } }, { uid: 42, envelope: { messageId: "<unrelated@test>" } }] : uids.includes(41) ? [{ uid: 41, source }] : [],
+      ),
+    } as unknown as ImapFlow;
+    expect(await backfillEmailHtml(client, deps())).toBe(2); // the AIRnyc row is never touched
+    expect(await backfillEmailHtml(client, deps())).toBe(0); // nothing left: no endless loop
+    const rows = new Map((await t.db.select().from(s.activities)).map((r) => [r.id, r]));
+    expect(rows.get(found.id)!.bodyHtml).toContain("<b>1</b>");
+    expect(rows.get(found.id)!.raw).toMatchObject({ email: { from: { name: "Pat 1", address: "p1@example.com" } } });
+    expect(rows.get(gone.id)!.raw).toMatchObject({ backfill: "not-in-inbox" });
+    expect(rows.get(gone.id)!.bodyHtml).toBeNull();
+    expect(rows.get(airnyc.id)!.bodyHtml).toBeNull();
+    expect(rows.get(airnyc.id)!.raw).not.toHaveProperty("email");
   });
 });
