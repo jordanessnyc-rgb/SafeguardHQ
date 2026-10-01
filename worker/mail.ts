@@ -84,8 +84,8 @@ const BACKFILL_BATCH = 100;
 /**
  * Emails imported before the CRM kept HTML and sender names get them from the mailbox once. Titan
  * returned nothing for SEARCH HEADER Message-ID (checked 2026-10-01), and most mail is moved out of
- * INBOX soon after it arrives, so: list every folder's envelopes since the cutoff (not Trash, Junk
- * or Drafts), match Message-IDs here, fetch those sources. Ones found nowhere are marked so they
+ * INBOX soon after it arrives (often to Trash), so: list every folder's envelopes since the cutoff
+ * (Trash and Junk included, read-only; not Drafts), match Message-IDs here, fetch those sources. Ones found nowhere are marked so they
  * aren't looked for again. AIRnyc (sensitive) mail is skipped: its HTML is never stored.
  * Returns how many rows it looked at (0 = nothing left to do).
  */
@@ -101,8 +101,8 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
         eq(s.activities.channelLine, cfg.user),
         eq(s.activities.sensitive, false),
         isNull(s.activities.bodyHtml),
-        // "not-in-inbox" was the first version's mark (INBOX only): those are looked for again.
-        sql`${s.activities.raw}->'email' is null and coalesce(${s.activities.raw}->>'backfill', '') <> 'not-found'`,
+        // Earlier versions' marks ("not-in-inbox": INBOX only; "not-found": no Trash/Junk) are retried.
+        sql`${s.activities.raw}->'email' is null and coalesce(${s.activities.raw}->>'backfill', '') <> 'missing'`,
         gte(s.activities.occurredAt, sql`now() - make_interval(days => ${BACKFILL_DAYS})`),
       ),
     )
@@ -111,7 +111,7 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
   const wanted = new Map(rows.flatMap((r) => (r.messageId ? [[r.messageId, r.id] as const] : [])));
   const found = new Map<string, Buffer>();
   const since = new Date(Date.now() - (BACKFILL_DAYS + 2) * 86_400_000);
-  const folders = (await client.list()).filter((f) => !f.flags.has("\\Noselect") && !["\\Trash", "\\Junk", "\\Drafts"].includes(f.specialUse ?? ""));
+  const folders = (await client.list()).filter((f) => !f.flags.has("\\Noselect") && f.specialUse !== "\\Drafts");
   let scanned = 0;
   for (const folder of folders) {
     if (found.size === wanted.size) break;
@@ -144,7 +144,7 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
     const src = found.get(r.id);
     const base = (r.raw ?? {}) as Record<string, unknown>;
     if (!src) {
-      await db.update(s.activities).set({ raw: { ...base, backfill: "not-found" } }).where(eq(s.activities.id, r.id));
+      await db.update(s.activities).set({ raw: { ...base, backfill: "missing" } }).where(eq(s.activities.id, r.id));
       continue;
     }
     const m = await simpleParser(src);
