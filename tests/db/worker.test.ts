@@ -102,14 +102,16 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
     // old1 was marked by the first (INBOX-only) version and must be looked for again.
     const [found, gone, airnyc] = await t.db
       .insert(s.activities)
-      .values([{ ...old(1), raw: { headers: {}, backfill: "not-in-inbox" } }, old(2), { ...old(3), sensitive: true }])
+      .values([{ ...old(1), raw: { headers: {}, backfill: "not-in-inbox" } }, old(2), { ...old(3), sensitive: true }, { ...old(4), raw: { headers: {}, backfill: "not-found" } }])
       .returning({ id: s.activities.id });
-    const source = await html(1);
-    // old1 was moved to "Clients" after it arrived; Trash is never read.
+    const deleted = (await t.db.select({ id: s.activities.id }).from(s.activities).where(eq(s.activities.externalId, "<old4@test>")))[0];
+    const sources: Record<number, Buffer> = { 41: await html(1), 9: await html(4) };
+    // old1 was moved to "Clients" after it arrived, old4 was deleted (Trash); Drafts is never read.
     const folders: Record<string, { uid: number; messageId: string }[]> = {
       INBOX: [{ uid: 42, messageId: "<unrelated@test>" }],
       Clients: [{ uid: 41, messageId: "<old1@test>" }],
-      Trash: [{ uid: 9, messageId: "<old2@test>" }],
+      Trash: [{ uid: 9, messageId: "<old4@test>" }],
+      Drafts: [{ uid: 3, messageId: "<old2@test>" }],
     };
     let open = "INBOX";
     const client = {
@@ -117,23 +119,25 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
         { path: "INBOX", flags: new Set(), specialUse: "\\Inbox" },
         { path: "Clients", flags: new Set() },
         { path: "Trash", flags: new Set(), specialUse: "\\Trash" },
+        { path: "Drafts", flags: new Set(), specialUse: "\\Drafts" },
         { path: "[Folders]", flags: new Set(["\\Noselect"]) },
       ]),
       getMailboxLock: vi.fn(async (path: string) => ((open = path), { release: () => undefined })),
       mailboxOpen: vi.fn(async (path: string) => void (open = path)),
       search: vi.fn(async () => folders[open].map((m) => m.uid)),
       fetchAll: vi.fn(async (uids: number[], q: { envelope?: boolean; source?: boolean }) =>
-        folders[open].filter((m) => uids.includes(m.uid)).map((m) => (q.envelope ? { uid: m.uid, envelope: { messageId: m.messageId } } : { uid: m.uid, source })),
+        folders[open].filter((m) => uids.includes(m.uid)).map((m) => (q.envelope ? { uid: m.uid, envelope: { messageId: m.messageId } } : { uid: m.uid, source: sources[m.uid] })),
       ),
     } as unknown as ImapFlow;
-    expect(await backfillEmailHtml(client, deps())).toBe(2); // the AIRnyc row is never touched
+    expect(await backfillEmailHtml(client, deps())).toBe(3); // the AIRnyc row is never touched
     expect(await backfillEmailHtml(client, deps())).toBe(0); // nothing left: no endless loop
     expect(open).toBe("INBOX"); // the listener's folder is selected again
-    expect(vi.mocked(client.getMailboxLock).mock.calls.map((c) => c[0])).not.toContain("Trash");
+    expect(vi.mocked(client.getMailboxLock).mock.calls.map((c) => c[0])).not.toContain("Drafts");
     const rows = new Map((await t.db.select().from(s.activities)).map((r) => [r.id, r]));
     expect(rows.get(found.id)!.bodyHtml).toContain("<b>1</b>");
     expect(rows.get(found.id)!.raw).toMatchObject({ email: { from: { name: "Pat 1", address: "p1@example.com" } } });
-    expect(rows.get(gone.id)!.raw).toMatchObject({ backfill: "not-found" });
+    expect(rows.get(gone.id)!.raw).toMatchObject({ backfill: "missing" });
+    expect(rows.get(deleted.id)!.bodyHtml).toContain("<b>4</b>");
     expect(rows.get(gone.id)!.bodyHtml).toBeNull();
     expect(rows.get(airnyc.id)!.bodyHtml).toBeNull();
     expect(rows.get(airnyc.id)!.raw).not.toHaveProperty("email");
