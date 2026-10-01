@@ -99,21 +99,41 @@ describe.skipIf(!hasTestDb)("worker mail loop", () => {
     const html = (n: number) =>
       new MailComposer({ from: `Pat ${n} <p${n}@example.com>`, to: cfg.user, subject: `old ${n}`, text: "hi", html: `<p>hello <b>${n}</b></p>`, messageId: `<old${n}@test>` }).compile().build();
     const old = (n: number) => ({ type: "EMAIL_IN" as const, channelLine: cfg.user, externalId: `<old${n}@test>`, subject: `old ${n}`, body: "hi", raw: { headers: { from: "[object Object]" } }, occurredAt: new Date(Date.now() - 86_400_000) });
-    const [found, gone, airnyc] = await t.db.insert(s.activities).values([old(1), old(2), { ...old(3), sensitive: true }]).returning({ id: s.activities.id });
+    // old1 was marked by the first (INBOX-only) version and must be looked for again.
+    const [found, gone, airnyc] = await t.db
+      .insert(s.activities)
+      .values([{ ...old(1), raw: { headers: {}, backfill: "not-in-inbox" } }, old(2), { ...old(3), sensitive: true }])
+      .returning({ id: s.activities.id });
     const source = await html(1);
+    // old1 was moved to "Clients" after it arrived; Trash is never read.
+    const folders: Record<string, { uid: number; messageId: string }[]> = {
+      INBOX: [{ uid: 42, messageId: "<unrelated@test>" }],
+      Clients: [{ uid: 41, messageId: "<old1@test>" }],
+      Trash: [{ uid: 9, messageId: "<old2@test>" }],
+    };
+    let open = "INBOX";
     const client = {
-      getMailboxLock: vi.fn(async () => ({ release: () => undefined })),
-      search: vi.fn(async () => [41, 42]),
+      list: vi.fn(async () => [
+        { path: "INBOX", flags: new Set(), specialUse: "\\Inbox" },
+        { path: "Clients", flags: new Set() },
+        { path: "Trash", flags: new Set(), specialUse: "\\Trash" },
+        { path: "[Folders]", flags: new Set(["\\Noselect"]) },
+      ]),
+      getMailboxLock: vi.fn(async (path: string) => ((open = path), { release: () => undefined })),
+      mailboxOpen: vi.fn(async (path: string) => void (open = path)),
+      search: vi.fn(async () => folders[open].map((m) => m.uid)),
       fetchAll: vi.fn(async (uids: number[], q: { envelope?: boolean; source?: boolean }) =>
-        q.envelope ? [{ uid: 41, envelope: { messageId: "<old1@test>" } }, { uid: 42, envelope: { messageId: "<unrelated@test>" } }] : uids.includes(41) ? [{ uid: 41, source }] : [],
+        folders[open].filter((m) => uids.includes(m.uid)).map((m) => (q.envelope ? { uid: m.uid, envelope: { messageId: m.messageId } } : { uid: m.uid, source })),
       ),
     } as unknown as ImapFlow;
     expect(await backfillEmailHtml(client, deps())).toBe(2); // the AIRnyc row is never touched
     expect(await backfillEmailHtml(client, deps())).toBe(0); // nothing left: no endless loop
+    expect(open).toBe("INBOX"); // the listener's folder is selected again
+    expect(vi.mocked(client.getMailboxLock).mock.calls.map((c) => c[0])).not.toContain("Trash");
     const rows = new Map((await t.db.select().from(s.activities)).map((r) => [r.id, r]));
     expect(rows.get(found.id)!.bodyHtml).toContain("<b>1</b>");
     expect(rows.get(found.id)!.raw).toMatchObject({ email: { from: { name: "Pat 1", address: "p1@example.com" } } });
-    expect(rows.get(gone.id)!.raw).toMatchObject({ backfill: "not-in-inbox" });
+    expect(rows.get(gone.id)!.raw).toMatchObject({ backfill: "not-found" });
     expect(rows.get(gone.id)!.bodyHtml).toBeNull();
     expect(rows.get(airnyc.id)!.bodyHtml).toBeNull();
     expect(rows.get(airnyc.id)!.raw).not.toHaveProperty("email");

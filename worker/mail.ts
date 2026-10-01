@@ -32,6 +32,8 @@ export async function loadState(db: Db, mailbox: string) {
 export async function processNew(client: ImapFlow, deps: Deps): Promise<number> {
   const { db, cfg } = deps;
   const state = await loadState(db, cfg.user);
+  // Another folder may be selected (the backfill visits them all); only INBOX's cursor is tracked here.
+  if (client.mailbox && client.mailbox.path && client.mailbox.path !== FOLDER) await client.mailboxOpen(FOLDER);
   const mailbox = client.mailbox;
   if (!mailbox) return 0;
   const uidValidity = String(mailbox.uidValidity);
@@ -80,13 +82,16 @@ const BACKFILL_DAYS = 120;
 const BACKFILL_BATCH = 100;
 
 /**
- * Emails imported before the CRM kept HTML and sender names get them from the mailbox once: find
- * each by Message-ID in INBOX, re-parse, store. Ones no longer in INBOX are marked so they aren't
- * looked for again. AIRnyc (sensitive) mail is skipped: its HTML is never stored.
+ * Emails imported before the CRM kept HTML and sender names get them from the mailbox once. Titan
+ * returned nothing for SEARCH HEADER Message-ID (checked 2026-10-01), and most mail is moved out of
+ * INBOX soon after it arrives, so: list every folder's envelopes since the cutoff (not Trash, Junk
+ * or Drafts), match Message-IDs here, fetch those sources. Ones found nowhere are marked so they
+ * aren't looked for again. AIRnyc (sensitive) mail is skipped: its HTML is never stored.
+ * Returns how many rows it looked at (0 = nothing left to do).
  */
-/** Returns how many rows it looked at (0 = nothing left to do). */
 export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<number> {
   const { db, cfg } = deps;
+  const log = deps.log ?? console.log;
   const rows = await db
     .select({ id: s.activities.id, messageId: s.activities.externalId, raw: s.activities.raw })
     .from(s.activities)
@@ -96,41 +101,50 @@ export async function backfillEmailHtml(client: ImapFlow, deps: Deps): Promise<n
         eq(s.activities.channelLine, cfg.user),
         eq(s.activities.sensitive, false),
         isNull(s.activities.bodyHtml),
-        sql`${s.activities.raw}->'email' is null and ${s.activities.raw}->>'backfill' is null`,
+        // "not-in-inbox" was the first version's mark (INBOX only): those are looked for again.
+        sql`${s.activities.raw}->'email' is null and coalesce(${s.activities.raw}->>'backfill', '') <> 'not-found'`,
         gte(s.activities.occurredAt, sql`now() - make_interval(days => ${BACKFILL_DAYS})`),
       ),
     )
     .limit(BACKFILL_BATCH);
   if (!rows.length) return 0;
-  // Titan returned nothing for SEARCH HEADER Message-ID (checked 2026-10-01), so list the INBOX's
-  // envelopes for the period instead and match Message-IDs here.
+  const wanted = new Map(rows.flatMap((r) => (r.messageId ? [[r.messageId, r.id] as const] : [])));
   const found = new Map<string, Buffer>();
-  const lock = await client.getMailboxLock(FOLDER);
-  try {
-    const since = new Date(Date.now() - (BACKFILL_DAYS + 2) * 86_400_000);
-    const uids = (await client.search({ since }, { uid: true })) || [];
-    const byMessageId = new Map<string, number>();
-    if (uids.length) {
+  const since = new Date(Date.now() - (BACKFILL_DAYS + 2) * 86_400_000);
+  const folders = (await client.list()).filter((f) => !f.flags.has("\\Noselect") && !["\\Trash", "\\Junk", "\\Drafts"].includes(f.specialUse ?? ""));
+  let scanned = 0;
+  for (const folder of folders) {
+    if (found.size === wanted.size) break;
+    const lock = await client.getMailboxLock(folder.path);
+    try {
+      const uids = (await client.search({ since }, { uid: true })) || [];
+      scanned += uids.length;
+      if (!uids.length) continue;
+      const hits = new Map<number, string>(); // uid → activity id
       for (const m of await client.fetchAll(uids, { envelope: true, uid: true }, { uid: true })) {
-        if (m.envelope?.messageId) byMessageId.set(m.envelope.messageId.trim(), m.uid);
+        const id = m.envelope?.messageId ? wanted.get(m.envelope.messageId.trim()) : undefined;
+        if (id && !found.has(id)) hits.set(m.uid, id);
       }
-    }
-    const want = new Map(rows.flatMap((r) => (r.messageId && byMessageId.has(r.messageId) ? [[byMessageId.get(r.messageId)!, r.id] as const] : [])));
-    if (want.size) {
-      for (const m of await client.fetchAll([...want.keys()], { source: true, uid: true }, { uid: true })) {
-        const id = want.get(m.uid);
-        if (id && m.source) found.set(id, m.source as Buffer);
+      if (hits.size) {
+        for (const m of await client.fetchAll([...hits.keys()], { source: true, uid: true }, { uid: true })) {
+          const id = hits.get(m.uid);
+          if (id && m.source) found.set(id, m.source as Buffer);
+        }
       }
+    } catch (e) {
+      log(`[mail] backfill: skipped folder ${folder.path}: ${(e as Error).message}`);
+    } finally {
+      lock.release();
     }
-    deps.log?.(`[mail] backfill: ${uids.length} INBOX messages since ${since.toISOString().slice(0, 10)}, ${found.size} of ${rows.length} matched`);
-  } finally {
-    lock.release();
   }
+  // The listener IDLEs on INBOX and processNew reads its UIDVALIDITY: put it back.
+  await client.mailboxOpen(FOLDER);
+  log(`[mail] backfill: ${scanned} messages in ${folders.length} folders since ${since.toISOString().slice(0, 10)}; ${found.size} of ${rows.length} matched`);
   for (const r of rows) {
     const src = found.get(r.id);
     const base = (r.raw ?? {}) as Record<string, unknown>;
     if (!src) {
-      await db.update(s.activities).set({ raw: { ...base, backfill: "not-in-inbox" } }).where(eq(s.activities.id, r.id));
+      await db.update(s.activities).set({ raw: { ...base, backfill: "not-found" } }).where(eq(s.activities.id, r.id));
       continue;
     }
     const m = await simpleParser(src);
