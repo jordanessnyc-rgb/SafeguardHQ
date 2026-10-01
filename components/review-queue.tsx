@@ -20,9 +20,9 @@ export function QueueTabs({ active, toFile, toApprove }: { active: "inbox" | "ou
     </Link>
   );
   return (
-    <nav aria-label="Review queue" className="inline-flex gap-1 rounded-lg bg-muted p-1">
-      {tab("inbox", "/inbox", "To file", toFile)}
-      {tab("outbox", "/outbox", "To approve", toApprove)}
+    <nav aria-label="Message sections" className="inline-flex gap-1 rounded-lg bg-muted p-1">
+      {tab("inbox", "/inbox", "Incoming", toFile)}
+      {tab("outbox", "/outbox", "Drafts & approvals", toApprove)}
     </nav>
   );
 }

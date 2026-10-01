@@ -15,7 +15,7 @@ import { QueueKeyboard, QueueTabs } from "@/components/review-queue";
 import { inboxReviewWhere } from "@/lib/queues";
 import { approveAndSend, discardMessage } from "../comms/actions";
 
-export const metadata = { title: "Outbox" };
+export const metadata = { title: "Messages · Drafts & approvals" };
 
 /** CLAUDE.md rule 6: nothing goes to a client until someone approves it here (unless auto-send is on). */
 export default async function OutboxPage() {
@@ -39,8 +39,8 @@ export default async function OutboxPage() {
   return (
     <>
       <PageHeader
-        title="Review queue"
-        description="Drafted texts and emails waiting for approval. Nothing reaches a client until you approve it here. Edit, then approve & send — or discard."
+        title="Messages"
+        description="Review saved drafts and failed sends. Approve & send delivers the message; Discard removes it from this queue."
         actions={<QueueTabs active="outbox" toFile={toFile} toApprove={pending.filter((p) => p.m.status === "DRAFT" || p.m.status === "FAILED").length} />}
       />
       {pending.length === 0 ? (
@@ -94,7 +94,7 @@ export default async function OutboxPage() {
           ]}
         />
       )}
-      <h2 className="mt-8 mb-2 font-semibold">Recently sent</h2>
+      <h2 className="mt-8 mb-2 font-semibold">Recently sent or discarded</h2>
       {recent.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing yet.</p>
       ) : (

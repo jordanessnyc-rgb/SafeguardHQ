@@ -1,5 +1,6 @@
 "use server";
 
+import { parseFieldInput } from "@/lib/jobs/field-input";
 import { aiEnabled } from "@/lib/ai/enabled";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -375,28 +376,10 @@ export async function makeSubCopy(jobId: string, docId: string, _prev: ActionSta
 // Field data (inputs for report drafting) and AI report drafts (SPEC §4.3, §9.5)
 // ---------------------------------------------------------------------------------------------
 
-const fieldSchema = z.object({
-  areas: z.string().optional().transform((v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean)),
-  observations: z.string().max(50_000).optional(),
-  readings: z
-    .string()
-    .optional()
-    .transform((v) =>
-      (v ?? "")
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map((l) => {
-          const [area, moisture, rh, temp, ...note] = l.split("|").map((x) => x.trim());
-          return { area, moisture: moisture || null, rh: rh || null, temp: temp || null, note: note.join(" | ") || null };
-        }),
-    ),
-});
-
 export async function saveFieldData(jobId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireStaff();
   const res = await safeAction(async () => {
-    const v = fieldSchema.parse(formObject(form));
+    const v = parseFieldInput(formObject(form));
     const values = { areas: v.areas, observations: v.observations ?? null, readings: v.readings };
     await user.db((tx) => tx.insert(s.fieldData).values({ jobId, ...values }).onConflictDoUpdate({ target: s.fieldData.jobId, set: values }));
     return { ok: true, message: "Field data saved." };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, type ReactNode } from "react";
+import { cloneElement, isValidElement, useActionState, useEffect, useId, type ReactElement, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
@@ -63,11 +63,19 @@ export function SubmitButton({
 }
 
 export function Field({ label, htmlFor, children, hint, className }: { label: string; htmlFor?: string; children: ReactNode; hint?: ReactNode; className?: string }) {
+  const generated = useId();
+  const id = htmlFor ?? `field-${generated}`;
+  const control = isValidElement(children) ? children as ReactElement<{ id?: string; "aria-describedby"?: string }> : null;
+  const controlId = control?.props.id ?? id;
+  const hintId = `${controlId}-hint`;
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label htmlFor={htmlFor}>{label}</Label>
-      {children}
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <Label htmlFor={controlId}>{label}</Label>
+      {control ? cloneElement(control, {
+        id: controlId,
+        "aria-describedby": [control.props["aria-describedby"], hint ? hintId : undefined].filter(Boolean).join(" ") || undefined,
+      }) : children}
+      {hint && <p id={hintId} className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

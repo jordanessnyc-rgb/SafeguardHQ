@@ -2,6 +2,8 @@ import { aiEnabled } from "@/lib/ai/enabled";
 import { invoiceStatus } from "@/lib/labels";
 import { ConfirmSubmit } from "@/components/confirm-submit";
 import Link from "next/link";
+import { jobNextStep, nextJobStage } from "@/lib/jobs/next-step";
+import { FieldReadings } from "@/components/field-readings";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { FolderOpen, MessageSquare } from "lucide-react";
@@ -12,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ActionForm, Field, SubmitButton } from "@/components/forms";
+import { ActionForm, SubmitButton } from "@/components/forms";
 import { PageHeader } from "@/components/page-header";
 import { Status } from "@/components/status";
 import { TaskList } from "@/components/task-list";
@@ -42,7 +44,6 @@ import {
   refreshJobInvoice,
   refreshSignature,
   removeFieldPhoto,
-  saveFieldData,
   selectSubQuote,
   sendForSignature,
   setDocumentStatus,
@@ -50,7 +51,7 @@ import {
   updateJob,
 } from "../actions";
 import { JobFields } from "../job-fields";
-import { JobActions } from "./job-actions";
+import { JobNextStep } from "@/components/job-next-step";
 import { QuoteEditor } from "./quote-editor";
 
 const SAMPLE_TYPES = s.sampleTypeEnum.enumValues;
@@ -137,10 +138,10 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
   const tab: Tab = tabParam === "money" && !isOwner ? "overview" : (tabParam ?? "overview");
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: "overview", label: "Overview" },
-    { key: "field", label: "Field & samples", count: samples.length },
-    { key: "documents", label: "Documents", count: documents.length },
-    { key: "messages", label: "Messages & notes", count: activities.length },
-    ...(isOwner ? [{ key: "money" as const, label: "Money" }] : []),
+    { key: "field", label: "Visit & samples", count: samples.length },
+    { key: "documents", label: "Report & documents", count: documents.length },
+    { key: "messages", label: "Activity", count: activities.length },
+    ...(isOwner ? [{ key: "money" as const, label: "Proposal & billing" }] : []),
     { key: "edit", label: "Edit details" },
   ];
 
@@ -148,7 +149,8 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
   const openStages = stages.filter((st) => !st.isTerminal);
   const currentIdx = openStages.findIndex((st) => st.key === job.stage);
   const doneThrough = current?.isTerminal && job.stage !== "LOST" ? openStages.length : currentIdx;
-  const nextStage = current?.isTerminal ? undefined : stages.find((st) => st.position > (current?.position ?? 0) && !st.isTerminal);
+  const nextStage = nextJobStage(stages, job.stage);
+  const nextStep = jobNextStep(job.stage, isOwner);
   const stageOptions = stages.filter((st) => st.key !== job.stage).map((st) => ({ key: st.key, name: st.name, blocked: blockers.get(st.key) ?? [] }));
   const later = openStages.slice(Math.max(currentIdx, 0) + 1);
   const needs = [
@@ -169,14 +171,14 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
       <nav aria-label="Breadcrumb" className="mb-2 flex gap-1.5 text-xs text-muted-foreground">
         <Link href="/jobs" className="hover:underline">Jobs</Link>
         <span aria-hidden>/</span>
-        <Link href={`/jobs?pipeline=${job.pipelineKey}`} className="hover:underline">{titleCase(job.pipelineKey)}</Link>
+        <Link href={`/jobs?view=board&pipeline=${job.pipelineKey}`} className="hover:underline">{titleCase(job.pipelineKey)}</Link>
         <span aria-hidden>/</span>
         <span className="font-mono">{job.jobNumber}</span>
       </nav>
       <PageHeader
         title={
           <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            {label(SERVICE_LABELS, job.serviceCode)}
+            {property?.addressLine ?? label(SERVICE_LABELS, job.serviceCode)}{property?.unit ? ` · Unit ${property.unit}` : ""}
             <span className="font-mono text-base font-normal text-muted-foreground">{job.jobNumber}</span>
           </span>
         }
@@ -194,7 +196,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
               </Link>
             )}
             {org && <Link className="hover:underline" href={`/organizations/${org.id}`}>· {org.name}</Link>}
-            <span>· {label(BRAND_LABELS, job.brand)}</span>
+            <span>· {label(SERVICE_LABELS, job.serviceCode)} · {label(BRAND_LABELS, job.brand)}</span>
             {job.title && <span>· {job.title}</span>}
           </span>
         }
@@ -214,18 +216,16 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                 <MessageSquare /> Message client
               </Link>
             )}
-            <JobActions
-              jobId={id}
-              jobNumber={job.jobNumber}
-              next={nextStage ? { key: nextStage.key, name: nextStage.name, blocked: blockers.get(nextStage.key) ?? [] } : null}
-              stages={stageOptions}
-              canMarkLost={!current?.isTerminal}
-            />
+
           </div>
         }
       />
 
-      <section aria-label="Pipeline progress" className="mb-4 rounded-xl border bg-card p-4">
+      {tab === "overview" && <JobNextStep jobId={id} jobNumber={job.jobNumber} step={nextStep} next={nextStage ? { key: nextStage.key, name: nextStage.name, blocked: blockers.get(nextStage.key) ?? [] } : null} stages={stageOptions} canMarkLost={!current?.isTerminal} />}
+
+      <details className="mb-4 rounded-xl border bg-card p-4">
+        <summary className="cursor-pointer text-sm font-medium">Detailed workflow <span className="ml-2 font-normal text-muted-foreground">{current?.name ?? job.stage}{nextStage ? ` → ${nextStage.name}` : ""}</span></summary>
+        <section aria-label="Pipeline progress" className="mt-4">
         {current?.isTerminal && (
           <p className="mb-3 text-sm">
             <Badge variant={job.stage === "LOST" ? "destructive" : "secondary"}>{current.name}</Badge>
@@ -256,7 +256,8 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
             ))}
           </div>
         )}
-      </section>
+        </section>
+      </details>
 
       <nav aria-label="Job sections" className="mb-4 flex gap-1 overflow-x-auto border-b">
         {tabs.map((t) => (
@@ -305,14 +306,15 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                 )}
                 {fact("Scheduled", fmtDate(job.scheduledAt, true))}
                 {fact("Field complete", fmtDate(job.fieldCompletedAt))}
-                {fact("Samples", samples.length ? `${samples.length} (${submitted} submitted)` : "None yet", <Link className="hover:underline" href={`/jobs/${id}?tab=field`}>Field &amp; samples →</Link>)}
-                {fact("Delivered", fmtDate(job.deliveredAt), finalReports ? "Final report on file" : "No final report yet")}
+                {fact("Samples", samples.length ? `${samples.length} (${submitted} submitted)` : "None yet", <Link className="hover:underline" href={`/jobs/${id}?tab=field`}>Visit &amp; samples →</Link>)}
+                {fact("Report", documents.some((d) => d.kind === "REPORT" && d.status === "SENT") ? "Marked sent" : finalReports ? "Final report on file" : "Not final yet", isOwner && money?.held && !financials?.reportReleasedAt ? "Held until payment — do not send" : "Document status; confirm actual delivery in activity")}
+                {job.deliveredAt && fact("Workflow delivery date", fmtDate(job.deliveredAt), "Recorded when status changed to Delivered")}
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Latest activity</CardTitle>
-                <Link href={`/jobs/${id}?tab=messages`} className="text-sm font-medium text-primary hover:underline">All messages &amp; notes</Link>
+                <Link href={`/jobs/${id}?tab=messages`} className="text-sm font-medium text-primary hover:underline">All activity</Link>
               </CardHeader>
               <CardContent>
                 <Timeline items={activities.slice(0, 5)} viewerIsOwner={isOwner} />
@@ -331,7 +333,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
             {isOwner && (
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle>Money</CardTitle>
+                  <CardTitle>Proposal &amp; billing</CardTitle>
                   <Badge variant="outline">Owner only</Badge>
                 </CardHeader>
                 <CardContent className="space-y-1.5 text-sm">
@@ -339,7 +341,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
                   <div className="flex justify-between"><span className="text-muted-foreground">Gross margin</span><span className="font-semibold tabular-nums">{financials?.grossMargin ? usd(financials.grossMargin) : "—"}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Invoice</span><span>{financials?.freshbooksInvoiceId ? invoiceStatus(financials.invoiceStatus) : "Not yet"}</span></div>
                   {money?.held && !financials?.reportReleasedAt && <p className="text-xs text-amber-700 dark:text-amber-400">Report held until paid.</p>}
-                  <Link href={`/jobs/${id}?tab=money`} className="block pt-1 font-medium text-primary hover:underline">Quote, costs &amp; invoice →</Link>
+                  <Link href={`/jobs/${id}?tab=money`} className="block pt-1 font-medium text-primary hover:underline">Proposal, costs &amp; invoice →</Link>
                 </CardContent>
               </Card>
             )}
@@ -354,18 +356,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
               <CardTitle>Field data</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 lg:grid-cols-2">
-              <ActionForm action={saveFieldData.bind(null, id)} className="space-y-2">
-                <Field label="Areas inspected" hint="Comma-separated, e.g. Bathroom, Bedroom 2, Hall closet">
-                  <Input name="areas" defaultValue={field?.areas.join(", ") ?? ""} />
-                </Field>
-                <Field label="Observations">
-                  <Textarea name="observations" rows={5} defaultValue={field?.observations ?? ""} placeholder="What you saw, area by area." />
-                </Field>
-                <Field label="Readings" hint="One per line: Area | moisture % | RH % | temp °F | note">
-                  <Textarea name="readings" rows={3} defaultValue={(field?.readings ?? []).map((r) => [r.area, r.moisture, r.rh, r.temp, r.note].map((x) => x ?? "").join(" | ").replace(/( \| )+$/, "")).join("\n")} />
-                </Field>
-                <SubmitButton size="sm" variant="secondary">Save field data</SubmitButton>
-              </ActionForm>
+              <FieldReadings jobId={id} initial={{ areas: field?.areas ?? [], observations: field?.observations ?? "", readings: field?.readings ?? [] }} />
               <div className="space-y-3">
                 <div className="text-sm font-medium">Photos ({field?.photos.length ?? 0})</div>
                 {(field?.photos ?? []).length > 0 && (
@@ -550,7 +541,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
       {tab === "money" && isOwner && (
         <Card className="border-primary/40">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Money</CardTitle>
+            <CardTitle>Proposal &amp; billing</CardTitle>
             <Badge variant="outline">Owner only</Badge>
           </CardHeader>
           <CardContent>

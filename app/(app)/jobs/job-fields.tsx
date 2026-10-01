@@ -33,7 +33,8 @@ type Job = Partial<{
 
 export function JobFields({ job = {}, options, editing = false }: { job?: Job; options: JobOptions; editing?: boolean }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="space-y-5">
+    <div className="grid gap-4 sm:grid-cols-2">
       {!editing && (
         <Field label="Service">
           <NativeSelect name="serviceCode" defaultValue={job.serviceCode ?? "MOLD_ASSESS"} required>
@@ -43,17 +44,28 @@ export function JobFields({ job = {}, options, editing = false }: { job?: Job; o
           </NativeSelect>
         </Field>
       )}
-      <Field label="Brand">
-        <NativeSelect name="brand" defaultValue={job.brand ?? "ESS"}>
-          {Object.entries(BRAND_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </NativeSelect>
-      </Field>
       <ClientPickers
         properties={options.properties}
         orgs={options.orgs.map((o) => ({ id: o.id, label: o.name }))}
         contacts={options.contacts}
         defaults={{ propertyId: job.propertyId, clientOrgId: job.clientOrgId, clientContactId: job.clientContactId }}
+        labels={{ org: "Client company (optional)", contact: "Client / requesting person" }}
       />
+      <Field label="Short description" className="sm:col-span-2">
+        <Input name="title" defaultValue={job.title ?? ""} placeholder="e.g. Bathroom + bedroom 2 mold, tenant complaint" />
+      </Field>
+      <Field label="Notes (optional)" className="sm:col-span-2">
+        <Textarea name="notes" rows={3} defaultValue={job.notes ?? ""} />
+      </Field>
+    </div>
+    <details open={editing || undefined} className="rounded-lg border">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Assignment & additional details <span className="ml-1 font-normal text-muted-foreground">Optional</span></summary>
+      <div className="grid gap-4 border-t p-4 sm:grid-cols-2">
+      <Field label="Brand">
+        <NativeSelect name="brand" defaultValue={job.brand ?? "ESS"}>
+          {Object.entries(BRAND_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </NativeSelect>
+      </Field>
       <Field label="Priority">
         <NativeSelect name="priority" defaultValue={job.priority ?? "NORMAL"}>
           {["LOW", "NORMAL", "HIGH", "URGENT"].map((p) => <option key={p} value={p}>{p.charAt(0) + p.slice(1).toLowerCase()}</option>)}
@@ -88,12 +100,8 @@ export function JobFields({ job = {}, options, editing = false }: { job?: Job; o
           <Input name="nextCycleDue" type="date" defaultValue={job.nextCycleDue ?? ""} />
         </Field>
       )}
-      <Field label="Short description" className="sm:col-span-2">
-        <Input name="title" defaultValue={job.title ?? ""} placeholder="e.g. Bathroom + bedroom 2 mold, tenant complaint" />
-      </Field>
-      <Field label="Notes" className="sm:col-span-2">
-        <Textarea name="notes" rows={3} defaultValue={job.notes ?? ""} />
-      </Field>
+      </div>
+    </details>
     </div>
   );
 }

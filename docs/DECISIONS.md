@@ -508,3 +508,34 @@ changes worth knowing:
 - **Sender names.** Ingest used to save the From/To/Cc headers as the text "[object Object]". It now saves readable headers plus `raw.email` (`{from, to, cc}` with display names).
 - **AIRnyc mail.** Its HTML is never stored. Its subject is no longer saved in plain headers (before, the encrypted subject was also saved in plain text in `raw.headers.subject`; checked 2026-10-01, no production rows were affected).
 - **Backfill.** On connect, the mail worker finds older imports (last 120 days, non-AIRnyc) in INBOX by Message-ID and adds their HTML and sender names. Ones no longer in INBOX are marked `raw.backfill = "not-in-inbox"` and keep the text view.
+
+## 2026-10-01 — ESS usability pass
+
+- Daily navigation now starts with Today, Jobs, Clients & properties, Messages, and Calendar. AIRnyc
+  and Bids remain workspaces; additional tools and owner administration are expandable groups.
+  Existing routes and role restrictions remain intact. People/Companies/Properties have shared tabs.
+- Jobs defaults to List. Board is explicit (`view=board`), resets list-only filters, and paging keeps
+  Mine and active filters. Job rows lead with address/unit, including on phones, and show the next task.
+- Intake separates the request from optional assignment and administrative fields. Closed details
+  still submit their controls. Client pickers keep inline creation and inference; a cross-company
+  contact produces a nonblocking warning rather than silently changing valid relationships.
+- Overview has a next-task panel. Doing the task and recording its status are separate. Blockers
+  appear in visible text with a link to their fix. Close is offered after Paid/Agency Response;
+  Lost and Next Cycle Scheduled remain deliberate choices. No new stage rules or migrations.
+- Workflow history is collapsible. Existing tab keys remain unchanged while labels become Visit &
+  samples, Report & documents, Activity, and Proposal & billing. The financial Reports route is
+  labeled Business analytics. Messages uses Incoming and Drafts & approvals consistently.
+- Field readings use labeled rows and areas use one line per area. The server validates structured
+  JSON into the existing data shapes; legacy delimiter forms still work. Commas and pipes in area
+  names/notes are preserved. No schema change or data migration.
+- Field labels associate with standard controls and searchable pickers; hints use aria-describedby.
+- Today prioritizes the attention queue above totals. Lab/invoice attention items link directly to
+  the relevant job tab. The task badge uses the same New York calendar-day cutoff as the dashboard.
+- Report copy distinguishes document status from the workflow delivery timestamp. Delivered still
+  triggers the existing invoice processing, including invoice emails when the existing automatic
+  invoice-sending setting is enabled. This pass does not change that business rule or approval settings.
+- Validation: full ESLint; production build (including TypeScript); 134 tests passed, 170 skipped.
+  Database suites requiring TEST_DATABASE_URL were unavailable. An isolated browser fixture used
+  real UI components with fictional data and stubbed actions to inspect desktop/phone layouts,
+  intake inference, label association, blocked-step links, and adding/removing reading rows.
+  The fixture is outside the app and does not introduce an authentication bypass or production route.

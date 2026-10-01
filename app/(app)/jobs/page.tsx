@@ -8,7 +8,8 @@ import { FilterForm } from "@/components/filter-form";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, PageHeader } from "@/components/page-header";
 import { Pager } from "@/components/pager";
-import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
+import { PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
+import { jobsHref, jobsView } from "@/lib/jobs/list-state";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { label, personName, SERVICE_LABELS, usd } from "@/lib/labels";
@@ -46,13 +47,13 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const sp = await searchParams;
   const str = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim() : "");
   const q = str(sp.q);
-  // Filters are list-only; a link that carries one (e.g. from a dashboard tile) opens the list.
+  // Jobs opens as a list; Board is an explicit choice.
   const stageFilter = str(sp.stage).split(",").filter(Boolean);
   const service = s.jobs.serviceCode.enumValues.find((v) => v === str(sp.service)) ?? "";
   const staleOnly = sp.stale === "1";
   const status = STATUSES.find(([k]) => k === sp.status)?.[0] ?? "open";
   const sort = SORTS.some(([k]) => k === sp.sort) ? String(sp.sort) : "newest";
-  const view = sp.view === "list" || stageFilter.length || service || staleOnly || sp.status ? "list" : "board";
+  const view = jobsView(sp);
   const mine = sp.mine === "1";
   const bsort = BOARD_SORTS.find(([k]) => k === sp.bsort)?.[0] ?? "newest";
   const isOwner = user.role === "OWNER";
@@ -136,10 +137,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   else if (bsort === "value") boardCards.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, status: status === "open" ? undefined : status, sort: sort === "newest" ? undefined : sort };
   const qs = (o: Record<string, string | undefined>) => {
-    const p = new URLSearchParams();
-    const merged = { view, pipeline: pipelineKey, q: q || undefined, mine: mine ? "1" : undefined, bsort: view === "board" && bsort !== "newest" ? bsort : undefined, ...(view === "list" ? listParams : {}), ...o };
-    Object.entries(merged).forEach(([k, v]) => v && p.set(k, v));
-    return `/jobs?${p}`;
+    return jobsHref({ view, pipeline: pipelineKey, q: q || undefined, mine: mine ? "1" : undefined, bsort: view === "board" && bsort !== "newest" ? bsort : undefined, ...(view === "list" ? listParams : {}) }, o);
   };
 
   const stageOptions = [...new Map(pipelines.flatMap((p) => p.stages.map((st) => [st.key, st] as const))).values()].sort((a, b) => a.position - b.position);
@@ -148,16 +146,17 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   if (sort === "days") listRows.sort((a, b) => b.c.daysInStage - a.c.daysInStage);
   else if (sort === "number") listRows.sort((a, b) => a.c.jobNumber.localeCompare(b.c.jobNumber));
   else if (sort === "stage") listRows.sort((a, b) => (stageRank.get(a.c.stage) ?? 99) - (stageRank.get(b.c.stage) ?? 99));
-  const filtered = Boolean(stageFilter.length || service || staleOnly || q || status !== "open");
+  const filtered = Boolean(stageFilter.length || service || staleOnly || q || mine || status !== "open");
   const win = pageWindow(listRows.length, pageFrom(sp.page));
   const pageRows = listRows.slice(win.offset, win.offset + PAGE_SIZE);
-  const pageHref = (page: number) => listHref("/jobs", { view: "list", q, ...listParams, page });
+  const pageHref = (page: number) => qs({ view: "list", page: String(page) });
   const openOnBoard = view === "board" ? rows.filter((r) => !stageByKey.get(`${r.job.pipelineKey}:${r.job.stage}`)?.isTerminal).length : 0;
 
   return (
     <>
       <PageHeader
         title="Jobs"
+        description="Find a job by address or client, then see what needs to happen next."
         actions={
           <>
             <div className="flex rounded-lg border p-0.5">
@@ -247,11 +246,11 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Job</TableHead>
-              <TableHead className="hidden md:table-cell">Property</TableHead>
+              <TableHead>Job & property</TableHead>
               <TableHead className="hidden sm:table-cell">Client</TableHead>
               <TableHead>Stage</TableHead>
-              <TableHead className="text-right">Days</TableHead>
+              <TableHead className="hidden lg:table-cell">Next task</TableHead>
+              <TableHead className="text-right">Days in stage</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -259,14 +258,16 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
               return (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Link href={`/jobs/${c.id}`} className="font-mono text-xs hover:underline">{c.jobNumber}</Link>
-                    <div className="text-xs">{c.service}</div>
+                    <Link href={`/jobs/${c.id}`} className="block font-medium hover:underline">{c.address ?? c.jobNumber}</Link>
+                    <div className="text-xs text-muted-foreground">{c.service} · {c.jobNumber}</div>
+                    <div className="mt-1 text-xs sm:hidden">{c.client ?? "No client linked"}</div>
+                    {c.nextTask && <div className="mt-1 text-xs lg:hidden">Next: {c.nextTask.title}</div>}
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">{c.address ?? "—"}</TableCell>
                   <TableCell className="hidden sm:table-cell">{c.client ?? "—"}</TableCell>
                   <TableCell>
                     <Badge variant={c.stale ? "destructive" : "secondary"}>{stageByKey.get(`${r.job.pipelineKey}:${r.job.stage}`)?.name ?? r.job.stage}</Badge>
                   </TableCell>
+                  <TableCell className="hidden max-w-64 lg:table-cell">{c.nextTask ? <><div className="truncate text-sm">{c.nextTask.title}</div><div className="text-xs text-muted-foreground">{c.nextTask.due ?? "No due date"}</div></> : <span className="text-xs text-muted-foreground">No task set</span>}</TableCell>
                   <TableCell className="text-right">{c.daysInStage}</TableCell>
                 </TableRow>
               );
