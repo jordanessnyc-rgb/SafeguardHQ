@@ -1,4 +1,7 @@
 import "server-only";
+import { connection } from "next/server";
+import { loginRequired } from "./access-mode";
+import { openAccessOwner } from "./open-access";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
@@ -13,11 +16,22 @@ export type CurrentUser = {
   role: Role | null;
   fullName: string | null;
   claims: JwtClaims;
+  openAccess?: boolean;
   /** Run queries as this user — Postgres RLS applies. The only way request code touches the DB. */
   db: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>;
 };
 
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+  if (!loginRequired()) {
+    await connection(); // Open-access pages must be rendered per request, never at build time.
+    const profile = await openAccessOwner(adminDb());
+    const claims: JwtClaims = { sub: profile.userId, role: "authenticated", email: profile.email, open_access: true };
+    return {
+      id: profile.userId, email: profile.email, role: profile.role, fullName: profile.fullName,
+      claims, openAccess: true,
+      db: <T>(fn: (tx: Tx) => Promise<T>) => runAsUser(adminDb(), claims, fn),
+    };
+  }
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase.auth.getClaims();
   const claims = data?.claims as JwtClaims | undefined;

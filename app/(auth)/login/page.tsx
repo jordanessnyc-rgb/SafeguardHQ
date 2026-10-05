@@ -1,9 +1,12 @@
+import { redirect } from "next/navigation";
+import { loginRequired } from "@/lib/auth/access-mode";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Sign in · ESS CRM" };
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
+  if (!loginRequired()) redirect("/");
   const sp = await searchParams;
   const next = typeof sp.next === "string" && sp.next.startsWith("/") ? sp.next : "/";
   const failed = sp.error === "link";

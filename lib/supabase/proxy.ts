@@ -1,3 +1,4 @@
+import { loginRequired } from "@/lib/auth/access-mode";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -5,6 +6,11 @@ const PUBLIC_PATHS = ["/login", "/auth/", "/api/webhooks/", "/no-access", "/api/
 
 /** Refreshes the Supabase session cookie and bounces signed-out users to /login. */
 export async function updateSession(request: NextRequest) {
+  if (!loginRequired()) {
+    const response = NextResponse.next({ request });
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  }
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

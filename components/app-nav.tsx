@@ -87,7 +87,7 @@ export function NewMenu({ className, iconOnly }: { className?: string; iconOnly?
   );
 }
 
-function Identity({ name, role }: { name: string; role: string }) {
+function Identity({ name, role, canSignOut = true }: { name: string; role: string; canSignOut?: boolean }) {
   const path = usePathname();
   const initials = name
     .split(/[\s@.]+/)
@@ -112,17 +112,17 @@ function Identity({ name, role }: { name: string; role: string }) {
       >
         <Settings className="size-4" />
       </Link>
-      <form action="/auth/signout" method="post">
+      {canSignOut && <form action="/auth/signout" method="post">
         <button aria-label="Sign out" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">
           <LogOut className="size-4" />
         </button>
-      </form>
+      </form>}
     </div>
   );
 }
 
 /** Desktop sidebar: brand, ⌘K search, + New, grouped links with live counts, and the signed-in person. */
-export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string }) {
+export function SideNav({ isOwner, ai, counts, name, role, canSignOut = true }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string; canSignOut?: boolean }) {
   return (
     <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-sidebar p-3 md:flex">
       <Link href="/" className="flex items-center gap-2.5 px-1.5 pt-1">
@@ -139,7 +139,7 @@ export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean;
       <div className="flex-1">
         <NavLinks isOwner={isOwner} ai={ai} counts={counts} />
       </div>
-      <Identity name={name} role={role} />
+      <Identity name={name} role={role} canSignOut={canSignOut} />
     </aside>
   );
 }
@@ -152,7 +152,7 @@ const TABS = [
 ];
 
 /** Phone layout: a slim top bar plus a bottom tab bar; everything else lives under "More". */
-export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string }) {
+export function MobileNav({ isOwner, ai, counts, name, role, canSignOut = true }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string; canSignOut?: boolean }) {
   const path = usePathname();
   const [more, setMore] = useState(false);
   const queue = counts.inbox + counts.outbox;
@@ -201,7 +201,7 @@ export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolea
             <SheetTitle>ESS CRM</SheetTitle>
           </SheetHeader>
           <NavLinks isOwner={isOwner} ai={ai} counts={counts} onNavigate={() => setMore(false)} />
-          <Identity name={name} role={role} />
+          <Identity name={name} role={role} canSignOut={canSignOut} />
         </SheetContent>
       </Sheet>
     </>

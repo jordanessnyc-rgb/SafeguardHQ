@@ -20,7 +20,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     const [outbox] = await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING]));
     return { tasks: tasks.n, inbox: inbox.n, outbox: outbox.n };
   });
-  const nav = { isOwner: user.role === "OWNER", ai: aiEnabled(), counts, name: user.fullName ?? user.email, role: user.role === "OWNER" ? "Owner" : "VA" };
+  const nav = { isOwner: user.role === "OWNER", ai: aiEnabled(), counts, name: user.fullName ?? user.email, role: user.openAccess ? "Owner · Open access" : user.role === "OWNER" ? "Owner" : "VA", canSignOut: !user.openAccess };
   return (
     <div className="flex min-h-svh">
       <SideNav {...nav} />
