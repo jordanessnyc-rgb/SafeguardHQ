@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { loginRequired } from "./access-mode";
-import { openAccessOwner } from "./open-access";
+import { openAccessOwner, OpenAccessSetupError } from "./open-access";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
@@ -24,7 +24,11 @@ export type CurrentUser = {
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (!loginRequired()) {
     await connection(); // Open-access pages must be rendered per request, never at build time.
-    const profile = await openAccessOwner(adminDb());
+    if (!process.env.DATABASE_URL) throw new OpenAccessSetupError("The database connection is not configured for this deployment. Add DATABASE_URL to its Vercel environment and redeploy.");
+    const profile = await openAccessOwner(adminDb()).catch((error: unknown) => {
+      if (error instanceof OpenAccessSetupError) throw error;
+      throw new OpenAccessSetupError("The CRM database could not be reached. Check this deployment’s DATABASE_URL and database migrations.");
+    });
     const claims: JwtClaims = { sub: profile.userId, role: "authenticated", email: profile.email, open_access: true };
     return {
       id: profile.userId, email: profile.email, role: profile.role, fullName: profile.fullName,
