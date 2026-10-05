@@ -508,3 +508,61 @@ changes worth knowing:
 - **Sender names.** Ingest used to save the From/To/Cc headers as the text "[object Object]". It now saves readable headers plus `raw.email` (`{from, to, cc}` with display names).
 - **AIRnyc mail.** Its HTML is never stored. Its subject is no longer saved in plain headers (before, the encrypted subject was also saved in plain text in `raw.headers.subject`; checked 2026-10-01, no production rows were affected).
 - **Backfill.** On connect, the mail worker finds older imports (last 120 days, non-AIRnyc) in the mailbox by Message-ID. It lists envelopes since the cutoff in every folder except Drafts, Trash and Junk included (mail is usually moved out of INBOX soon after it arrives, often to Trash) and matches them here, because Titan returned nothing for `SEARCH HEADER Message-ID`. INBOX is reselected afterwards. It adds their HTML and sender names. Ones not found anywhere are marked `raw.backfill = "missing"` and keep the text view.
+
+## 2026-10-01 — ESS usability pass
+
+- Daily navigation now starts with Today, Jobs, Clients & properties, Messages, and Calendar. AIRnyc
+  and Bids remain workspaces; additional tools and owner administration are expandable groups.
+  Existing routes and role restrictions remain intact. People/Companies/Properties have shared tabs.
+- Jobs defaults to List. Board is explicit (`view=board`), resets list-only filters, and paging keeps
+  Mine and active filters. Job rows lead with address/unit, including on phones, and show the next task.
+- Intake separates the request from optional assignment and administrative fields. Closed details
+  still submit their controls. Client pickers keep inline creation and inference; a cross-company
+  contact produces a nonblocking warning rather than silently changing valid relationships.
+- Overview has a next-task panel. Doing the task and recording its status are separate. Blockers
+  appear in visible text with a link to their fix. Close is offered after Paid/Agency Response;
+  Lost and Next Cycle Scheduled remain deliberate choices. No new stage rules or migrations.
+- Workflow history is collapsible. Existing tab keys remain unchanged while labels become Visit &
+  samples, Report & documents, Activity, and Proposal & billing. The financial Reports route is
+  labeled Business analytics. Messages uses Incoming and Drafts & approvals consistently.
+- Field readings use labeled rows and areas use one line per area. The server validates structured
+  JSON into the existing data shapes; legacy delimiter forms still work. Commas and pipes in area
+  names/notes are preserved. No schema change or data migration.
+- Field labels associate with standard controls and searchable pickers; hints use aria-describedby.
+- Today prioritizes the attention queue above totals. Lab/invoice attention items link directly to
+  the relevant job tab. The task badge uses the same New York calendar-day cutoff as the dashboard.
+- Report copy distinguishes document status from the workflow delivery timestamp. Delivered still
+  triggers the existing invoice processing, including invoice emails when the existing automatic
+  invoice-sending setting is enabled. This pass does not change that business rule or approval settings.
+- Validation: full ESLint; production build (including TypeScript); 134 tests passed, 170 skipped.
+  Database suites requiring TEST_DATABASE_URL were unavailable. An isolated browser fixture used
+  real UI components with fictional data and stubbed actions to inspect desktop/phone layouts,
+  intake inference, label association, blocked-step links, and adding/removing reading rows.
+  The fixture is outside the app and does not introduce an authentication bypass or production route.
+
+## 2026-10-05 — Usability release validation
+
+- Integrated the latest default branch's mail backfill changes, keeping its complete worker implementation and the Messages heading.
+- All 313 tests passed across 41 files, including the previously skipped database suites, against a disposable local Postgres 17 cluster. The test database was stopped after the run; no ESS data was used.
+- Full ESLint and the production Next.js build, including TypeScript, passed after integration.
+- The locked dependencies passed the package release-age check; the local installer still reports its existing ignored build-script policy. No dependency or package policy changes were committed.
+- Authenticated browser workflow review still requires sign-in to the branch preview. The pull request remains a draft until that review is complete.
+
+## 2026-10-05 — On-demand Quo call details
+
+- Owner-only call timeline control retrieves recordings, voicemail, summary, and transcript on demand via the documented v1 GET endpoints: `/v1/call-recordings/{callId}`, `/v1/call-voicemails/{callId}`, `/v1/call-summaries/{callId}`, `/v1/call-transcripts/{callId}`. Sources: https://www.quo.com/docs/mdx/api-reference/calls/get-recordings-for-a-call and the related call API pages (checked October 5).
+- These REST resources use `status`, unlike the dated webhook payload's `processingStatus`; no webhook format change was made.
+- Every fetch checks owner role and CRM activity visibility under RLS, writes a READ audit entry, and ends the database transaction before provider GET requests. AIRnyc flags, lines, case associations, and AIRnyc jobs block the fetch. Summaries/transcripts respect the existing feature switch.
+- Audio and transcript details stay in the current browser view. No recordings, signed URLs, or new transcripts are persisted; no follow-up tasks, messages, or contact updates are produced. Audio uses `preload="none"` and HTTPS URLs without embedded credentials.
+- Individual missing, forbidden, unauthenticated, processing, or failed resources display a section-specific explanation. Requests bypass cache; API errors omit provider response bodies.
+- Validation: all 322 tests passed (43 files), including database owner/VA, protected-data, feature-switch, missing-activity, and read-audit checks; full ESLint and production build/TypeScript passed. Actual component preview checked load, transcript expansion, and available sections using fictional provider responses. Live Quo audio/API credentials still need verification before release.
+
+## 2026-10-05 — Temporary removal of CRM login
+
+- Jordan explicitly requested removing login from the actual CRM after being told that visitors could access client records, AIRnyc data, and pricing. The current default is open access (`CRM_REQUIRE_LOGIN` absent or `false`). Set `CRM_REQUIRE_LOGIN=true` and redeploy to restore sign-in; any other configured value also requires login.
+- Each request resolves the sole existing OWNER profile. If multiple owners exist, `CRM_OPEN_ACCESS_USER_ID` must identify an existing owner. Missing/ambiguous profiles fail rather than creating an account or changing roles. All visitors share that owner identity, including audit attribution.
+- The proxy does not query Supabase auth in open mode. CRM database queries still run through the authenticated database role with that owner's claims and existing RLS. Request-time rendering and private/no-store responses prevent build-time data snapshots or shared caching.
+- `/login` redirects to Today, magic-link submission is disabled, sign-out controls are hidden, and the identity displays “Owner · Open access”. Normal auth remains available for restoration. Webhook signature verification and independently authenticated MCP endpoints remain unchanged.
+- File storage retains its existing cookie-bound protection. Automatic approval review rejected a proposed service-role storage path; separate user approval is required before files can work without a Supabase login cookie. No service-role file-storage bypass was implemented.
+- Validation: all 329 tests passed across 45 files, including owner selection, ambiguity, non-owner rejection, unsigned proxy requests, and restored login redirects. Full lint and production build/TypeScript passed. Live no-login deployment verification follows the branch push.
+- Deployment check: the Vercel branch build succeeded, but opening the CRM produced a server-render error. `docs/GO_LIVE.md` records database and encryption secrets as production-only; the preview does not have the same configuration. Added a sanitized open-access setup message for missing/unreachable databases or ambiguous owner selection. No credentials were copied or changed.

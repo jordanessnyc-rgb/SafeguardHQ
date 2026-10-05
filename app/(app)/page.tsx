@@ -84,8 +84,8 @@ export default async function Dashboard() {
   return (
     <>
       <PageHeader
-        title={`${greeting}${first ? `, ${first}` : ""}`}
-        description={new Date().toLocaleDateString("en-US", { timeZone: TZ, weekday: "long", month: "long", day: "numeric" })}
+        title="Today"
+        description={`${greeting}${first ? `, ${first}` : ""} · ${new Date().toLocaleDateString("en-US", { timeZone: TZ, weekday: "long", month: "long", day: "numeric" })}`}
         actions={
           <>
             <Link href="/properties/new" className={buttonVariants({ variant: "outline" })}>New property</Link>
@@ -120,20 +120,10 @@ export default async function Dashboard() {
         </Card>
       )}
 
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5">
-        {tiles.map((t) => (
-          <Link key={t.k} href={t.href} className="group rounded-lg border bg-card p-3 hover:border-primary">
-            <div className="text-xs text-muted-foreground">{t.k}</div>
-            <div className={cn("text-2xl font-semibold tabular-nums", t.warn && "text-amber-700 dark:text-amber-400")}>{t.v}</div>
-            <div className="text-xs font-medium text-primary group-hover:underline">{t.link} →</div>
-          </Link>
-        ))}
-      </div>
-
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <Card className="gap-0 py-0">
           <CardHeader className="border-b py-4">
-            <CardTitle>Needs you</CardTitle>
+            <CardTitle>Needs your attention</CardTitle>
             <p className="text-xs text-muted-foreground">Most urgent first · each row has one next step</p>
           </CardHeader>
           <CardContent className="px-0">
@@ -192,7 +182,7 @@ export default async function Dashboard() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>{main.name}</CardTitle>
-                <Link href={`/jobs?pipeline=${main.key}`} className="text-sm font-medium text-primary hover:underline">Board</Link>
+                <Link href={`/jobs?view=board&pipeline=${main.key}`} className="text-sm font-medium text-primary hover:underline">Board</Link>
               </CardHeader>
               <CardContent className="space-y-1.5 text-xs">
                 {bars.map((b) => (
@@ -210,6 +200,16 @@ export default async function Dashboard() {
           )}
         </div>
       </div>
+      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
+        {tiles.map((t) => (
+          <Link key={t.k} href={t.href} className="group rounded-lg border bg-card p-3 hover:border-primary">
+            <div className="text-xs text-muted-foreground">{t.k}</div>
+            <div className={cn("text-2xl font-semibold tabular-nums", t.warn && "text-amber-700 dark:text-amber-400")}>{t.v}</div>
+            <div className="text-xs font-medium text-primary group-hover:underline">{t.link} →</div>
+          </Link>
+        ))}
+      </div>
+
     </>
   );
 }

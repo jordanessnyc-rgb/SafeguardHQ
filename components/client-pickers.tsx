@@ -43,6 +43,8 @@ export function ClientPickers({
   const [contactId, setContactId] = useState(defaults.clientContactId ?? null);
   const [adding, setAdding] = useState<{ kind: "property" | "org" | "contact"; typed: string } | null>(null);
 
+  const selectedContact = contacts.find((c) => c.id === contactId);
+  const companyMismatch = orgId && selectedContact?.orgId && selectedContact.orgId !== orgId;
   const org = orgs.find((o) => o.id === orgId) ?? null;
   const orgPeople = useMemo(() => new Set(contacts.filter((c) => orgId && c.orgId === orgId).map((c) => c.id)), [contacts, orgId]);
   const buildingOrgs = useMemo(() => new Set(properties.find((p) => p.id === propertyId)?.orgIds ?? []), [properties, propertyId]);
@@ -118,6 +120,7 @@ export function ClientPickers({
           addNewLabel="New contact"
         />
       </Field>
+      {companyMismatch && <p role="status" className="text-xs text-amber-800 dark:text-amber-300 sm:col-span-2">The selected person belongs to a different company. Confirm that this person is the right contact for this client&apos;s job.</p>}
       {adding?.kind === "property" && <QuickPropertyDialog open onOpenChange={(o) => o || setAdding(null)} typed={adding.typed} onCreated={created("property")} />}
       {adding?.kind === "org" && <QuickOrgDialog open onOpenChange={(o) => o || setAdding(null)} typed={adding.typed} onCreated={created("org")} />}
       {adding?.kind === "contact" && (

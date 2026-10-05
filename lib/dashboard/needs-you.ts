@@ -147,7 +147,7 @@ export async function buildNeedsYou(tx: Tx, opts: { userId: string; isOwner: boo
     .groupBy(s.jobs.id, s.jobs.jobNumber)
     .limit(5);
   for (const l of lab)
-    items.push({ key: `lab:${l.jobId}`, kind: "lab", title: `Lab results in for ${l.jobNumber}`, meta: plural(l.n, "sample"), when: null, late: false, href: `/jobs/${l.jobId}`, action: "Review", rank: 45 });
+    items.push({ key: `lab:${l.jobId}`, kind: "lab", title: `Lab results in for ${l.jobNumber}`, meta: plural(l.n, "sample"), when: null, late: false, href: `/jobs/${l.jobId}?tab=field`, action: "Review samples", rank: 45 });
 
   // --- Owner: invoices more than 30 days past due ---
   if (opts.isOwner) {
@@ -161,7 +161,7 @@ export async function buildNeedsYou(tx: Tx, opts: { userId: string; isOwner: boo
         meta: `${i.client ?? "Client"} · ${i.outstanding.toLocaleString("en-US", { style: "currency", currency: "USD" })} outstanding`,
         when: `${i.bucket} days`,
         late: true,
-        href: i.jobId ? `/jobs/${i.jobId}` : "/reports",
+        href: i.jobId ? `/jobs/${i.jobId}?tab=money` : "/reports",
         action: "Open",
         rank: 50,
       });

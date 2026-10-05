@@ -1,5 +1,7 @@
 "use server";
 
+import { redirect } from "next/navigation";
+import { loginRequired } from "@/lib/auth/access-mode";
 import { headers } from "next/headers";
 import { siteOrigin } from "@/lib/site";
 import { z } from "zod";
@@ -8,6 +10,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export type LoginState = { ok?: boolean; error?: string };
 
 export async function sendMagicLink(_prev: LoginState, form: FormData): Promise<LoginState> {
+  if (!loginRequired()) redirect("/");
   const email = z.email().safeParse(String(form.get("email") ?? "").trim());
   if (!email.success) return { error: "Enter a valid email address." };
   const next = String(form.get("next") ?? "/");

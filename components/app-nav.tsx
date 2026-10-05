@@ -31,16 +31,17 @@ function NavLinks({ isOwner, ai, counts, onNavigate }: { isOwner: boolean; ai: b
   const path = usePathname();
   return (
     <nav aria-label="Main" className="flex flex-col gap-3">
-      {groupsFor(isOwner, ai).map((g) => (
+      {groupsFor(isOwner, ai).map((g) => {
+        const links = (
         <div key={g.label} className="flex flex-col gap-0.5">
-          <div className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase">{g.label}</div>
+          {!g.secondary && <div className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase">{g.label}</div>}
           {g.items.map(({ href, label, icon: Icon, count, urgent }) => {
-            const active = isActive(path, href);
-            const n = count ? counts[count] : 0;
+            const active = isActive(path, href) || (href === "/properties" && ["/contacts", "/organizations"].some((p) => isActive(path, p))) || (href === "/inbox" && isActive(path, "/outbox"));
+            const n = href === "/inbox" ? counts.inbox + counts.outbox : count ? counts[count] : 0;
             return (
               <Link
                 key={href}
-                href={href}
+                href={href === "/inbox" && !counts.inbox && counts.outbox > 0 ? "/outbox" : href}
                 onClick={onNavigate}
                 aria-current={active ? "page" : undefined}
                 aria-label={n ? `${label}, ${n} waiting` : undefined}
@@ -56,7 +57,14 @@ function NavLinks({ isOwner, ai, counts, onNavigate }: { isOwner: boolean; ai: b
             );
           })}
         </div>
-      ))}
+        );
+        return g.secondary ? (
+          <details key={`${g.label}-${path}`} open={g.items.some((i) => isActive(path, i.href)) || undefined} className="group">
+            <summary className="cursor-pointer rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent">{g.label}</summary>
+            {links}
+          </details>
+        ) : links;
+      })}
     </nav>
   );
 }
@@ -79,7 +87,7 @@ export function NewMenu({ className, iconOnly }: { className?: string; iconOnly?
   );
 }
 
-function Identity({ name, role }: { name: string; role: string }) {
+function Identity({ name, role, canSignOut = true }: { name: string; role: string; canSignOut?: boolean }) {
   const path = usePathname();
   const initials = name
     .split(/[\s@.]+/)
@@ -104,17 +112,17 @@ function Identity({ name, role }: { name: string; role: string }) {
       >
         <Settings className="size-4" />
       </Link>
-      <form action="/auth/signout" method="post">
+      {canSignOut && <form action="/auth/signout" method="post">
         <button aria-label="Sign out" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">
           <LogOut className="size-4" />
         </button>
-      </form>
+      </form>}
     </div>
   );
 }
 
 /** Desktop sidebar: brand, ⌘K search, + New, grouped links with live counts, and the signed-in person. */
-export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string }) {
+export function SideNav({ isOwner, ai, counts, name, role, canSignOut = true }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string; canSignOut?: boolean }) {
   return (
     <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-sidebar p-3 md:flex">
       <Link href="/" className="flex items-center gap-2.5 px-1.5 pt-1">
@@ -131,7 +139,7 @@ export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean;
       <div className="flex-1">
         <NavLinks isOwner={isOwner} ai={ai} counts={counts} />
       </div>
-      <Identity name={name} role={role} />
+      <Identity name={name} role={role} canSignOut={canSignOut} />
     </aside>
   );
 }
@@ -139,12 +147,12 @@ export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean;
 const TABS = [
   { href: "/", label: "Today", icon: Home },
   { href: "/jobs", label: "Jobs", icon: ClipboardList },
-  { href: "/schedule", label: "Schedule", icon: CalendarDays },
-  { href: "/inbox", label: "Queue", icon: Inbox, also: ["/outbox"] },
+  { href: "/schedule", label: "Calendar", icon: CalendarDays },
+  { href: "/inbox", label: "Messages", icon: Inbox, also: ["/outbox"] },
 ];
 
 /** Phone layout: a slim top bar plus a bottom tab bar; everything else lives under "More". */
-export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string }) {
+export function MobileNav({ isOwner, ai, counts, name, role, canSignOut = true }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string; canSignOut?: boolean }) {
   const path = usePathname();
   const [more, setMore] = useState(false);
   const queue = counts.inbox + counts.outbox;
@@ -167,7 +175,7 @@ export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolea
           return (
             <Link
               key={href}
-              href={href}
+              href={href === "/inbox" && !counts.inbox && counts.outbox > 0 ? "/outbox" : href}
               aria-current={active ? "page" : undefined}
               aria-label={n ? `${label}, ${n} waiting` : undefined}
               className={cn("relative flex h-14 flex-col items-center justify-center gap-0.5 text-[11px]", active ? "font-semibold text-primary" : "text-muted-foreground")}
@@ -193,7 +201,7 @@ export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolea
             <SheetTitle>ESS CRM</SheetTitle>
           </SheetHeader>
           <NavLinks isOwner={isOwner} ai={ai} counts={counts} onNavigate={() => setMore(false)} />
-          <Identity name={name} role={role} />
+          <Identity name={name} role={role} canSignOut={canSignOut} />
         </SheetContent>
       </Sheet>
     </>

@@ -13,7 +13,7 @@ import { schema as s } from "@/lib/db";
 import { BRAND_LABELS, label, ORG_TYPE_LABELS } from "@/lib/labels";
 import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
 
-export const metadata = { title: "Organizations" };
+export const metadata = { title: "Companies" };
 
 const SORTS = [
   ["name", "Name A–Z"],
@@ -59,7 +59,7 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
 
   return (
     <>
-      <PageHeader title="Organizations" actions={<Link href="/organizations/new" className={buttonVariants()}>New organization</Link>} />
+      <PageHeader title="Companies" actions={<Link href="/organizations/new" className={buttonVariants()}>New organization</Link>} />
       <FilterForm action="/organizations" className="mb-1">
         <Input type="search" name="q" defaultValue={q} placeholder="Search name or email" aria-label="Search organizations" className="w-full sm:w-72" />
         <NativeSelect name="type" defaultValue={type} aria-label="Type" className="w-auto">
