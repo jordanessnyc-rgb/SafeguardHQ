@@ -1,3 +1,4 @@
+import { QuoCallDetails } from "@/components/quo-call-details";
 import { aiEnabled } from "@/lib/ai/enabled";
 import { ArrowDownLeft, ArrowUpRight, Mail, MessageSquare, Paperclip, Phone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +122,7 @@ export function Timeline({ items, viewerIsOwner = false }: { items: TimelineItem
                 )}
               </ActionForm>
             )}
+            {viewerIsOwner && a.type === "CALL" && !a.sensitive && a.channelLine !== "AIRNYC" && <QuoCallDetails activityId={a.id} />}
             {a.externalUrl && (
               <a className="text-xs text-primary hover:underline" href={a.externalUrl} target="_blank" rel="noreferrer">
                 Open in Quo

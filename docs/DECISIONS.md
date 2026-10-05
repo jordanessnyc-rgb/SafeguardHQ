@@ -547,3 +547,12 @@ changes worth knowing:
 - Full ESLint and the production Next.js build, including TypeScript, passed after integration.
 - The locked dependencies passed the package release-age check; the local installer still reports its existing ignored build-script policy. No dependency or package policy changes were committed.
 - Authenticated browser workflow review still requires sign-in to the branch preview. The pull request remains a draft until that review is complete.
+
+## 2026-10-05 — On-demand Quo call details
+
+- Owner-only call timeline control retrieves recordings, voicemail, summary, and transcript on demand via the documented v1 GET endpoints: `/v1/call-recordings/{callId}`, `/v1/call-voicemails/{callId}`, `/v1/call-summaries/{callId}`, `/v1/call-transcripts/{callId}`. Sources: https://www.quo.com/docs/mdx/api-reference/calls/get-recordings-for-a-call and the related call API pages (checked October 5).
+- These REST resources use `status`, unlike the dated webhook payload's `processingStatus`; no webhook format change was made.
+- Every fetch checks owner role and CRM activity visibility under RLS, writes a READ audit entry, and ends the database transaction before provider GET requests. AIRnyc flags, lines, case associations, and AIRnyc jobs block the fetch. Summaries/transcripts respect the existing feature switch.
+- Audio and transcript details stay in the current browser view. No recordings, signed URLs, or new transcripts are persisted; no follow-up tasks, messages, or contact updates are produced. Audio uses `preload="none"` and HTTPS URLs without embedded credentials.
+- Individual missing, forbidden, unauthenticated, processing, or failed resources display a section-specific explanation. Requests bypass cache; API errors omit provider response bodies.
+- Validation: all 322 tests passed (43 files), including database owner/VA, protected-data, feature-switch, missing-activity, and read-audit checks; full ESLint and production build/TypeScript passed. Actual component preview checked load, transcript expansion, and available sections using fictional provider responses. Live Quo audio/API credentials still need verification before release.
