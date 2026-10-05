@@ -539,3 +539,11 @@ changes worth knowing:
   real UI components with fictional data and stubbed actions to inspect desktop/phone layouts,
   intake inference, label association, blocked-step links, and adding/removing reading rows.
   The fixture is outside the app and does not introduce an authentication bypass or production route.
+
+## 2026-10-05 — Usability release validation
+
+- Integrated the latest default branch's mail backfill changes, keeping its complete worker implementation and the Messages heading.
+- All 313 tests passed across 41 files, including the previously skipped database suites, against a disposable local Postgres 17 cluster. The test database was stopped after the run; no ESS data was used.
+- Full ESLint and the production Next.js build, including TypeScript, passed after integration.
+- The locked dependencies passed the package release-age check; the local installer still reports its existing ignored build-script policy. No dependency or package policy changes were committed.
+- Authenticated browser workflow review still requires sign-in to the branch preview. The pull request remains a draft until that review is complete.
