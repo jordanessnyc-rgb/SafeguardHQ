@@ -568,3 +568,10 @@ changes worth knowing:
 - **Recovery email template** changed to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/account/password`, matching the form the old magic-link template used (the default `{{ .ConfirmationURL }}` form depends on a PKCE verifier cookie from the same browser).
 - **First sign-in after this change.** Nobody has a password yet: use "Forgot password?" once, or the owner sets one under Settings → Team.
 - **Not changed.** Owner TOTP two-factor (Phase 6a) is untouched; it still applies after the password step.
+
+## 2026-10-06 — ESS logo in the app
+
+- Jordan uploaded the logo (`public/ess-logo.png`, transparent PNG, 3786×1704: leaf mark over the boxed wordmark). It's used whole on the sign-in page and the subcontractor-portal header.
+- `public/ess-mark.png` (512 px square) is the leaf + "ESS" cut from it, for the sidebar, phone header, "More" sheet, and the browser-tab icon (`app/icon.png`). `app/apple-icon.png` is the same on white, because iOS ignores transparency on home-screen icons. The old placeholder `app/favicon.ico` is gone.
+- The crop is reproducible: `.smoke/make-mark.mjs` finds the gap in the frame's top line and takes the ink above the wordmark (ignoring stray pixels). Re-run it if the logo file changes.
+- Images go through `next/image`, so the 100 KB original is served resized.

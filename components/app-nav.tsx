@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
@@ -134,10 +136,10 @@ export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean;
   return (
     <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-sidebar p-3 md:flex">
       <Link href="/" className="flex items-center gap-2.5 px-1.5 pt-1">
-        <span aria-hidden className="flex size-8 items-center justify-center rounded-lg bg-primary text-[11px] font-bold tracking-wide text-primary-foreground">ESS</span>
+        <Image src="/ess-mark.png" alt="" width={36} height={36} priority className="size-9 shrink-0" />
         <span className="leading-tight">
           <span className="block text-sm font-semibold">ESS CRM</span>
-          <span className="block text-[11px] text-muted-foreground">Environmental Safeguard</span>
+          <span className="block text-[11px] text-muted-foreground">Environmental Safeguard Solutions</span>
         </span>
       </Link>
       <div className="flex gap-1.5">
@@ -168,7 +170,7 @@ export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolea
     <>
       <header className="sticky top-0 z-30 flex items-center gap-2 border-b bg-sidebar/95 px-4 py-2 backdrop-blur md:hidden">
         <Link href="/" className="flex items-center gap-2">
-          <span aria-hidden className="flex size-7 items-center justify-center rounded-md bg-primary text-[10px] font-bold text-primary-foreground">ESS</span>
+          <Image src="/ess-mark.png" alt="" width={28} height={28} priority className="size-7 shrink-0" />
           <span className="text-sm font-semibold">ESS CRM</span>
         </Link>
         <div className="ml-auto flex gap-1.5">
@@ -206,7 +208,9 @@ export function MobileNav({ isOwner, ai, counts, name, role }: { isOwner: boolea
       <Sheet open={more} onOpenChange={setMore}>
         <SheetContent side="left" className="w-72 gap-3 overflow-y-auto bg-sidebar p-3">
           <SheetHeader className="p-1">
-            <SheetTitle>ESS CRM</SheetTitle>
+            <SheetTitle className="flex items-center gap-2">
+              <Image src="/ess-mark.png" alt="" width={28} height={28} className="size-7" /> ESS CRM
+            </SheetTitle>
           </SheetHeader>
           <NavLinks isOwner={isOwner} ai={ai} counts={counts} onNavigate={() => setMore(false)} />
           <Identity name={name} role={role} />
