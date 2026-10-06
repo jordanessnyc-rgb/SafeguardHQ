@@ -2,12 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s } from "@/lib/db";
 import { requireStaff } from "@/lib/auth/session";
 import { checkbox, formObject, optionalUuid, safeAction, type ActionState } from "@/lib/actions";
 import { encryptMember, getCase, networkFromCaseId } from "@/lib/airnyc/cases";
+import { adminDb } from "@/lib/db";
+import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
+import { uploadToCase } from "@/lib/airnyc/graph-sync";
+import { storageDownloader } from "@/lib/supabase/service";
+
 import { ensureCaseDriveFolder } from "@/lib/airnyc/drive";
 import { pipelineForService } from "@/lib/pipeline/config";
 import { toE164 } from "@/lib/phone";
@@ -153,4 +158,37 @@ export async function createJobForCase(id: string, _prev: ActionState): Promise<
   });
   if (res.error || !jobId) return res;
   redirect(`/jobs/${jobId}`);
+}
+
+const MIME: Record<string, string> = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", zip: "application/zip" };
+
+/**
+ * "Send to AIRnyc": copies one of the case's job documents into the case's SharePoint folder over
+ * Microsoft Graph (SPEC §7.4 mode 4). A person clicks it each time (CLAUDE.md rule 6). Documents that
+ * carry ESS pricing (lab invoices, quotes) are refused outright (rule 4).
+ */
+export async function sendDocumentToAirnyc(caseId: string, documentId: string, _prev: ActionState): Promise<ActionState> {
+  const user = await requireStaff();
+  return safeAction(async () => {
+    const graph = graphFromEnv();
+    if (!graph) throw new Error("The Microsoft connection isn't set up on the server yet (see Settings → AIRnyc).");
+    const { kase, doc, cfg } = await user.db(async (tx) => {
+      const kase = await getCase(tx, user.id, caseId);
+      if (!kase) throw new Error("Case not found.");
+      const [doc] = await tx.select().from(s.documents).where(and(eq(s.documents.id, documentId), isNull(s.documents.archivedAt)));
+      if (!doc || !kase.jobId || doc.jobId !== kase.jobId) throw new Error("That document isn't on this case's job.");
+      if (doc.containsPricing) throw new Error("That document contains ESS pricing and can't be sent to AIRnyc.");
+      if (!doc.storageBucket || !doc.storagePath) throw new Error("That document has no file to send.");
+      const [cfg] = await tx.select({ airnycRootFolderUrl: s.settings.airnycRootFolderUrl }).from(s.settings);
+      return { kase, doc, cfg };
+    });
+    const data = await storageDownloader().download(doc.storageBucket!, doc.storagePath!);
+    const ext = (doc.storagePath!.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
+    const title = doc.title?.trim() || `${doc.kind.toLowerCase()}-${doc.id.slice(0, 8)}`;
+    const name = /\.[a-z0-9]+$/i.test(title) ? title : ext ? `${title}.${ext}` : title;
+    const sent = await uploadToCase(adminDb(), graph, cfg ?? { airnycRootFolderUrl: null }, kase, { name: name.replace(/[\\/:*?"<>|]+/g, "_"), data, contentType: MIME[ext] ?? "application/octet-stream" }, user.id);
+    await adminDb().insert(s.activities).values({ type: "DOC", airnycCaseId: caseId, jobId: kase.jobId, summary: `Sent "${name}" to AIRnyc's SharePoint folder`, externalUrl: sent.webUrl, triageStatus: "SKIPPED" });
+    revalidatePath(`/airnyc/${caseId}`);
+    return { ok: true, message: `Sent ${name} to AIRnyc's folder.` };
+  });
 }

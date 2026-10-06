@@ -1,3 +1,4 @@
+import { parseSharePointUrl } from "@/lib/integrations/microsoft-graph";
 /**
  * Parsing for the Settings page. The page saves one section at a time, so each save may only touch the
  * columns that section owns — a section's form never contains the others' fields, and treating a missing
@@ -17,13 +18,24 @@ const folderId = z
   // Accept a pasted folder URL as well as a bare ID.
   .transform((v) => (v ? (v.match(/folders\/([\w-]+)/)?.[1] ?? v) : null));
 
+// A plain SharePoint address (parseSharePointUrl rejects sharing links with a readable message); blank clears it.
+const sharePointUrl = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => v || null)
+  .refine((v) => v === null || (parseSharePointUrl(v), true));
+
 const settingsSchema = z.object({
   autoSendEmail: checkbox,
   autoSendSms: checkbox,
   autoCreateInvoice: checkbox,
   holdReportUntilPaidDefault: checkbox,
   airnycAiAllowed: checkbox,
-  airnycMode: z.enum(["MANUAL", "EMAIL"]), // POWER_AUTOMATE / GRAPH need AIRnyc's written approval first
+  airnycMode: z.enum(["MANUAL", "GRAPH"]), // EMAIL isn't built; POWER_AUTOMATE would need AIRnyc's IT to set up a flow
+  airnycTrackerUrl: sharePointUrl,
+  airnycTrackerSheet: z.string().trim().max(100).optional().transform((v) => v || null),
+  airnycRootFolderUrl: sharePointUrl,
   digestRecipients: z
     .string()
     .optional()
@@ -54,7 +66,7 @@ type Field = keyof typeof settingsSchema.shape;
 export const SETTINGS_SECTIONS = {
   approvals: ["autoSendEmail", "autoSendSms", "autoCreateInvoice", "holdReportUntilPaidDefault", "invoicePaymentTermsDays"],
   digest: ["digestEnabled", "digestSmsEnabled", "digestRecipients", "digestTime"],
-  airnyc: ["airnycAiAllowed", "airnycMode"],
+  airnyc: ["airnycAiAllowed", "airnycMode", "airnycTrackerUrl", "airnycTrackerSheet", "airnycRootFolderUrl"],
   drive: ["driveJobsParentFolderId", "driveAirnycParentFolderId", "driveTemplateFolderId"],
   budget: ["aiMonthlyCostCapUsd"],
   followups: ["followUpEnabled", "followUpDays"],

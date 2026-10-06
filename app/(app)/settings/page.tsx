@@ -17,7 +17,35 @@ import { titleCase } from "@/lib/labels";
 import { isSettingsSection } from "@/lib/settings/form";
 import { RoleFields } from "./role-fields";
 import { PASSWORD_MIN } from "@/lib/auth/password";
-import { addChecklistItem, addUser, saveSettings, saveStaleDays, setChecklistItemActive, setUserPassword, setUserRole } from "./actions";
+import { addChecklistItem, addUser, saveSettings, saveStaleDays, saveTrackerColumns, setChecklistItemActive, setUserPassword, setUserRole, syncAirnycNow } from "./actions";
+import { Status } from "@/components/status";
+import { fmtDate } from "@/lib/labels";
+import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
+import { guessColumns, readTracker, TRACKER_FIELDS, type ColumnMap } from "@/lib/airnyc/tracker";
+
+type GraphStatus = { configured: boolean; site: string | null; error: string | null; sheet: string | null; sheets: string[]; headers: string[]; rows: number; columns: ColumnMap };
+const EMPTY_GRAPH: GraphStatus = { configured: false, site: null, error: null, sheet: null, sheets: [], headers: [], rows: 0, columns: {} };
+
+/** Reads the tracker's headers live so the owner can map columns; any failure shows as a message, not a broken page. */
+async function graphStatus(cfg: { airnycTrackerUrl: string | null; airnycTrackerSheet: string | null; airnycTrackerColumns: Record<string, string> | null }): Promise<GraphStatus> {
+  const graph = graphFromEnv();
+  if (!graph) return EMPTY_GRAPH;
+  const out: GraphStatus = { ...EMPTY_GRAPH, configured: true, columns: (cfg.airnycTrackerColumns ?? {}) as ColumnMap };
+  if (!cfg.airnycTrackerUrl) return out;
+  try {
+    const item = await graph.itemByUrl(cfg.airnycTrackerUrl);
+    out.site = new URL(item.webUrl).hostname;
+    const sheet = await readTracker(await graph.download(item.driveId, item.id), cfg.airnycTrackerSheet);
+    out.sheet = sheet.sheet;
+    out.sheets = sheet.sheets;
+    out.headers = sheet.headers;
+    out.rows = sheet.rows.length;
+    if (!cfg.airnycTrackerColumns) out.columns = guessColumns(sheet.headers);
+  } catch (e) {
+    out.error = (e as Error).message;
+  }
+  return out;
+}
 
 export const metadata = { title: "Settings" };
 
@@ -78,6 +106,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
         ? await tx.select({ id: s.organizations.id, name: s.organizations.name }).from(s.organizations).where(eq(s.organizations.type, "SUBCONTRACTOR")).orderBy(asc(s.organizations.name))
         : [],
   }));
+  const graph = section === "airnyc" ? await graphStatus(cfg) : EMPTY_GRAPH;
   const [title, description] = TITLES[section];
 
   // One settings section = one form that only writes that section's columns (lib/settings/form.ts).
@@ -172,16 +201,76 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
               </div>
               <SwitchRow name="airnycAiAllowed" label="Allow the AI to read AIRnyc-linked text (redacted)" defaultChecked={cfg.airnycAiAllowed} disabled={!isOwner} />
               <Field label="How AIRnyc cases arrive">
-                <NativeSelect name="airnycMode" defaultValue={cfg.airnycMode === "MANUAL" || cfg.airnycMode === "EMAIL" ? cfg.airnycMode : "MANUAL"} className="max-w-md">
+                <NativeSelect name="airnycMode" defaultValue={cfg.airnycMode === "GRAPH" ? "GRAPH" : "MANUAL"} className="max-w-md">
                   <option value="MANUAL">Manual (VA enters cases)</option>
-                  <option value="EMAIL" disabled>Email parsing — not built yet (waiting on AIRnyc)</option>
-                  <option value="POWER_AUTOMATE" disabled>Power Automate — needs AIRnyc written approval</option>
-                  <option value="GRAPH" disabled>Microsoft Graph — needs AIRnyc written approval</option>
+                  <option value="GRAPH">Microsoft Graph (read AIRnyc&apos;s tracker and folders on SharePoint)</option>
                 </NativeSelect>
               </Field>
+              <div className="space-y-4 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  Microsoft / SharePoint
+                  {!graph.configured ? <Status tone="off">Not set up on the server</Status> : graph.error ? <Status tone="error">Can&apos;t reach SharePoint</Status> : graph.site ? <Status tone="ok">Connected to {graph.site}</Status> : <Status tone="warn">Add the tracker address</Status>}
+                </div>
+                {!graph.configured && <p className="text-xs text-muted-foreground">AIRnyc&apos;s IT registers the app and sends three values; they go in the server&apos;s secrets (MS_GRAPH_TENANT_ID, MS_GRAPH_CLIENT_ID, MS_GRAPH_CLIENT_SECRET). The steps and the message to send them are in docs/RUNBOOK.md.</p>}
+                {graph.error && <p className="text-xs text-destructive">{graph.error}</p>}
+                <Field label="Tracker workbook address" hint="The .xlsx on SharePoint. Open it, then copy the address from the browser bar (not a sharing link).">
+                  <Input name="airnycTrackerUrl" type="url" defaultValue={cfg.airnycTrackerUrl ?? ""} placeholder="https://<org>.sharepoint.com/sites/<site>/Shared Documents/ESS/Tracker.xlsx" />
+                </Field>
+                <Field label="Sheet name" hint="Leave blank for the first sheet.">
+                  <Input name="airnycTrackerSheet" defaultValue={cfg.airnycTrackerSheet ?? ""} className="max-w-xs" list="airnyc-sheets" />
+                  {graph.sheets.length > 0 && (
+                    <datalist id="airnyc-sheets">
+                      {graph.sheets.map((n) => <option key={n} value={n} />)}
+                    </datalist>
+                  )}
+                </Field>
+                <Field label="Folder that holds the case folders" hint="Each case's folder is found by its case ID in the folder name.">
+                  <Input name="airnycRootFolderUrl" type="url" defaultValue={cfg.airnycRootFolderUrl ?? ""} placeholder="https://<org>.sharepoint.com/sites/<site>/Shared Documents/ESS" />
+                </Field>
+              </div>
             </CardContent>
           </Card>,
         )}
+      {section === "airnyc" && graph.configured && graph.headers.length > 0 && (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>Tracker columns</CardTitle>
+            <CardDescription>
+              Which column of sheet &ldquo;{graph.sheet}&rdquo; feeds each case field. {graph.rows} rows found. Only the case ID is required; the rest fill the case record.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ActionForm action={saveTrackerColumns} className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(Object.keys(TRACKER_FIELDS) as (keyof typeof TRACKER_FIELDS)[]).map((f) => (
+                  <label key={f} className="grid gap-1 text-sm">
+                    <span className={f === "caseId" ? "font-medium" : ""}>{TRACKER_FIELDS[f]}</span>
+                    <NativeSelect name={`col:${f}`} defaultValue={graph.columns[f] ?? ""} disabled={!isOwner}>
+                      <option value="">— not in the tracker —</option>
+                      {graph.headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                    </NativeSelect>
+                  </label>
+                ))}
+              </div>
+              {isOwner && <SubmitButton size="sm">Save columns</SubmitButton>}
+            </ActionForm>
+            {isOwner && (
+              <div className="flex flex-wrap items-center gap-3 border-t pt-3 text-sm">
+                {cfg.airnycTrackerColumns?.caseId ? (
+                  <ActionForm action={syncAirnycNow}>
+                    <SubmitButton size="sm" variant="outline">Sync now</SubmitButton>
+                  </ActionForm>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Save the columns first.</span>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {cfg.airnycGraphSyncedAt ? `Last sync ${fmtDate(cfg.airnycGraphSyncedAt, true)}${cfg.airnycGraphError ? `: ${cfg.airnycGraphError}` : ""}` : "Not synced yet. The worker syncs every 15 minutes once columns are saved and the mode is Microsoft Graph."}
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {section === "drive" &&
         sectionForm(

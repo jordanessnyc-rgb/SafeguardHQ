@@ -118,6 +118,46 @@ Verified in the browser on 2026-09-24:
    - **First run:** schedule a test job and confirm the event appears in Titan within 5 minutes.
 6. **AI.** Go to Settings → Communications → "How Jordan writes" and describe your tone. Reply drafts, call extraction and report drafts need `ANTHROPIC_API_KEY`; the model names are in `AI_MODEL_*`.
 
+## AIRnyc SharePoint (Microsoft Graph, Phase 7)
+
+The CRM reads AIRnyc's tracker workbook and writes reports into the case folders through Microsoft
+Graph, as an app limited to the one SharePoint site (`Sites.Selected`). AIRnyc's IT has to set the
+app up; nothing works until they do. What to ask them, in one message:
+
+> We'd like our CRM to read the ESS tracker and upload reports to our case folders on your SharePoint
+> site, without a person's login. Could your IT:
+> 1. Register an app in your Microsoft Entra tenant called "ESS CRM" (single tenant, no redirect URI),
+>    add the Microsoft Graph **application** permission `Sites.Selected`, and grant admin consent.
+> 2. Create a client secret for it (24 months) and send us the tenant ID, application (client) ID and
+>    the secret value, by a secure route (not plain email).
+> 3. Grant that app **write** access to the one site that holds the ESS folder, with Graph:
+>    `POST https://graph.microsoft.com/v1.0/sites/{site-id}/permissions`
+>    body `{ "roles": ["write"], "grantedToIdentities": [{ "application": { "id": "<client id>", "displayName": "ESS CRM" } }] }`
+>    (needs an admin with `Sites.FullControl.All`; the Graph Explorer or PnP PowerShell
+>    `Grant-PnPAzureADAppSitePermission` both work). "write" lets it read the tracker and add files;
+>    it cannot see any other site.
+> You can revoke it at any time by deleting that permission or the app.
+
+(If ESS has its own Microsoft 365 tenant, the app can instead be registered there as multi-tenant and
+AIRnyc's admin consents to it; the steps for them are then 1b "approve the consent link we send" and 3.)
+
+Then, on our side:
+
+1. Put the three values in the host's secrets as `MS_GRAPH_TENANT_ID`, `MS_GRAPH_CLIENT_ID`,
+   `MS_GRAPH_CLIENT_SECRET` (Vercel: production env; Railway: the worker's variables). Redeploy both.
+2. Settings → AIRnyc: set "How AIRnyc cases arrive" to **Microsoft Graph**, paste the tracker's address
+   and the address of the folder that contains the case folders. Use the plain SharePoint address from
+   the browser bar (`https://<org>.sharepoint.com/sites/<site>/Shared Documents/…`), not a sharing link
+   (`/:x:/s/…`) — those don't work under `Sites.Selected`.
+3. Save, then map the tracker's columns to case fields (the page reads the headers and guesses). Only
+   the case-ID column is required.
+4. "Sync now". After that the worker syncs every 15 minutes. The tracker is read-only to the CRM;
+   case stage, consents and QC status stay the CRM's own.
+5. On a case page, "Send to AIRnyc" uploads one of the job's documents into the case's folder (found by
+   case ID in the folder name under the root; created as `{CASE_ID}_{LastName}_{Address}` if missing).
+
+Rotate the client secret before it expires (AIRnyc IT issues a new one; replace the env value).
+
 ## Operations
 - **Key custody:** back up `AIRNYC_ENCRYPTION_KEY` somewhere outside Vercel (e.g. a password manager). Without it, AIRnyc member data can't be decrypted.
 - **Refreshing a property's NYC data:** use the property page → "Refresh NYC data". The worker also refreshes nightly.

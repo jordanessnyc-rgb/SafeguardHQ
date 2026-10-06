@@ -18,7 +18,8 @@ import { stagesFor } from "@/lib/pipeline/config";
 import { daysInStage } from "@/lib/pipeline/rules";
 import { fmtDate, titleCase } from "@/lib/labels";
 import { formatPhone } from "@/lib/phone";
-import { createCaseDriveFolder, createJobForCase, moveCaseStage, toggleChecklistItem, updateCase } from "../actions";
+import { createCaseDriveFolder, createJobForCase, moveCaseStage, sendDocumentToAirnyc, toggleChecklistItem, updateCase } from "../actions";
+import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
 import { CaseFields } from "../case-fields";
 
 export default async function CasePage({ params }: PageProps<"/airnyc/[id]">) {
@@ -27,7 +28,7 @@ export default async function CasePage({ params }: PageProps<"/airnyc/[id]">) {
   const data = await user.db(async (tx) => {
     const c = await getCase(tx, user.id, id);
     if (!c) return null;
-    const [stages, items, done, tasks, activities, options, property] = await Promise.all([
+    const [stages, items, done, tasks, activities, options, property, docs] = await Promise.all([
       stagesFor(tx, "AIRNYC"),
       tx.select().from(s.airnycChecklistItems).where(eq(s.airnycChecklistItems.active, true)).orderBy(asc(s.airnycChecklistItems.position)),
       tx.select().from(s.airnycCaseChecklist).where(eq(s.airnycCaseChecklist.caseId, id)),
@@ -35,11 +36,13 @@ export default async function CasePage({ params }: PageProps<"/airnyc/[id]">) {
       tx.select().from(s.activities).where(eq(s.activities.airnycCaseId, id)).orderBy(desc(s.activities.occurredAt)).limit(100),
       loadJobOptions(tx),
       c.propertyId ? tx.select().from(s.properties).where(eq(s.properties.id, c.propertyId)).then((r) => r[0]) : Promise.resolve(undefined),
+      c.jobId ? tx.select().from(s.documents).where(and(eq(s.documents.jobId, c.jobId), isNull(s.documents.archivedAt))).orderBy(desc(s.documents.createdAt)) : Promise.resolve([]),
     ]);
-    return { c, stages, items, done, tasks, activities, options, property };
+    return { c, stages, items, done, tasks, activities, options, property, docs };
   });
   if (!data) notFound();
-  const { c, stages, items, done, tasks, activities, options, property } = data;
+  const { c, stages, items, done, tasks, activities, options, property, docs } = data;
+  const graphReady = Boolean(graphFromEnv());
   const doneIds = new Set(done.map((d) => d.itemId));
   const current = stages.find((st) => st.key === c.stage);
   const stageName = (k: string) => stages.find((st) => st.key === k)?.name ?? titleCase(k);
@@ -157,6 +160,46 @@ export default async function CasePage({ params }: PageProps<"/airnyc/[id]">) {
           ))}
         </CardContent>
       </Card>
+
+      {graphReady && (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>Send to AIRnyc</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {!c.jobId ? (
+              <p className="text-muted-foreground">Create the assessment job first; its report and documents can then be sent to the case&apos;s SharePoint folder.</p>
+            ) : docs.length === 0 ? (
+              <p className="text-muted-foreground">No documents on the job yet.</p>
+            ) : (
+              <ul className="divide-y">
+                {docs.map((d) => (
+                  <li key={d.id} className="flex flex-wrap items-center gap-2 py-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{d.title}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {titleCase(d.kind)} · {titleCase(d.status)} · {fmtDate(d.createdAt)}
+                      </span>
+                    </span>
+                    {d.containsPricing ? (
+                      <Badge variant="outline">Has ESS pricing — never sent</Badge>
+                    ) : !d.storagePath ? (
+                      <span className="text-xs text-muted-foreground">No file</span>
+                    ) : (
+                      <ActionForm action={sendDocumentToAirnyc.bind(null, id, d.id)}>
+                        <SubmitButton size="sm" variant="outline">Send to AIRnyc</SubmitButton>
+                      </ActionForm>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Each send copies the file into {c.sharepointFolderUrl ? "this case's SharePoint folder" : "a folder for this case under the AIRnyc folder (created on first send)"}. Nothing is sent on its own.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>

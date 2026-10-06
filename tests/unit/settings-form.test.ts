@@ -15,7 +15,13 @@ describe("settings: one section per save", () => {
   });
 
   it("saves an unchecked box in its own section as off", () => {
-    expect(parseSettingsSection("airnyc", fd({ airnycMode: "MANUAL" }))).toEqual({ airnycAiAllowed: false, airnycMode: "MANUAL" });
+    expect(parseSettingsSection("airnyc", fd({ airnycMode: "MANUAL" }))).toEqual({ airnycAiAllowed: false, airnycMode: "MANUAL", airnycTrackerUrl: null, airnycTrackerSheet: null, airnycRootFolderUrl: null });
+  });
+
+  it("keeps plain SharePoint addresses for the AIRnyc tracker and refuses sharing links", () => {
+    const good = "https://airnyc.sharepoint.com/sites/Vendors/Shared%20Documents/ESS/Tracker.xlsx";
+    expect(parseSettingsSection("airnyc", fd({ airnycMode: "GRAPH", airnycTrackerUrl: good, airnycTrackerSheet: " Cases " }))).toMatchObject({ airnycMode: "GRAPH", airnycTrackerUrl: good, airnycTrackerSheet: "Cases" });
+    expect(() => parseSettingsSection("airnyc", fd({ airnycMode: "GRAPH", airnycTrackerUrl: "https://airnyc.sharepoint.com/:x:/s/Vendors/Eabc?e=1" }))).toThrow(/sharing link/);
   });
 
   it("parses digest recipients and rejects a bad email", () => {

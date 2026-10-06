@@ -575,3 +575,14 @@ changes worth knowing:
 - `public/ess-mark.png` (512 px square) is the leaf + "ESS" cut from it, for the sidebar, phone header, "More" sheet, and the browser-tab icon (`app/icon.png`). `app/apple-icon.png` is the same on white, because iOS ignores transparency on home-screen icons. The old placeholder `app/favicon.ico` is gone.
 - The crop is reproducible: `.smoke/make-mark.mjs` finds the gap in the frame's top line and takes the ink above the wordmark (ignoring stray pixels). Re-run it if the logo file changes.
 - Images go through `next/image`, so the 100 KB original is served resized.
+
+## 2026-10-06 — AIRnyc over Microsoft Graph (SPEC §7.4 mode 4)
+
+- Jordan: "lets do microsoft graph". Verified against the Graph v1.0 docs the same day; differences from the spec's sketch:
+  - **The Excel workbook API is delegated-only** ("Application: Not supported"), so the tracker is downloaded (`GET /drives/{d}/items/{i}/content` → 302 to a pre-authenticated URL, fetched without the bearer token) and read locally with `exceljs`. The CRM never writes to the tracker.
+  - **`/shares/{url}` returns 403 under `Sites.Selected`**, so SharePoint addresses are resolved by path (`/sites/{host}:/{site-path}` → `/sites/{id}/drives` → `/drives/{id}/root:/{path}`). Sharing links are rejected with a message telling the user to copy the browser-bar address instead.
+  - Simple upload (`PUT …:/{name}:/content`) now allows up to 250 MB, so no upload sessions.
+- **Access model:** app-only (client credentials) with the `Sites.Selected` application permission and a **write** role granted on the one site by AIRnyc's admin (`POST /sites/{id}/permissions`). The app cannot see other sites; AIRnyc can revoke it at any time. The request text for AIRnyc IT is in RUNBOOK.
+- **Sync** (worker, every 15 min, and "Sync now"): rows are matched by case ID; new rows become cases, tracker-owned fields (row, AIRnyc status, case manager, approved services, QC reviewer, NYCHA) are overwritten each run; member details only fill blanks (the VA may have corrected them); stage, consents, job link and QC status are the CRM's own. Rows with no case ID are skipped and counted. Member fields still go through `encryptMember`, so this works whichever way the parked AIRnyc-data change goes.
+- **Folders:** the case folder is whichever folder under the configured root has the case ID in its name. "Send to AIRnyc" creates `{CASE_ID}_{LastName}_{Address}` when none exists. Uploads are button-only (rule 6) and audit-logged.
+- **Settings:** `airnyc_mode` gains GRAPH (EMAIL dropped from the dropdown: never built); new settings columns for the tracker/root addresses, sheet, column mapping (jsonb) and the last sync outcome; new case columns for the folder's drive/item IDs, tracker status and sync time (migration 0034). The parked `wip/airnyc-unseal` branch also uses 0034/0035 and will need renumbering if revived.
