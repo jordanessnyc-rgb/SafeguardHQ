@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireSub } from "@/lib/auth/session";
 
 export default async function PortalLayout({ children }: LayoutProps<"/portal">) {
@@ -12,7 +13,10 @@ export default async function PortalLayout({ children }: LayoutProps<"/portal">)
           </div>
           <div className="text-right text-xs text-muted-foreground">
             <div className="font-medium text-foreground">{user.fullName ?? user.email}</div>
-            <form action="/auth/signout" method="post"><button className="underline hover:text-foreground">Sign out</button></form>
+            <div className="flex justify-end gap-3">
+              <Link href="/account/password" className="underline hover:text-foreground">Password</Link>
+              <form action="/auth/signout" method="post"><button className="underline hover:text-foreground">Sign out</button></form>
+            </div>
           </div>
         </div>
       </header>

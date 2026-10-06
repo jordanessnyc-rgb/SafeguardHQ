@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { CalendarDays, ClipboardList, Home, Inbox, LogOut, Menu, Plus, Settings } from "lucide-react";
+import { CalendarDays, ClipboardList, Home, Inbox, KeyRound, LogOut, Menu, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -111,6 +111,14 @@ function Identity({ name, role }: { name: string; role: string }) {
         className={cn("flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground", path.startsWith("/settings") && "bg-sidebar-accent text-sidebar-primary")}
       >
         <Settings className="size-4" />
+      </Link>
+      <Link
+        href="/account/password"
+        aria-label="Change password"
+        title="Change password"
+        className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+      >
+        <KeyRound className="size-4" />
       </Link>
       <form action="/auth/signout" method="post">
         <button aria-label="Sign out" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">

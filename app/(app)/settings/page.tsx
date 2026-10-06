@@ -16,7 +16,8 @@ import { loadPipelines } from "@/lib/pipeline/config";
 import { titleCase } from "@/lib/labels";
 import { isSettingsSection } from "@/lib/settings/form";
 import { RoleFields } from "./role-fields";
-import { addChecklistItem, inviteUser, saveSettings, saveStaleDays, setChecklistItemActive, setUserRole } from "./actions";
+import { PASSWORD_MIN } from "@/lib/auth/password";
+import { addChecklistItem, addUser, saveSettings, saveStaleDays, setChecklistItemActive, setUserPassword, setUserRole } from "./actions";
 
 export const metadata = { title: "Settings" };
 
@@ -237,6 +238,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                 <TableRow>
                   <TableHead>Person</TableHead>
                   <TableHead>Role</TableHead>
+                  {isOwner && <TableHead>Password</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -256,18 +258,30 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                         <Badge variant="secondary">{p.role ? titleCase(p.role) : "No access"}</Badge>
                       )}
                     </TableCell>
+                    {isOwner && (
+                      <TableCell>
+                        <ActionForm action={setUserPassword.bind(null, p.userId)} className="flex flex-wrap items-center gap-1">
+                          <Input name="password" type="text" autoComplete="off" placeholder="New password" minLength={PASSWORD_MIN} required className="h-7 w-36 text-sm" aria-label={`New password for ${p.fullName ?? p.email}`} />
+                          <Button size="xs" variant="outline" type="submit">Set</Button>
+                        </ActionForm>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
             {isOwner && (
               <div className="border-t pt-3">
-                <div className="mb-2 text-sm font-medium">Invite someone</div>
-                <ActionForm action={inviteUser} className="grid gap-2 sm:grid-cols-4">
+                <div className="mb-1 text-sm font-medium">Add someone</div>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Choose a starting password and give it to them. They sign in with their email and that password, and can change it under Password. No email is sent.
+                </p>
+                <ActionForm action={addUser} className="grid gap-2 sm:grid-cols-4">
                   <Input name="email" type="email" placeholder="Email" required className="sm:col-span-2" aria-label="Email" />
                   <Input name="fullName" placeholder="Name" aria-label="Name" />
+                  <Input name="password" type="text" autoComplete="off" placeholder={`Starting password (${PASSWORD_MIN}+ characters)`} minLength={PASSWORD_MIN} required aria-label="Starting password" />
                   <RoleFields roles={INVITE_ROLES} subOrgs={subOrgs} defaultRole="VA" />
-                  <SubmitButton size="sm">Send invite</SubmitButton>
+                  <SubmitButton size="sm">Add</SubmitButton>
                 </ActionForm>
               </div>
             )}
