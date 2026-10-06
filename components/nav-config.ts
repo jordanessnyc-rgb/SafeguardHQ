@@ -13,7 +13,6 @@ import {
   Landmark,
   Megaphone,
   Route,
-  Send,
   Sparkles,
   Users,
   type LucideIcon,
@@ -23,56 +22,32 @@ export type NavCounts = { tasks: number; inbox: number; outbox: number };
 type CountKey = keyof NavCounts;
 export type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean; aiOnly?: boolean; count?: CountKey; urgent?: boolean };
 
-/** Grouped by what the person is doing, with the queues that wait on someone kept together near the top. */
-export const NAV_GROUPS: { label: string; ownerOnly?: boolean; items: NavItem[] }[] = [
-  {
-    label: "Today",
-    items: [
-      { href: "/", label: "Dashboard", icon: Home },
-      { href: "/schedule", label: "Schedule", icon: CalendarDays },
-      { href: "/tasks", label: "Tasks", icon: CheckSquare, count: "tasks" },
-      { href: "/route", label: "Route", icon: Route },
-    ],
-  },
-  {
-    label: "Queues",
-    items: [
-      { href: "/inbox", label: "Inbox review", icon: Inbox, count: "inbox", urgent: true },
-      { href: "/outbox", label: "Outbox", icon: Send, count: "outbox", urgent: true },
-    ],
-  },
-  {
-    label: "Work",
-    items: [
-      { href: "/jobs", label: "Jobs", icon: ClipboardList },
-      { href: "/compliance", label: "Compliance", icon: CalendarClock },
-      { href: "/airnyc", label: "AIRnyc", icon: HeartPulse },
-      { href: "/bids", label: "Bids", icon: Gavel },
-    ],
-  },
-  {
-    label: "Records",
-    items: [
-      { href: "/properties", label: "Properties", icon: Building2 },
-      { href: "/contacts", label: "Contacts", icon: Users },
-      { href: "/organizations", label: "Organizations", icon: Landmark },
-    ],
-  },
-  {
-    label: "Grow",
-    items: [
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-      { href: "/search", label: "Ask the CRM", icon: Sparkles, aiOnly: true },
-    ],
-  },
-  {
-    label: "Owner",
-    ownerOnly: true,
-    items: [
-      { href: "/reports", label: "Reports", icon: BarChart3, ownerOnly: true },
-      { href: "/admin", label: "System health", icon: Activity, ownerOnly: true },
-    ],
-  },
+/** Daily work first; specialist tools stay available under More tools. */
+export const NAV_GROUPS: { label: string; ownerOnly?: boolean; secondary?: boolean; items: NavItem[] }[] = [
+  { label: "Daily work", items: [
+    { href: "/", label: "Today", icon: Home },
+    { href: "/jobs", label: "Jobs", icon: ClipboardList },
+    { href: "/properties", label: "Clients & properties", icon: Building2 },
+    { href: "/inbox", label: "Messages", icon: Inbox, count: "inbox", urgent: true },
+    { href: "/schedule", label: "Calendar", icon: CalendarDays },
+  ] },
+  { label: "Workspaces", items: [
+    { href: "/airnyc", label: "AIRnyc cases", icon: HeartPulse },
+    { href: "/bids", label: "Government bids", icon: Gavel },
+  ] },
+  { label: "More tools", secondary: true, items: [
+    { href: "/tasks", label: "All tasks", icon: CheckSquare, count: "tasks" },
+    { href: "/route", label: "Daily route", icon: Route },
+    { href: "/compliance", label: "Compliance", icon: CalendarClock },
+    { href: "/contacts", label: "People", icon: Users },
+    { href: "/organizations", label: "Companies", icon: Landmark },
+    { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+    { href: "/search", label: "Ask the CRM", icon: Sparkles, aiOnly: true },
+  ] },
+  { label: "Owner tools", secondary: true, ownerOnly: true, items: [
+    { href: "/reports", label: "Business analytics", icon: BarChart3, ownerOnly: true },
+    { href: "/admin", label: "System health", icon: Activity, ownerOnly: true },
+  ] },
 ];
 
 export const NEW_ITEMS = [

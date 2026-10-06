@@ -6,6 +6,7 @@
  *  - Sending SMS and phone-number lookup only exist on v1 (`/v1/messages`, `/v1/phone-numbers`).
  *  - Auth header is the raw key: `Authorization: <key>` (no "Bearer").
  */
+import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 // QUO_API_BASE exists only so local end-to-end tests can point at a mock server (ignored in production).
@@ -122,6 +123,24 @@ export type QuoEvent = {
 // REST client
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * `message` keeps Quo's short reason (e.g. an invalid number), which the Outbox shows when a send
+ * fails. Call details never display it: they map `status` to their own wording.
+ */
+export class QuoApiError extends Error {
+  constructor(
+    public status: number,
+    detail = "",
+  ) {
+    super(detail ? `Quo ${status}: ${detail.slice(0, 300)}` : `Quo request failed (${status}).`);
+  }
+}
+
+export const quoRecordingSchema = z.object({ id: z.string(), status: z.string(), url: z.string().nullable().optional(), duration: z.number().nullable().optional() });
+const quoVoicemailSchema = z.object({ status: z.string(), recordingUrl: z.string().nullable().optional(), transcript: z.string().nullable().optional() });
+const quoSummarySchema = z.object({ status: z.string(), summary: z.array(z.string()).nullable().optional(), nextSteps: z.array(z.string()).nullable().optional() });
+const quoTranscriptSchema = z.object({ status: z.string(), dialogue: z.array(z.object({ content: z.string(), identifier: z.string().nullable().optional(), userId: z.string().nullable().optional() })).nullable().optional() });
+
 export class QuoClient {
   constructor(
     private apiKey: string,
@@ -132,13 +151,13 @@ export class QuoClient {
     const headers: Record<string, string> = { Authorization: this.apiKey, "Content-Type": "application/json" };
     if (init.versioned) headers["Quo-Api-Version"] = QUO_API_VERSION;
     for (let attempt = 0; ; attempt++) {
-      const res = await this.fetchImpl(`${QUO_BASE}${path}`, { ...init, headers, signal: AbortSignal.timeout(15_000) });
+      const res = await this.fetchImpl(`${QUO_BASE}${path}`, { ...init, headers, cache: "no-store", signal: AbortSignal.timeout(15_000) });
       // 10 req/s per key; back off with jitter on 429.
       if (res.status === 429 && attempt < 3) {
         await new Promise((r) => setTimeout(r, 500 * 2 ** attempt + Math.random() * 250));
         continue;
       }
-      if (!res.ok) throw new Error(`Quo ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      if (!res.ok) throw new QuoApiError(res.status, await res.text().catch(() => ""));
       return res.json() as Promise<T>;
     }
   }
@@ -150,6 +169,31 @@ export class QuoClient {
       body: JSON.stringify({ content: opts.content, from: opts.from, to: [opts.to], ...(opts.userId ? { userId: opts.userId } : {}) }),
     });
     return res.data;
+  }
+
+  private callPath(resource: string, callId: string) {
+    if (!/^AC[A-Za-z0-9_-]+$/.test(callId)) throw new Error("Invalid Quo call ID.");
+    return `/v1/${resource}/${encodeURIComponent(callId)}`;
+  }
+
+  async getCallRecordings(callId: string) {
+    const res = await this.request<{ data: unknown }>(this.callPath("call-recordings", callId));
+    return z.array(quoRecordingSchema).parse(res.data);
+  }
+
+  async getCallVoicemail(callId: string) {
+    const res = await this.request<{ data: unknown }>(this.callPath("call-voicemails", callId));
+    return quoVoicemailSchema.parse(res.data);
+  }
+
+  async getCallSummary(callId: string) {
+    const res = await this.request<{ data: unknown }>(this.callPath("call-summaries", callId));
+    return quoSummarySchema.parse(res.data);
+  }
+
+  async getCallTranscript(callId: string) {
+    const res = await this.request<{ data: unknown }>(this.callPath("call-transcripts", callId));
+    return quoTranscriptSchema.parse(res.data);
   }
 
   /** v1 — GET /v1/phone-numbers, for mapping PN… ids to numbers in Settings. */

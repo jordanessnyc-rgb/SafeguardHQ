@@ -16,6 +16,8 @@ const MAX = 30;
  */
 export function SearchSelect({
   name,
+  id,
+  "aria-describedby": describedBy,
   options,
   value,
   defaultValue,
@@ -30,6 +32,8 @@ export function SearchSelect({
   className,
 }: {
   name: string;
+  id?: string;
+  "aria-describedby"?: string;
   options: PickOption[];
   value?: string | null;
   defaultValue?: string | null;
@@ -98,7 +102,7 @@ export function SearchSelect({
       <input type="hidden" name={name} value={selected?.id ?? ""} />
       {selected && !open ? (
         <div className="flex min-h-8 items-center gap-1 rounded-lg border border-input bg-background pr-1 pl-2.5 text-sm">
-          <button type="button" aria-label={`${label}: ${selected.label}. Change`} className="min-w-0 flex-1 truncate py-1 text-left" onClick={() => (setOpen(true), setTimeout(() => input.current?.focus()))}>
+          <button id={id} aria-describedby={describedBy} type="button" aria-label={`${label}: ${selected.label}. Change`} className="min-w-0 flex-1 truncate py-1 text-left" onClick={() => (setOpen(true), setTimeout(() => input.current?.focus()))}>
             {selected.label}
             {selected.detail && <span className="text-muted-foreground"> · {selected.detail}</span>}
           </button>
@@ -109,6 +113,8 @@ export function SearchSelect({
       ) : (
         <input
           ref={input}
+          id={id}
+          aria-describedby={describedBy}
           type="text"
           role="combobox"
           aria-expanded={open}

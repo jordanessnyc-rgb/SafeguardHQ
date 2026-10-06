@@ -15,7 +15,7 @@ import { personName } from "@/lib/labels";
 import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
 import { formatPhone, toE164 } from "@/lib/phone";
 
-export const metadata = { title: "Contacts" };
+export const metadata = { title: "People" };
 
 const SORTS = [
   ["name", "Last name A–Z"],
@@ -65,7 +65,7 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
 
   return (
     <>
-      <PageHeader title="Contacts" actions={<Link href="/contacts/new" className={buttonVariants()}>New contact</Link>} />
+      <PageHeader title="People" actions={<Link href="/contacts/new" className={buttonVariants()}>New contact</Link>} />
       <FilterForm action="/contacts" className="mb-1">
         <Input type="search" name="q" defaultValue={q} placeholder="Search name, email, phone, or company" aria-label="Search contacts" className="w-full sm:w-72" />
         <NativeSelect name="sort" defaultValue={sort} aria-label="Sort by" className="w-auto">

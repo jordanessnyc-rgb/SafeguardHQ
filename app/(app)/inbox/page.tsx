@@ -23,7 +23,7 @@ import { inboxReviewWhere, OUTBOX_WAITING, suggestJob } from "@/lib/queues";
 import { cn } from "@/lib/utils";
 import { reviewActivity } from "../comms/actions";
 
-export const metadata = { title: "Inbox review" };
+export const metadata = { title: "Messages" };
 
 const TZ = "America/New_York";
 const AVATAR = ["bg-emerald-700", "bg-sky-700", "bg-amber-600", "bg-fuchsia-700", "bg-teal-700", "bg-rose-700", "bg-indigo-700", "bg-lime-700"];
@@ -123,7 +123,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
 
   const header = (
     <PageHeader
-      title="Review queue"
+      title="Messages"
       description="Messages that still need a person: file each one under a category and a job."
       actions={<QueueTabs active="inbox" toFile={total} toApprove={toApprove} />}
     />
