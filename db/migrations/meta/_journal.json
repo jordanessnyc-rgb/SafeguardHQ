@@ -239,6 +239,20 @@
       "when": 1790881192895,
       "tag": "0033_email_html",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1791303153375,
+      "tag": "0034_airnyc_plain_member_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791303248543,
+      "tag": "0035_airnyc_drop_encryption",
+      "breakpoints": true
     }
   ]
 }

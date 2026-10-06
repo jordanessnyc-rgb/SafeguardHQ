@@ -17,9 +17,9 @@ source of truth for scope, data model, integrations, and build phases.
    Keep `.env.example` updated with names only.
 4. **Pricing is confidential.** Subcontractors and VAs must never see what ESS charges. Enforce this in
    the database (row-level security + separate financial tables), not just by hiding UI fields.
-5. **AIRnyc member data is sensitive** (Medicaid members, health-related housing conditions). Encrypt at
-   rest, log every access, and never send it to the AI layer while `settings.airnyc_ai_allowed = false`
-   (the default). Use the redaction helper described in SPEC §9.4.
+5. **AIRnyc data is handled like any other client data** (Jordan, 2026-10-06: "There's nothing
+   confidential about AIRnyc."). No field encryption, per-view access logging, AI redaction or AI
+   blocking for AIRnyc cases, messages or calls. Normal role-based access still applies.
 6. **Nothing is sent to clients automatically** (email, SMS, invoices) unless the relevant
    `auto_send_*` setting is explicitly turned on. Default is draft → human approval.
 7. **Idempotent webhooks.** Every inbound webhook handler must verify its signature, dedupe on the

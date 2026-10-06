@@ -7,8 +7,6 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s, type Db, type Tx } from "@/lib/db";
-import { getCase } from "@/lib/airnyc/cases";
-import { revealActivity } from "@/lib/comms/sensitive";
 import { createDraft } from "@/lib/comms/outbound";
 import { label, personName, SERVICE_LABELS } from "@/lib/labels";
 import { AI_MODELS } from "./config";
@@ -45,9 +43,6 @@ export async function draftReply(
   const includePricing = opts.includePricing && opts.requesterRole === "OWNER";
 
   const [cfg] = await conn.select().from(s.settings);
-  const airnycLinked = a.sensitive || a.airnycCaseId != null;
-  const mayRead = !airnycLinked || Boolean(cfg?.airnycAiAllowed); // don't decrypt what the wrapper will block
-  const read = async (x: typeof a) => (!mayRead ? { subject: null, body: null } : x.sensitive ? await revealActivity(conn, opts.actorId ?? null, x, "ai-reply-draft") : { subject: x.subject, body: x.body });
 
   const [contact] = a.contactId ? await conn.select().from(s.contacts).where(eq(s.contacts.id, a.contactId)) : [];
   const jobId =
@@ -72,13 +67,6 @@ export async function draftReply(
         .where(eq(s.jobs.id, jobId))
     : [];
   const [fin] = includePricing && jobId ? await conn.select().from(s.jobFinancials).where(eq(s.jobFinancials.jobId, jobId)) : [];
-  const kase = mayRead && a.airnycCaseId ? await getCase(conn, null, a.airnycCaseId) : null;
-  const knownNames = [kase?.memberName, kase?.guardianName, contact?.firstName, contact?.lastName].filter((n): n is string => Boolean(n?.trim()));
-  // Redaction only removes names it knows; with none known, AIRnyc text is not sent at all.
-  if (airnycLinked && mayRead && knownNames.length === 0) {
-    await conn.insert(s.aiCalls).values({ feature: "REPLY_DRAFT", model: AI_MODELS.draft, activityId: a.id, airnycLinked: true, blocked: "no_known_names_to_redact" });
-    return { status: "blocked", reason: "AIRnyc message without a linked case or named contact — names can't be redacted, so it wasn't sent to AI." };
-  }
 
   // The thread: this contact's recent texts/emails/calls, oldest first, ending with the message being answered.
   const history = a.contactId
@@ -91,13 +79,12 @@ export async function draftReply(
     : [a];
   const thread: string[] = [];
   for (const h of history.filter((x) => x.occurredAt <= a.occurredAt).reverse()) {
-    const c = await read(h);
     const who = h.direction === "INBOUND" ? (contact ? personName(contact) : "Client") : "ESS";
     const kind = h.type === "CALL" ? "call" : h.type === "SMS" ? "text" : "email";
-    const text = h.type === "CALL" ? (h.summary ?? `(${h.callStatus ?? "call"})`) : (c.body ?? "");
-    thread.push(`--- ${kind} from ${who}, ${h.occurredAt.toISOString().slice(0, 16).replace("T", " ")} UTC${h.id === a.id ? " [REPLY TO THIS]" : ""}${c.subject ? `\nSubject: ${c.subject}` : ""}\n${text.slice(0, 4000)}`);
+    const text = h.type === "CALL" ? (h.summary ?? `(${h.callStatus ?? "call"})`) : (h.body ?? "");
+    thread.push(`--- ${kind} from ${who}, ${h.occurredAt.toISOString().slice(0, 16).replace("T", " ")} UTC${h.id === a.id ? " [REPLY TO THIS]" : ""}${h.subject ? `\nSubject: ${h.subject}` : ""}\n${text.slice(0, 4000)}`);
   }
-  const current = await read(a);
+  
 
   const job = jobRow?.job;
   const context = [
@@ -138,8 +125,6 @@ export async function draftReply(
       system: REPLY_SYSTEM,
       userText: context,
       schema: ReplySchema,
-      airnycLinked,
-      knownNames,
       jobId,
       activityId: a.id,
       maxTokens: 4000,
@@ -166,7 +151,7 @@ export async function draftReply(
     toAddress: a.fromAddress,
     fromLineId,
     fromEmail: a.type === "SMS" ? null : (cfg?.defaultFromEmail ?? null),
-    subject: a.type === "SMS" ? null : (d.subject ?? (current.subject ? `Re: ${current.subject}` : null)),
+    subject: a.type === "SMS" ? null : (d.subject ?? (a.subject ? `Re: ${a.subject}` : null)),
     body: d.body,
     inReplyTo: a.type === "EMAIL_IN" ? a.externalId : null,
     brand: job?.brand ?? "ESS",

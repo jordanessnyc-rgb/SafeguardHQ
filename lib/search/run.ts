@@ -37,7 +37,6 @@ export async function naturalLanguageSearch(db: Db, user: { claims: JwtClaims; r
     system: NL_SEARCH_SYSTEM,
     userText: `TODAY (New York): ${nyDate(now)}\n\nTABLES:\n${describeCatalog(tables)}\n\nQUESTION: ${question.slice(0, 500)}`,
     schema: NlSchema,
-    airnycLinked: false,
     maxTokens: 3000,
   }, api);
   if (res.status !== "ok") return { status: res.status === "blocked" ? "refused" : "error", reason: res.status === "blocked" ? res.reason : res.error };

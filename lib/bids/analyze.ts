@@ -49,7 +49,6 @@ export async function analyzeRfp(db: Db, bidId: string, pdf: Buffer, api?: Anthr
     userText: `TODAY: ${nyDate(now)}\n\nESS CREDENTIALS:\n${credList}\n\nAnalyze the attached solicitation.`,
     pdfs: [{ base64: pdf.toString("base64"), title: bid.title }],
     schema: BidAnalysisSchema,
-    airnycLinked: false,
     maxTokens: 8000,
   }, api);
   if (res.status !== "ok") return { status: res.status, reason: res.status === "blocked" ? res.reason : res.error };

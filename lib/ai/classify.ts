@@ -1,13 +1,10 @@
 /**
  * AI triage of inbound email/SMS (SPEC §9.1). Strict JSON via structured outputs; confidence below
- * settings.triage_confidence_threshold → NEEDS_REVIEW (the review queue). AIRnyc-linked messages
- * go through the guarded wrapper, which blocks them unless AIRnyc AI is allowed.
+ * settings.triage_confidence_threshold → NEEDS_REVIEW (the review queue).
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s, type Db, type Tx } from "@/lib/db";
-import { getCase } from "@/lib/airnyc/cases";
-import { revealActivity } from "@/lib/comms/sensitive";
 import { JOB_NUMBER_RE } from "@/lib/mail/patterns";
 import { AI_MODELS } from "./config";
 import { guardedParse, type AnthropicLike } from "./anthropic";
@@ -31,18 +28,13 @@ export type Triage = z.infer<typeof TriageSchema>;
 type Activity = typeof s.activities.$inferSelect;
 
 export async function triageActivity(conn: Conn, a: Activity, api?: AnthropicLike): Promise<Activity["triageStatus"]> {
-  const airnycLinked = a.sensitive || a.airnycCaseId != null;
   const [cfg] = await conn.select().from(s.settings);
-  // Don't even decrypt AIRnyc content when AI is off for it — guardedParse will block and log.
-  const mayRead = !airnycLinked || Boolean(cfg?.airnycAiAllowed);
-  const content = !mayRead ? {} : a.sensitive ? await revealActivity(conn, null, a, "ai-triage") : { subject: a.subject, body: a.body };
-  const kase = mayRead && a.airnycCaseId ? await getCase(conn, null, a.airnycCaseId) : null;
   const userText = [
     `Channel: ${a.type === "SMS" ? "text message" : "email"}`,
     a.fromAddress && `From: ${a.fromAddress}`,
-    content.subject && `Subject: ${content.subject}`,
+    a.subject && `Subject: ${a.subject}`,
     "",
-    (content.body ?? "").slice(0, 12_000),
+    (a.body ?? "").slice(0, 12_000),
   ]
     .filter((x) => x !== null && x !== undefined)
     .join("\n");
@@ -55,8 +47,6 @@ export async function triageActivity(conn: Conn, a: Activity, api?: AnthropicLik
       system: TRIAGE_SYSTEM,
       userText,
       schema: TriageSchema,
-      airnycLinked,
-      knownNames: [kase?.memberName, kase?.guardianName],
       jobId: a.jobId,
       activityId: a.id,
       maxTokens: 1024,
@@ -64,8 +54,9 @@ export async function triageActivity(conn: Conn, a: Activity, api?: AnthropicLik
     api,
   );
 
+  // Blocked = the monthly AI cost cap was reached.
   if (res.status === "blocked") {
-    await conn.update(s.activities).set({ triageStatus: "BLOCKED", triageCategory: airnycLinked ? "AIRNYC" : null, aiClassification: { blocked: res.reason } }).where(eq(s.activities.id, a.id));
+    await conn.update(s.activities).set({ triageStatus: "BLOCKED", aiClassification: { blocked: res.reason } }).where(eq(s.activities.id, a.id));
     return "BLOCKED";
   }
   if (res.status === "error") {
@@ -88,7 +79,7 @@ export async function triageActivity(conn: Conn, a: Activity, api?: AnthropicLik
   }
   await conn
     .update(s.activities)
-    .set({ triageStatus: status, triageCategory: t.category, aiClassification: t, summary: a.sensitive ? null : t.summary, jobId })
+    .set({ triageStatus: status, triageCategory: t.category, aiClassification: t, summary: t.summary, jobId })
     .where(eq(s.activities.id, a.id));
 
   if (status === "AUTO" && t.category === "NEW_LEAD") {

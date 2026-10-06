@@ -621,12 +621,10 @@ export const airnycCases = pgTable(
     ...baseColumns(),
     caseId: text("case_id").notNull(), // e.g. PHS_0148
     network: text("network"), // derived from case_id prefix
-    // --- Member fields: AES-256-GCM ciphertext produced by lib/crypto.ts. Never plaintext. ---
-    memberNameEnc: text("member_name_enc"),
-    guardianNameEnc: text("guardian_name_enc"),
-    memberPhoneEnc: text("member_phone_enc"),
-    addressEnc: text("address_enc"),
-    // ---------------------------------------------------------------------------------------
+    memberName: text("member_name"),
+    guardianName: text("guardian_name"),
+    memberPhone: text("member_phone"),
+    address: text("address"),
     propertyId: uuid("property_id").references(() => properties.id, { onDelete: "set null" }),
     caseManagerName: text("case_manager_name"),
     caseManagerEmail: text("case_manager_email"),
@@ -711,7 +709,7 @@ export const activities = pgTable(
     channelLine: text("channel_line"),
     subject: text("subject"),
     body: text("body"),
-    // Original HTML of an email (not for AIRnyc/sensitive mail). Sanitized again when shown.
+    // Original HTML of an email. Sanitized again when shown.
     bodyHtml: text("body_html"),
     summary: text("summary"),
     nextSteps: text("next_steps").array(),
@@ -732,9 +730,6 @@ export const activities = pgTable(
     aiExtractedAt: timestamp("ai_extracted_at", { withTimezone: true }),
     triageStatus: triageStatusEnum("triage_status"),
     triageCategory: text("triage_category"),
-    // AIRnyc-linked content is stored encrypted here instead of subject/body/transcript (CLAUDE.md rule 5).
-    sensitive: boolean("sensitive").notNull().default(false),
-    sensitiveEnc: text("sensitive_enc"),
   },
   (t) => [
     index("activities_job_idx").on(t.jobId, t.occurredAt),
@@ -783,7 +778,6 @@ export const settings = pgTable("settings", {
   autoSendSms: boolean("auto_send_sms").notNull().default(false),
   autoCreateInvoice: boolean("auto_create_invoice").notNull().default(false),
   holdReportUntilPaidDefault: boolean("hold_report_until_paid_default").notNull().default(false),
-  airnycAiAllowed: boolean("airnyc_ai_allowed").notNull().default(false),
   airnycMode: airnycModeEnum("airnyc_mode").notNull().default("MANUAL"),
   digestRecipients: text("digest_recipients").array().notNull().default(sql`'{}'::text[]`),
   digestTime: time("digest_time").notNull().default("07:30"),

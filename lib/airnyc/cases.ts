@@ -1,11 +1,6 @@
-/**
- * AIRnyc case data access (SPEC §7). Member fields are encrypted at rest with lib/crypto and every
- * decrypting read is written to audit_log. Pages must use these functions — never select the
- * *_enc columns directly.
- */
-import { and, desc, eq, isNull } from "drizzle-orm";
+/** AIRnyc case data access (SPEC §7). AIRnyc data is handled like any other client data (CLAUDE.md rule 5). */
+import { desc, eq, isNull } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
-import { decryptField, encryptField } from "@/lib/crypto";
 
 export type MemberFields = {
   memberName: string | null;
@@ -14,8 +9,10 @@ export type MemberFields = {
   address: string | null;
 };
 
-type CaseRow = typeof s.airnycCases.$inferSelect;
-export type AirnycCase = Omit<CaseRow, "memberNameEnc" | "guardianNameEnc" | "memberPhoneEnc" | "addressEnc"> & MemberFields;
+export type AirnycCase = typeof s.airnycCases.$inferSelect;
+
+/** AIRnyc case IDs look like PHS_0148, Emblem_0022, SIPPS_7. */
+export const AIRNYC_CASE_ID_RE = /\b(PHS|Emblem|EMBLEM|SIPPS)[_-]\d{2,6}\b/g;
 
 const NETWORKS: Record<string, string> = { PHS: "PHS", EMBLEM: "EMBLEM", SIPPS: "SIPPS" };
 
@@ -25,50 +22,13 @@ export function networkFromCaseId(caseId: string): string | null {
   return prefix ? (NETWORKS[prefix] ?? prefix) : null;
 }
 
-export function encryptMember(m: Partial<MemberFields>) {
-  return {
-    ...(m.memberName !== undefined && { memberNameEnc: encryptField(m.memberName) }),
-    ...(m.guardianName !== undefined && { guardianNameEnc: encryptField(m.guardianName) }),
-    ...(m.memberPhone !== undefined && { memberPhoneEnc: encryptField(m.memberPhone) }),
-    ...(m.address !== undefined && { addressEnc: encryptField(m.address) }),
-  };
+export async function listCases(tx: Tx): Promise<AirnycCase[]> {
+  return tx.select().from(s.airnycCases).where(isNull(s.airnycCases.archivedAt)).orderBy(desc(s.airnycCases.createdAt)).limit(500);
 }
 
-function decryptRow(row: CaseRow): AirnycCase {
-  const { memberNameEnc, guardianNameEnc, memberPhoneEnc, addressEnc, ...rest } = row;
-  return {
-    ...rest,
-    memberName: decryptField(memberNameEnc),
-    guardianName: decryptField(guardianNameEnc),
-    memberPhone: decryptField(memberPhoneEnc),
-    address: decryptField(addressEnc),
-  };
-}
-
-async function logRead(tx: Tx | Db, actor: string | null, rows: CaseRow[], view: string) {
-  if (rows.length === 0) return;
-  await tx.insert(s.auditLog).values(
-    rows.map((r) => ({
-      actor,
-      action: "READ",
-      entity: "airnyc_cases",
-      entityId: r.id,
-      detail: { view, caseId: r.caseId, fields: ["member_name", "guardian_name", "member_phone", "address"] },
-    })),
-  );
-}
-
-export async function listCases(tx: Tx, actor: string | null): Promise<AirnycCase[]> {
-  const rows = await tx.select().from(s.airnycCases).where(isNull(s.airnycCases.archivedAt)).orderBy(desc(s.airnycCases.createdAt)).limit(500);
-  await logRead(tx, actor, rows, "list");
-  return rows.map(decryptRow);
-}
-
-export async function getCase(tx: Tx | Db, actor: string | null, id: string): Promise<AirnycCase | null> {
-  const [row] = await tx.select().from(s.airnycCases).where(and(eq(s.airnycCases.id, id)));
-  if (!row) return null;
-  await logRead(tx, actor, [row], "detail");
-  return decryptRow(row);
+export async function getCase(tx: Tx | Db, id: string): Promise<AirnycCase | null> {
+  const [row] = await tx.select().from(s.airnycCases).where(eq(s.airnycCases.id, id));
+  return row ?? null;
 }
 
 export const lastNameOf = (fullName: string | null) => fullName?.trim().split(/\s+/).at(-1) ?? null;

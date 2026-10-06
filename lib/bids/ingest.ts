@@ -108,14 +108,13 @@ const BidEmailSchema = z.object({
 
 export async function bidsFromEmail(db: Db, activityId: string, api?: AnthropicLike, now = new Date()): Promise<number> {
   const [a] = await db.update(s.activities).set({ aiExtractedAt: now }).where(and(eq(s.activities.id, activityId), isNull(s.activities.aiExtractedAt))).returning();
-  if (!a || a.sensitive) return 0;
+  if (!a) return 0;
   const res = await guardedParse(db, {
     feature: "BID_EMAIL",
     model: AI_MODELS.classify,
     system: BID_EMAIL_SYSTEM,
     userText: [a.fromAddress && `From: ${a.fromAddress}`, a.subject && `Subject: ${a.subject}`, "", (a.body ?? "").slice(0, 30_000)].filter((x) => x !== null).join("\n"),
     schema: BidEmailSchema,
-    airnycLinked: false,
     activityId: a.id,
     maxTokens: 4000,
   }, api);

@@ -19,7 +19,6 @@ import { toE164 } from "@/lib/phone";
 import { isWithinBusinessHours } from "@/lib/time";
 import { findContactByPhone, findOrCreateLeadByPhone } from "./contacts";
 import { approve, createDraft } from "./outbound";
-import { mergeSealed, sealContent } from "./sensitive";
 import { BRAND_INFO, renderTemplate } from "./templates";
 
 type Conn = Db | Tx;
@@ -105,7 +104,6 @@ async function onMessage(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
       ? (await findOrCreateLeadByPhone(conn, phone, { brand: line?.brand, lineLabel: line?.label, lineNumber: line?.number })).contact
       : await findContactByPhone(conn, phone)
     : null;
-  const sensitive = line?.lineKey === AIRNYC_LINE;
   const text = [m.text ?? "", ...(m.media ?? []).map((x) => `[attachment] ${x.url}`)].filter(Boolean).join("\n");
   const status = event.type === "message.received" ? "received" : event.type.split(".")[1];
 
@@ -123,10 +121,10 @@ async function onMessage(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
     threadKey: event.data.context?.conversationId,
     occurredAt: ts(m.createdAt) ?? new Date(),
     callStatus: status,
-    // Inbound texts go through AI triage (SPEC §9.1); AIRnyc-line texts are sealed and never auto-sent to AI.
+    // Inbound texts go through AI triage (SPEC §9.1).
     triageStatus: incoming ? ("PENDING" as const) : ("SKIPPED" as const),
-    raw: sensitive ? null : (event as unknown as Record<string, unknown>),
-    ...(sensitive ? sealContent({ body: text }) : { body: text }),
+    raw: event as unknown as Record<string, unknown>,
+    body: text,
   };
   const [row] = await conn
     .insert(s.activities)
@@ -179,7 +177,7 @@ async function onCall(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
     subject,
   };
   // Summary/transcript may already exist (out-of-order) — only touch call-owned columns.
-  const row = await upsertCall(conn, c.id, { ...core, raw: line?.lineKey === AIRNYC_LINE ? null : ({ call: event } as Record<string, unknown>) }, core);
+  const row = await upsertCall(conn, c.id, { ...core, raw: { call: event } as Record<string, unknown> }, core);
 
   const toSend: string[] = [];
   if (missed && line?.missedCallTextback && contact && !contact.doNotContact) {
@@ -249,18 +247,15 @@ async function onSummary(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
 
   // Lock the row so two deliveries of the summary can't both create next-step tasks.
   const [before] = await conn
-    .select({ id: s.activities.id, nextSteps: s.activities.nextSteps, sensitive: s.activities.sensitive, sensitiveEnc: s.activities.sensitiveEnc })
+    .select({ id: s.activities.id, nextSteps: s.activities.nextSteps })
     .from(s.activities)
     .where(and(eq(s.activities.type, "CALL"), eq(s.activities.externalId, r.callId)))
     .for("update");
-  const seal = before?.sensitive || (await lineFor(conn, event.data.context))?.lineKey === AIRNYC_LINE;
-  // AIRnyc: keep the summary sealed; next steps become tasks without the call's content.
-  const content = seal ? mergeSealed(before?.sensitiveEnc ?? null, { summary }) : { summary };
   const row = await upsertCall(
     conn,
     r.callId,
-    { ...content, nextSteps, externalUrl: event.data.links?.quo, raw: seal ? null : ({ summary: event } as Record<string, unknown>) },
-    { ...content, nextSteps },
+    { summary, nextSteps, externalUrl: event.data.links?.quo, raw: { summary: event } as Record<string, unknown> },
+    { summary, nextSteps },
   );
   if (before?.nextSteps == null && nextSteps.length) {
     await conn.insert(s.tasks).values(
@@ -281,16 +276,7 @@ async function onTranscript(conn: Conn, event: QuoEvent): Promise<QuoOutcome> {
   const r = event.data.resource as unknown as QuoTranscriptResource;
   if (r.processingStatus && r.processingStatus !== "completed") return { handled: false, note: `transcript ${r.processingStatus}` };
   const transcript = (r.dialogue ?? []).map((d) => `${d.identifier ?? (d.userId ? "ESS" : "Caller")}: ${d.content}`).join("\n");
-  const [before] = await conn
-    .select({ sensitive: s.activities.sensitive, sensitiveEnc: s.activities.sensitiveEnc })
-    .from(s.activities)
-    .where(and(eq(s.activities.type, "CALL"), eq(s.activities.externalId, r.callId)))
-    .for("update");
-  const seal = before?.sensitive || (await lineFor(conn, event.data.context))?.lineKey === AIRNYC_LINE;
-  // A sealed (AIRnyc) transcript isn't visible without decrypting, so mark its arrival for the
-  // AI call-extraction worker (SPEC §9.3), which picks up calls with a transcript.
-  const content = seal ? { ...mergeSealed(before?.sensitiveEnc ?? null, { transcript }), aiClassification: { sealedTranscript: true } } : { transcript };
-  const row = await upsertCall(conn, r.callId, { ...content, raw: seal ? null : ({ transcript: event } as Record<string, unknown>) }, content);
+  const row = await upsertCall(conn, r.callId, { transcript, raw: { transcript: event } as Record<string, unknown> }, { transcript });
   return { handled: true, activityId: row.id };
 }
 

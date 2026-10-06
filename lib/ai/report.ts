@@ -8,7 +8,6 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s, type Db } from "@/lib/db";
-import { getCase } from "@/lib/airnyc/cases";
 import { BRAND_INFO } from "@/lib/comms/templates";
 import { DOCX_TYPE } from "@/lib/docs/proposal";
 import { loadTemplate, renderDocx, type Photo } from "@/lib/docs/render";
@@ -62,14 +61,6 @@ export async function draftReport(
     return { status: "skipped", reason: "Add field data (observations, readings, photos) or samples first — the draft is written only from those." };
   }
 
-  const airnycLinked = job.airnycCaseId != null;
-  const [cfg] = await db.select().from(s.settings);
-  const kase = airnycLinked && cfg?.airnycAiAllowed ? await getCase(db, deps.actorId ?? null, job.airnycCaseId!) : null;
-  const knownNames = [kase?.memberName, kase?.guardianName, row.contact?.firstName, row.contact?.lastName].filter((n): n is string => Boolean(n?.trim()));
-  if (airnycLinked && cfg?.airnycAiAllowed && knownNames.length === 0) {
-    return { status: "blocked", reason: "AIRnyc job without a known member name to redact — not sent to AI." };
-  }
-
   const service = label(SERVICE_LABELS, job.serviceCode);
   const photos = (fd?.photos ?? []).slice(0, MAX_PHOTOS);
   const userText = [
@@ -93,7 +84,7 @@ export async function draftReport(
 
   const res = await guardedParse(
     db,
-    { feature: "REPORT_DRAFT", model: AI_MODELS.report, system: REPORT_SYSTEM, userText, schema: ReportSchema, airnycLinked, knownNames, jobId, maxTokens: 12_000 },
+    { feature: "REPORT_DRAFT", model: AI_MODELS.report, system: REPORT_SYSTEM, userText, schema: ReportSchema, jobId, maxTokens: 12_000 },
     deps.api,
   );
   if (res.status !== "ok") return { status: res.status, reason: res.status === "blocked" ? res.reason : res.error };

@@ -7,7 +7,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import { toGsmFriendly, type QuoClient } from "@/lib/integrations/quo";
-import { sealContent } from "./sensitive";
 
 type Conn = Db | Tx;
 export type Outbound = typeof s.outboundMessages.$inferSelect;
@@ -84,8 +83,6 @@ export async function sendApproved(conn: Conn, id: string, deps: SendDeps): Prom
         toAddress: claimed.toAddress,
         subject: claimed.subject,
         body: claimed.body,
-        // Messages about an AIRnyc case are stored sealed (CLAUDE.md rule 5).
-        ...(claimed.airnycCaseId ? sealContent({ subject: claimed.subject, body: claimed.body }) : {}),
         externalId,
         threadKey: claimed.inReplyTo ?? externalId,
         callStatus: "sent",

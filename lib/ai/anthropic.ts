@@ -1,7 +1,5 @@
 /**
- * The only door to the Anthropic API (SPEC §9.4, §9.8, CLAUDE.md rule 5). Every call:
- *  - is BLOCKED (and logged) when the payload is AIRnyc-linked and settings.airnyc_ai_allowed=false,
- *  - is redacted/unredacted when AIRnyc-linked and allowed,
+ * The only door to the Anthropic API (SPEC §9.8). Every call:
  *  - is BLOCKED when this month's spend has reached settings.ai_monthly_cost_cap_usd,
  *  - is logged to ai_calls with model, tokens, cost, feature, job/activity.
  * Output is schema-validated via structured outputs (client.messages.parse + zodOutputFormat).
@@ -12,7 +10,6 @@ import { gte, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import { costUsd } from "./config";
-import { redact, unredact } from "./redact";
 
 type Conn = Db | Tx;
 export type AnthropicLike = Pick<Anthropic, "messages">;
@@ -36,12 +33,10 @@ export async function guardedParse<Schema extends z.ZodType>(
     system: string;
     userText: string;
     schema: Schema;
-    airnycLinked: boolean;
-    knownNames?: (string | null | undefined)[];
     jobId?: string | null;
     activityId?: string | null;
     maxTokens?: number;
-    /** PDFs sent as document blocks (e.g. an RFP). Never allowed on AIRnyc-linked calls: PDFs can't be redacted. */
+    /** PDFs sent as document blocks (e.g. an RFP). */
     pdfs?: { base64: string; title?: string }[];
   },
   api: AnthropicLike = anthropic(),
@@ -52,19 +47,10 @@ export async function guardedParse<Schema extends z.ZodType>(
       model: opts.model,
       jobId: opts.jobId ?? null,
       activityId: opts.activityId ?? null,
-      airnycLinked: opts.airnycLinked,
       ...v,
     });
 
-  if (opts.airnycLinked && opts.pdfs?.length) {
-    await log({ blocked: "airnyc_pdf_unredactable" });
-    return { status: "blocked", reason: "AIRnyc-linked documents can't be redacted, so they are never sent to AI." };
-  }
   const [cfg] = await conn.select().from(s.settings);
-  if (opts.airnycLinked && !cfg?.airnycAiAllowed) {
-    await log({ blocked: "airnyc_ai_allowed=false" });
-    return { status: "blocked", reason: "AIRnyc-linked content; AI is disabled for AIRnyc data (Settings)." };
-  }
   if (cfg?.aiMonthlyCostCapUsd) {
     const monthStart = new Date(new Date().toISOString().slice(0, 8) + "01T00:00:00Z");
     const [{ spent }] = await conn
@@ -77,8 +63,6 @@ export async function guardedParse<Schema extends z.ZodType>(
     }
   }
 
-  const { text: userText, map } = opts.airnycLinked ? redact(opts.userText, opts.knownNames) : { text: opts.userText, map: new Map() };
-
   try {
     const res = await api.messages.parse({
       model: opts.model,
@@ -89,21 +73,21 @@ export async function guardedParse<Schema extends z.ZodType>(
           role: "user",
           content: [
             ...(opts.pdfs ?? []).map((d) => ({ type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: d.base64 }, ...(d.title ? { title: d.title } : {}) })),
-            { type: "text" as const, text: userText },
+            { type: "text" as const, text: opts.userText },
           ],
         },
       ],
       output_config: { format: zodOutputFormat(opts.schema) },
     });
     const cost = costUsd(opts.model, res.usage.input_tokens, res.usage.output_tokens);
-    const base = { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens, costUsd: cost.toFixed(5), redacted: map.size > 0 };
+    const base = { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens, costUsd: cost.toFixed(5) };
     if (res.stop_reason === "refusal" || res.parsed_output == null) {
       const reason = res.stop_reason === "refusal" ? "refusal" : `unparseable output (stop_reason=${res.stop_reason})`;
       await log({ ...base, error: reason });
       return { status: "error", error: reason };
     }
     await log(base);
-    return { status: "ok", output: unredact(res.parsed_output, map), model: opts.model, costUsd: cost };
+    return { status: "ok", output: res.parsed_output, model: opts.model, costUsd: cost };
   } catch (e) {
     const msg =
       e instanceof Anthropic.APIConnectionError
