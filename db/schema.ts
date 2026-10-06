@@ -642,6 +642,11 @@ export const airnycCases = pgTable(
     qcReviewer: text("qc_reviewer"),
     qcStatus: qcStatusEnum("qc_status").notNull().default("NOT_SUBMITTED"),
     sharepointFolderUrl: text("sharepoint_folder_url"),
+    // Microsoft Graph (SPEC §7.4 mode 4): the case's folder and where it came from in the tracker.
+    sharepointDriveId: text("sharepoint_drive_id"),
+    sharepointItemId: text("sharepoint_item_id"),
+    trackerStatus: text("tracker_status"),
+    trackerSyncedAt: timestamp("tracker_synced_at", { withTimezone: true }),
     pipelineKey: text("pipeline_key").notNull().default("AIRNYC"),
     stage: text("stage").notNull().default("REFERRAL_RECEIVED"),
     stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
@@ -799,6 +804,14 @@ export const settings = pgTable("settings", {
   healthAlertLineId: uuid("health_alert_line_id"),
   defaultFromEmail: text("default_from_email").notNull().default("sales@ess-nyc.com"),
   airnycSenderDomains: text("airnyc_sender_domains").array().notNull().default(sql`'{}'::text[]`),
+  // AIRnyc over Microsoft Graph: the tracker workbook, its sheet and column mapping, the folder that
+  // holds the case folders, and the last sync outcome (shown in Settings).
+  airnycTrackerUrl: text("airnyc_tracker_url"),
+  airnycTrackerSheet: text("airnyc_tracker_sheet"),
+  airnycTrackerColumns: jsonb("airnyc_tracker_columns").$type<Record<string, string>>(),
+  airnycRootFolderUrl: text("airnyc_root_folder_url"),
+  airnycGraphSyncedAt: timestamp("airnyc_graph_synced_at", { withTimezone: true }),
+  airnycGraphError: text("airnyc_graph_error"),
   triageConfidenceThreshold: numeric("triage_confidence_threshold", { precision: 3, scale: 2 }).notNull().default("0.75"),
   // --- Phase 3 ---
   digestEnabled: boolean("digest_enabled").notNull().default(true),

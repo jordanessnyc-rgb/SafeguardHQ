@@ -46,6 +46,8 @@ import { captureError } from "@/lib/observability";
 import { initWorkerSentry } from "./sentry";
 import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
+import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
+import { recordSync, syncTracker } from "@/lib/airnyc/graph-sync";
 
 /** Runs fn every `ms`, never overlapping itself. */
 function every(ms: number, name: string, fn: () => Promise<unknown>) {
@@ -219,6 +221,24 @@ async function main() {
     );
   } else {
     console.log("[calendar] TITAN_CALDAV_ENABLED not set — scheduled jobs aren't copied to the Titan calendar");
+  }
+
+  if (graphFromEnv()) {
+    timers.push(
+      every(15 * 60_000, "airnyc-graph", async () => {
+        // Only while Settings → AIRnyc is on "Microsoft Graph"; the tracker/folder addresses are read each run.
+        const [cfg] = await adminDb().select().from(s.settings);
+        if (cfg?.airnycMode !== "GRAPH" || !cfg.airnycTrackerUrl) return;
+        try {
+          const r = await syncTracker(adminDb(), graphFromEnv()!, cfg);
+          await recordSync(adminDb(), r);
+          if (r.created || r.updated || r.warnings.length) console.log(`[airnyc-graph] ${r.rows} rows: ${r.created} new, ${r.updated} updated, ${r.foldersLinked} folders linked${r.warnings.length ? `; ${r.warnings.join(" ")}` : ""}`);
+        } catch (e) {
+          await recordSync(adminDb(), e as Error);
+          console.log("[airnyc-graph]", (e as Error).message);
+        }
+      }),
+    );
   }
 
   const ds = docusignFromEnv();

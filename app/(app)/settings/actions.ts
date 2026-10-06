@@ -9,6 +9,10 @@ import { passwordProblem } from "@/lib/auth/password";
 import { formObject, safeAction, type ActionState } from "@/lib/actions";
 import { isSettingsSection, parseSettingsSection } from "@/lib/settings/form";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { adminDb } from "@/lib/db";
+import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
+import { recordSync, syncTracker } from "@/lib/airnyc/graph-sync";
+import { TRACKER_FIELDS } from "@/lib/airnyc/tracker";
 
 /** Saves one Settings section (hidden `section` field). Only that section's columns are written. */
 export async function saveSettings(_prev: ActionState, form: FormData): Promise<ActionState> {
@@ -126,4 +130,46 @@ export async function setChecklistItemActive(id: string, active: boolean) {
   const user = await requireOwner();
   await user.db((tx) => tx.update(s.airnycChecklistItems).set({ active }).where(eq(s.airnycChecklistItems.id, id)));
   revalidatePath("/settings");
+}
+
+// ---------------------------------------------------------------------------------------------
+// AIRnyc over Microsoft Graph (SPEC §7.4 mode 4)
+// ---------------------------------------------------------------------------------------------
+
+/** Saves which tracker column feeds which case field (Settings → AIRnyc). */
+export async function saveTrackerColumns(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireOwner();
+  return safeAction(async () => {
+    const map: Record<string, string> = {};
+    for (const field of Object.keys(TRACKER_FIELDS)) {
+      const v = String(form.get(`col:${field}`) ?? "").trim();
+      if (v) map[field] = v;
+    }
+    if (!map.caseId) throw new Error("Pick the column that holds the case ID.");
+    await user.db((tx) => tx.update(s.settings).set({ airnycTrackerColumns: map, updatedBy: user.id }).where(eq(s.settings.id, 1)));
+    revalidatePath("/settings", "layout");
+    return { ok: true, message: "Column mapping saved." };
+  });
+}
+
+/** Runs the tracker sync right now (the worker also runs it every 15 minutes). */
+export async function syncAirnycNow(_prev: ActionState): Promise<ActionState> {
+  const user = await requireOwner();
+  return safeAction(async () => {
+    const graph = graphFromEnv();
+    if (!graph) throw new Error("The server doesn't have the Microsoft connection set up (MS_GRAPH_* in the host's secrets).");
+    const [cfg] = await user.db((tx) => tx.select().from(s.settings));
+    if (!cfg) throw new Error("Settings not found.");
+    try {
+      const r = await syncTracker(adminDb(), graph, cfg);
+      await recordSync(adminDb(), r);
+      revalidatePath("/settings", "layout");
+      revalidatePath("/airnyc");
+      return { ok: true, message: `${r.rows} tracker rows: ${r.created} new case${r.created === 1 ? "" : "s"}, ${r.updated} updated, ${r.foldersLinked} folder${r.foldersLinked === 1 ? "" : "s"} linked${r.skipped ? `, ${r.skipped} rows without a case ID skipped` : ""}.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}` };
+    } catch (e) {
+      await recordSync(adminDb(), e as Error);
+      revalidatePath("/settings", "layout");
+      throw e;
+    }
+  });
 }
