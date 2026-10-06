@@ -36,7 +36,7 @@ export function SearchButton({ className, iconOnly }: { className?: string; icon
       )}
     >
       <Search className="size-4" aria-hidden />
-      <span className="flex-1 text-left">Jump to…</span>
+      <span className="flex-1 text-left">Search…</span>
       <kbd className="rounded border px-1 font-mono text-[11px]">{mac ? "⌘K" : "Ctrl K"}</kbd>
     </button>
   );
@@ -91,7 +91,7 @@ export function CommandPalette({ isOwner, ai }: { isOwner: boolean; ai: boolean 
     const match = (s: string) => !term || s.toLowerCase().includes(term);
     const pages = groupsFor(isOwner, ai)
       .flatMap((g) => g.items.map(({ href, label }) => ({ href, label })))
-      .concat({ href: "/settings", label: "Settings" })
+      .concat({ href: "/settings", label: "Settings" }, { href: "/outbox", label: "Drafts & approvals" })
       .filter((i) => match(i.label))
       .map((i): Row => ({ key: `p:${i.href}`, group: "Go to", title: i.label, href: i.href }));
     const create = NEW_ITEMS.filter((i) => match(i.label) || (term.length > 0 && "new".startsWith(term))).map(

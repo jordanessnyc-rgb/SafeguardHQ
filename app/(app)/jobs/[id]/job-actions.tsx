@@ -62,13 +62,13 @@ export function JobActions({
             <DropdownMenuItem render={<Link href={`/jobs/${jobId}?tab=edit`} />}>Edit job details</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Move to stage</DropdownMenuLabel>
+              <DropdownMenuLabel>Record status</DropdownMenuLabel>
               {stages
                 .filter((st) => st.key !== "LOST")
                 .map((st) => (
                   <DropdownMenuItem key={st.key} disabled={pending || st.blocked.length > 0} onClick={() => move(st.key)}>
                     {st.name}
-                    {st.blocked.length > 0 && <span className="ml-auto text-xs text-muted-foreground">blocked</span>}
+                    {st.blocked.length > 0 && <span className="ml-auto max-w-32 text-xs text-muted-foreground">{st.blocked.join(" ")}</span>}
                   </DropdownMenuItem>
                 ))}
             </DropdownMenuGroup>
@@ -84,12 +84,18 @@ export function JobActions({
           </DropdownMenuContent>
         </DropdownMenu>
         {next && (
-          <Button size="lg" disabled={pending || next.blocked.length > 0} onClick={() => move(next.key)} title={next.blocked.join(" ") || undefined}>
-            {pending ? "Moving…" : `Advance to ${next.name}`}
+          <Button variant="outline" size="lg" disabled={pending || next.blocked.length > 0} onClick={() => move(next.key)} title={next.blocked.join(" ") || undefined}>
+            {pending ? "Moving…" : next.key === "CLOSED" ? "Close job" : `Record ${next.name}`}
             <ArrowRight />
           </Button>
         )}
       </div>
+      {next && next.blocked.length > 0 && (
+        <div className="max-w-sm text-right text-xs text-amber-800 dark:text-amber-300">
+          {next.blocked.map((reason) => <p key={reason}>{reason}</p>)}
+          <Link href={`/jobs/${jobId}?tab=${next.key === "LAB_PENDING" ? "field" : "documents"}`} className="font-medium underline">{next.key === "LAB_PENDING" ? "Add or update samples" : "Review report documents"}</Link>
+        </div>
+      )}
       {error && (
         <p role="alert" className="max-w-md text-right text-sm text-destructive">
           {error}

@@ -12,7 +12,7 @@ import { AGING_BUCKETS, arAging, CLIENT_TYPES, margins, type MarginRow } from "@
 import { nyDate } from "@/lib/money/digest";
 import { fromNyInput } from "@/lib/time";
 
-export const metadata = { title: "Reports" };
+export const metadata = { title: "Business analytics" };
 
 const CLIENT_TYPE_LABELS = { PRIVATE: "Private", MANAGEMENT_CO: "Management co.", AIRNYC: "AIRnyc", GOVERNMENT: "Government" } as const;
 const ym = /^\d{4}-\d{2}$/;
@@ -37,7 +37,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   return (
     <>
-      <PageHeader title="Reports" description="Owner only. Figures come from FreshBooks (invoices, payments) and each job's financials." />
+      <PageHeader title="Business analytics" description="Owner only. Figures come from FreshBooks (invoices, payments) and each job's financials." />
 
       <Card className="mb-4">
         <CardHeader>
