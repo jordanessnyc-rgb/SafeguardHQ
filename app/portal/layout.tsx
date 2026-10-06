@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { requireSub } from "@/lib/auth/session";
 
@@ -7,8 +8,8 @@ export default async function PortalLayout({ children }: LayoutProps<"/portal">)
     <div className="min-h-svh">
       <header className="border-b bg-sidebar">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold text-primary">Environmental Safeguard Solutions</div>
+          <div className="flex items-center gap-3">
+            <Image src="/ess-logo.png" alt="Environmental Safeguard Solutions" width={120} height={54} priority className="h-auto w-28" />
             <div className="text-xs text-muted-foreground">Subcontractor portal</div>
           </div>
           <div className="text-right text-xs text-muted-foreground">

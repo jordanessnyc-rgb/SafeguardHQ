@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
@@ -11,10 +12,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
     <main className="flex min-h-svh items-center justify-center bg-sidebar p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="inline-block size-3 rounded-full bg-primary" aria-hidden />
-            <span className="text-sm font-semibold tracking-wide text-primary">Environmental Safeguard Solutions</span>
-          </div>
+          <Image src="/ess-logo.png" alt="Environmental Safeguard Solutions" width={280} height={126} priority className="mx-auto mb-3 h-auto w-64" />
           <CardTitle>Sign in to ESS CRM</CardTitle>
           <CardDescription>Sign in with your email and password.</CardDescription>
         </CardHeader>
