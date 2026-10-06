@@ -556,3 +556,15 @@ changes worth knowing:
 - Audio and transcript details stay in the current browser view. No recordings, signed URLs, or new transcripts are persisted; no follow-up tasks, messages, or contact updates are produced. Audio uses `preload="none"` and HTTPS URLs without embedded credentials.
 - Individual missing, forbidden, unauthenticated, processing, or failed resources display a section-specific explanation. Requests bypass cache; API errors omit provider response bodies.
 - Validation: all 322 tests passed (43 files), including database owner/VA, protected-data, feature-switch, missing-activity, and read-audit checks; full ESLint and production build/TypeScript passed. Actual component preview checked load, transcript expansion, and available sections using fictional provider responses. Live Quo audio/API credentials still need verification before release.
+
+## 2026-10-06 — Sign in with email + password (no more emailed links)
+
+- Jordan: "Take out the login by code… Just do username and password now." Sign-in is Supabase email + password (`signInWithPassword`, auth-js 2.117, verified in the installed types). The magic-link form, `signInWithOtp`, is gone; `/auth/confirm` stays because password-reset links still land there.
+- **Accounts.** Settings → Team "Add someone" creates the account with a starting password the owner picks (`auth.admin.createUser`, email pre-confirmed); no invite email. Each row has a "Set" box so the owner can reset a teammate's password. Both are written to `audit_log` (the password itself is never logged). Self-signup stays disabled in Supabase.
+- **Own password.** `/account/password` (key icon beside Sign out; "Password" link in the sub portal). Also where "Forgot password?" emails land (`resetPasswordForEmail` → `/auth/confirm?next=/account/password`).
+- **Rule.** `lib/auth/password.ts`: 10–72 characters, no leading/trailing space. Supabase's own minimum (6) is weaker; ours applies everywhere the CRM sets a password.
+- **Errors.** Wrong email and wrong password give the same message, so the form doesn't reveal who has an account. Rate-limit responses get their own wording.
+- **After a failed attempt the email stays filled in.** React 19 clears a form's fields when its action returns, so the action echoes the typed email back and the input uses it as its default. Found by the browser check; without it the second try silently sent an empty email.
+- **Recovery email template** changed to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/account/password`, matching the form the old magic-link template used (the default `{{ .ConfirmationURL }}` form depends on a PKCE verifier cookie from the same browser).
+- **First sign-in after this change.** Nobody has a password yet: use "Forgot password?" once, or the owner sets one under Settings → Team.
+- **Not changed.** Owner TOTP two-factor (Phase 6a) is untouched; it still applies after the password step.

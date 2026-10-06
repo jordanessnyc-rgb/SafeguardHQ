@@ -16,11 +16,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             <span className="text-sm font-semibold tracking-wide text-primary">Environmental Safeguard Solutions</span>
           </div>
           <CardTitle>Sign in to ESS CRM</CardTitle>
-          <CardDescription>We&apos;ll email you a one-time sign-in link.</CardDescription>
+          <CardDescription>Sign in with your email and password.</CardDescription>
         </CardHeader>
         <CardContent>
           {failed && (
-            <p className="mb-3 text-sm text-destructive">That sign-in link expired or was already used. Request a new one.</p>
+            <p className="mb-3 text-sm text-destructive">That link expired or was already used. Use &ldquo;Forgot password?&rdquo; to get a new one.</p>
           )}
           <LoginForm next={next} />
         </CardContent>

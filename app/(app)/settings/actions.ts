@@ -1,12 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
-import { siteOrigin } from "@/lib/site";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema as s } from "@/lib/db";
 import { requireOwner } from "@/lib/auth/session";
+import { passwordProblem } from "@/lib/auth/password";
 import { formObject, safeAction, type ActionState } from "@/lib/actions";
 import { isSettingsSection, parseSettingsSection } from "@/lib/settings/form";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -49,24 +48,44 @@ export async function saveStaleDays(_prev: ActionState, form: FormData): Promise
 
 const role = z.enum(["OWNER", "VA", "FIELD", "SUB"]);
 
-export async function inviteUser(_prev: ActionState, form: FormData): Promise<ActionState> {
+/**
+ * Adds a teammate with a starting password the owner gives them (no invite email). They can change
+ * it after signing in (Account → Password).
+ */
+export async function addUser(_prev: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireOwner();
   return safeAction(async () => {
-    const input = z.object({ email: z.email(), fullName: z.string().max(200).optional(), role, orgId: z.uuid().optional() }).parse(formObject(form));
+    const input = z
+      .object({ email: z.email(), fullName: z.string().max(200).optional(), role, orgId: z.uuid().optional(), password: z.string() })
+      .parse(formObject(form));
     if (input.role === "SUB" && !input.orgId) throw new Error("Pick the subcontractor's organization.");
-    const h = await headers();
-    const origin = siteOrigin(h);
-    const { data, error } = await supabaseAdmin().auth.admin.inviteUserByEmail(input.email, {
-      redirectTo: `${origin}/auth/confirm`,
-      data: { full_name: input.fullName },
-    });
-    if (error || !data.user) throw new Error(error?.message ?? "Invite failed");
+    const problem = passwordProblem(input.password);
+    if (problem) throw new Error(problem);
+    const email = input.email.toLowerCase();
+    const { data, error } = await supabaseAdmin().auth.admin.createUser({ email, password: input.password, email_confirm: true, user_metadata: { full_name: input.fullName } });
+    if (error || !data.user) throw new Error(/already been registered|already exists/i.test(error?.message ?? "") ? "Someone with that email already has an account." : (error?.message ?? "Couldn't add the user."));
     // The auth.users trigger created the profile with no role; assign it now (OWNER-only via RLS).
-    await user.db((tx) =>
-      tx.update(s.profiles).set({ role: input.role, fullName: input.fullName ?? null, orgId: input.role === "SUB" ? input.orgId! : null }).where(eq(s.profiles.userId, data.user.id)),
-    );
+    await user.db(async (tx) => {
+      await tx.update(s.profiles).set({ role: input.role, fullName: input.fullName ?? null, orgId: input.role === "SUB" ? input.orgId! : null }).where(eq(s.profiles.userId, data.user.id));
+      await tx.insert(s.auditLog).values({ actor: user.id, action: "INSERT", entity: "auth.users", entityId: data.user.id, detail: { email, role: input.role, password: "set by owner" } });
+    });
     revalidatePath("/settings");
-    return { ok: true, message: `Invite sent to ${input.email}.` };
+    return { ok: true, message: `${email} can now sign in with the password you chose.` };
+  });
+}
+
+/** Owner sets (or resets) a teammate's password — e.g. a VA who forgot theirs. */
+export async function setUserPassword(userId: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireOwner();
+  return safeAction(async () => {
+    const id = z.uuid().parse(userId);
+    const password = String(form.get("password") ?? "");
+    const problem = passwordProblem(password);
+    if (problem) throw new Error(problem);
+    const { error } = await supabaseAdmin().auth.admin.updateUserById(id, { password });
+    if (error) throw new Error(error.message);
+    await user.db((tx) => tx.insert(s.auditLog).values({ actor: user.id, action: "UPDATE", entity: "auth.users", entityId: id, detail: { password: "set by owner" } }));
+    return { ok: true, message: "Password set. Tell them the new password; they can change it after signing in." };
   });
 }
 
