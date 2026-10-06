@@ -123,8 +123,17 @@ export type QuoEvent = {
 // REST client
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * `message` keeps Quo's short reason (e.g. an invalid number), which the Outbox shows when a send
+ * fails. Call details never display it: they map `status` to their own wording.
+ */
 export class QuoApiError extends Error {
-  constructor(public status: number) { super(`Quo request failed (${status}).`); }
+  constructor(
+    public status: number,
+    detail = "",
+  ) {
+    super(detail ? `Quo ${status}: ${detail.slice(0, 300)}` : `Quo request failed (${status}).`);
+  }
 }
 
 export const quoRecordingSchema = z.object({ id: z.string(), status: z.string(), url: z.string().nullable().optional(), duration: z.number().nullable().optional() });
@@ -148,7 +157,7 @@ export class QuoClient {
         await new Promise((r) => setTimeout(r, 500 * 2 ** attempt + Math.random() * 250));
         continue;
       }
-      if (!res.ok) throw new QuoApiError(res.status);
+      if (!res.ok) throw new QuoApiError(res.status, await res.text().catch(() => ""));
       return res.json() as Promise<T>;
     }
   }

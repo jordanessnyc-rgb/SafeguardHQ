@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QuoClient } from "@/lib/integrations/quo";
+import { QuoApiError, QuoClient } from "@/lib/integrations/quo";
 import { safeMediaUrl } from "@/lib/comms/quo-call-details";
 
 describe("Quo call retrieval", () => {
@@ -16,9 +16,14 @@ describe("Quo call retrieval", () => {
     await expect(client.getCallRecordings("../../contacts")).rejects.toThrow("Invalid Quo call ID");
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it("does not expose provider response content in errors", async () => {
-    const client = new QuoClient("key", vi.fn(async () => new Response("private provider details", { status: 403 })));
-    await expect(client.getCallVoicemail("AC1")).rejects.toThrow("Quo request failed (403).");
+  it("keeps Quo's reason in the error (the Outbox shows why a text failed) and the status for callers", async () => {
+    const client = new QuoClient("key", vi.fn(async () => new Response('{"message":"Invalid phone number"}', { status: 400 })));
+    const err = await client.getCallVoicemail("AC1").catch((e) => e);
+    expect(err).toBeInstanceOf(QuoApiError);
+    expect(err.status).toBe(400);
+    expect(err.message).toBe('Quo 400: {"message":"Invalid phone number"}');
+    const bare = await new QuoClient("key", vi.fn(async () => new Response("", { status: 403 }))).getCallVoicemail("AC1").catch((e) => e);
+    expect(bare.message).toBe("Quo request failed (403).");
   });
   it("allows only HTTPS media without embedded credentials", () => {
     expect(safeMediaUrl("https://media.example.test/audio.mp3")).toBe("https://media.example.test/audio.mp3");

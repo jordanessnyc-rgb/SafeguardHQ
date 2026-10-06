@@ -23,6 +23,14 @@ describe.skipIf(!hasTestDb)("on-demand Quo call details", () => {
     const [saved] = await t.db.select().from(s.activities).where(eq(s.activities.id, a.id));
     expect(saved.raw).toBeNull(); expect(saved.transcript).toBeNull();
   });
+  it("shows its own wording, never Quo's error text", async () => {
+    await t.db.update(s.settings).set({ quoSummariesEnabled: true });
+    const a = await call(); const client = mock();
+    client.getCallTranscript.mockRejectedValueOnce(new QuoApiError(500, "private provider details"));
+    const result = await loadCallDetails(viewer(owner, "OWNER"), a.id, client as never);
+    expect(result.transcript.message).toBe("Could not load this part of the call. Try again.");
+    expect(JSON.stringify(result)).not.toContain("private provider details");
+  });
   it("blocks non-owners before contacting Quo", async () => {
     const a = await call(); const client = mock();
     await expect(loadCallDetails(viewer(va, "VA"), a.id, client as never)).rejects.toThrow("Only the owner");
