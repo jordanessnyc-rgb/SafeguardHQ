@@ -596,3 +596,13 @@ changes worth knowing:
 - **Texts read as a conversation:** an open text shows everything exchanged with that number (both directions, which line sent it), with the selected one highlighted.
 - **Calls: Quo's API has no endpoint to start a call** (verified against the Quo API reference 2026-10-06; calls are only placed from the Quo app). *Call* is a `tel:` link, which opens Quo (or the phone's dialer) with the number filled in. The call still lands on the timeline through the existing `call.completed` webhook.
 - Delete does not purge: the message goes to Titan's Trash and the CRM row stays (hidden from every box) so the timeline keeps its history.
+
+## 2026-10-07 — Titan calendar edited from the CRM
+
+- Jordan: "full control of our calendar as well." Until now the schedule only showed Titan events; the CRM wrote nothing but job visits.
+- **Everything happens in Titan, live, over CalDAV** (`lib/calendar/edit.ts`, `TitanCalendar.getObject/putObject/deleteObject`). New events are a PUT of `<uid>.ics` with `If-None-Match: *`; changes are GET → rewrite with ical.js → PUT with `If-Match` on the ETag, so an edit made in Titan in the meantime is never overwritten (the CRM says "changed in Titan since the schedule loaded, reload"). The schedule reads Titan again after every change; nothing is cached in the CRM.
+- **Repeating events the iCalendar way:** "only this one" writes an exception VEVENT with `RECURRENCE-ID`; "the whole series" edits the master (text as given; a time change shifts every occurrence by the same amount, and existing exceptions keep their own times); deleting one occurrence adds `EXDATE`; deleting the series deletes the object. ical.js does not write `TZID` itself, so zoned times (from the master's `DTSTART`) get the parameter set explicitly, matching how Titan stores them.
+- **Times are written in UTC** for new and single events (Titan displays them in the calendar's zone); all-day events as `VALUE=DATE` with an exclusive end, like every calendar app.
+- **Schedule UI:** *New event* button and double-click on an empty slot; click a Titan event to change title, when, where, notes, or delete it; drag a Titan event to move it (one occurrence for a repeating one). Any calendar in the mailbox can be written to; which one is chosen per event.
+- **No invitations:** nothing ever gets `ATTENDEE`/`ORGANIZER`, so Titan never emails anyone (rule 6). Every create/change/delete is audit-logged (`titan_event`).
+- Tested live against Jordan's mailbox from the local app (create → edit → delete of a test event, cleaned up).

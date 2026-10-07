@@ -118,6 +118,7 @@ Verified in the browser on 2026-09-24:
    - **Host:** `dav.titan.email` by default. EU-hosted accounts use `dav-eu.titan.email`; mailboxes bought through GoDaddy use `dav.myprofessionalmail.com`.
    - **Pick a calendar:** pin one with `TITAN_CALDAV_CALENDAR_URL`, or choose one by name with `TITAN_CALDAV_CALENDAR_NAME`.
    - **First run:** schedule a test job and confirm the event appears in Titan within 5 minutes.
+   - **Editing from the CRM (Schedule page):** the same variables must also be set on **Vercel**, since new events, changes, moves and deletes go to Titan straight from the web app. "Changed in Titan since the schedule loaded" means someone edited the event in Titan meanwhile: reload and redo the change. "That calendar isn't one of yours" means the calendar list changed; reload.
 6. **AI.** Go to Settings → Communications → "How Jordan writes" and describe your tone. Reply drafts, call extraction and report drafts need `ANTHROPIC_API_KEY`; the model names are in `AI_MODEL_*`.
 
 ## AIRnyc SharePoint (Microsoft Graph, Phase 7)

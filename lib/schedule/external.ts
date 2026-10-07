@@ -21,6 +21,15 @@ export type ScheduleExternal = {
   allDay: boolean;
   /** The whole event's time, e.g. "Mon 10/5, 9am – Tue 10/6, 5pm". */
   when: string;
+  /** What the editor needs: the whole event's instants, notes, series info and the CalDAV object. */
+  uid: string;
+  startIso: string;
+  endIso: string;
+  description: string | null;
+  recurring: boolean;
+  recurrenceId: string | null;
+  href: string | null;
+  etag: string | null;
 };
 
 export type ScheduleCalendar = { url: string; name: string; color: string | null };
@@ -60,6 +69,14 @@ export function toScheduleEvents(events: ExternalEvent[], days: string[]): Sched
         durationMinutes: allDay ? 24 * 60 : Math.max(15, Math.round((to.getTime() - from.getTime()) / 60_000)),
         allDay,
         when: when(e),
+        uid: e.uid,
+        startIso: e.start.toISOString(),
+        endIso: e.end.toISOString(),
+        description: e.description,
+        recurring: e.recurring,
+        recurrenceId: e.recurrenceId,
+        href: e.href,
+        etag: e.etag,
       });
     }
   }
