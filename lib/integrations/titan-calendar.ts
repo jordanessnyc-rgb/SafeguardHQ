@@ -98,10 +98,45 @@ export class TitanCalendar implements CalendarSink {
     const lists = await Promise.all(
       calendars.map(async (cal) => {
         const objs = await client.fetchCalendarObjects({ calendar: { url: cal.url }, timeRange: { start: range.start.toISOString(), end: range.end.toISOString() } });
-        return objs.flatMap((o) => (typeof o.data === "string" ? eventsFromIcs(o.data, cal, range) : []));
+        return objs.flatMap((o) => (typeof o.data === "string" ? eventsFromIcs(o.data, cal, range, { href: new URL(o.url, cal.url).toString(), etag: o.etag ?? null }) : []));
       }),
     );
     return lists.flat().filter((e) => !e.uid.endsWith("@crm.ess-nyc.com")).sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+
+  /** One calendar object (an event, or a repeating event with its exceptions) with the ETag to send back on a change. */
+  async getObject(href: string): Promise<{ ics: string; etag: string | null }> {
+    const res = await this.fetchImpl(href, { method: "GET", headers: { Authorization: this.auth(), Accept: "text/calendar" }, signal: AbortSignal.timeout(20_000) });
+    if (res.status === 404 || res.status === 410) throw new Error("That event is no longer on the calendar (it was deleted in Titan).");
+    if (!res.ok) throw new Error(`CalDAV GET ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return { ics: await res.text(), etag: res.headers.get("etag") };
+  }
+
+  /**
+   * Writes an object. With `etag`, the server refuses (412) when the event changed in Titan since it was
+   * read; with `create`, it refuses when something already has that name.
+   */
+  async putObject(href: string, ics: string, opts: { etag?: string | null; create?: boolean } = {}): Promise<{ etag: string | null }> {
+    const headers: Record<string, string> = { Authorization: this.auth(), "Content-Type": "text/calendar; charset=utf-8" };
+    if (opts.create) headers["If-None-Match"] = "*";
+    else if (opts.etag) headers["If-Match"] = opts.etag;
+    const res = await this.fetchImpl(href, { method: "PUT", headers, body: ics, signal: AbortSignal.timeout(20_000) });
+    if (res.status === 412) throw new Error("This event changed in Titan since the schedule loaded. Reload and try again.");
+    if (!res.ok) throw new Error(`CalDAV PUT ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return { etag: res.headers.get("etag") };
+  }
+
+  async deleteObject(href: string, etag?: string | null): Promise<void> {
+    const headers: Record<string, string> = { Authorization: this.auth() };
+    if (etag) headers["If-Match"] = etag;
+    const res = await this.fetchImpl(href, { method: "DELETE", headers, signal: AbortSignal.timeout(20_000) });
+    if (res.status === 412) throw new Error("This event changed in Titan since the schedule loaded. Reload and try again.");
+    if (!res.ok && res.status !== 404 && res.status !== 410) throw new Error(`CalDAV DELETE ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+
+  /** The object URL a new event with this UID gets inside a calendar. */
+  static objectHref(calendarUrl: string, uid: string): string {
+    return new URL(`${encodeURIComponent(uid)}.ics`, calendarUrl.replace(/\/?$/, "/")).toString();
   }
 
   async put(filename: string, ics: string): Promise<void> {

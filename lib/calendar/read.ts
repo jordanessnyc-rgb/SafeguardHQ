@@ -19,12 +19,22 @@ export type ExternalEvent = {
   start: Date;
   end: Date;
   allDay: boolean;
+  description: string | null;
+  /** Part of a repeating series. */
+  recurring: boolean;
+  /** For an occurrence of a series: the instant it was originally scheduled for (its RECURRENCE-ID). */
+  recurrenceId: string | null;
+  /** The CalDAV object holding it (for edits), with the ETag seen at read time. */
+  href: string | null;
+  etag: string | null;
 };
+
+export type ObjectSource = { href: string; etag?: string | null };
 
 type Cal = { url: string; name: string; color: string | null };
 
 /** ICAL.Time → Date, honouring its TZID even when the VTIMEZONE wasn't sent. */
-function toDate(t: ICAL.Time, tzidHint?: string | null): Date {
+export function toDate(t: ICAL.Time, tzidHint?: string | null): Date {
   if (t.isDate) return fromZonedParts({ year: t.year, month: t.month, day: t.day }, TZ);
   const tz = t.zone?.tzid === "UTC" ? "UTC" : (t.zone && t.zone.tzid !== "floating" ? t.zone.tzid : null) ?? (t as unknown as { timezone?: string }).timezone ?? tzidHint ?? TZ;
   if (tz === "UTC" || tz === "Z") return new Date(Date.UTC(t.year, t.month - 1, t.day, t.hour, t.minute, t.second));
@@ -33,7 +43,7 @@ function toDate(t: ICAL.Time, tzidHint?: string | null): Date {
 
 const MAX_OCCURRENCES = 1000;
 
-export function eventsFromIcs(ics: string, cal: Cal, range: { start: Date; end: Date }): ExternalEvent[] {
+export function eventsFromIcs(ics: string, cal: Cal, range: { start: Date; end: Date }, source?: ObjectSource): ExternalEvent[] {
   let root: ICAL.Component;
   try {
     root = new ICAL.Component(ICAL.parse(ics));
@@ -43,7 +53,7 @@ export function eventsFromIcs(ics: string, cal: Cal, range: { start: Date; end: 
   const vevents = root.getAllSubcomponents("vevent");
   const exceptions = vevents.filter((v) => v.hasProperty("recurrence-id"));
   const out: ExternalEvent[] = [];
-  const push = (e: ICAL.Event, start: ICAL.Time, end: ICAL.Time, tzid: string | null) => {
+  const push = (e: ICAL.Event, start: ICAL.Time, end: ICAL.Time, tzid: string | null, recurrenceId: ICAL.Time | null) => {
     const s = toDate(start, tzid);
     let en = toDate(end, tzid);
     if (en <= s) en = new Date(s.getTime() + (start.isDate ? 86_400_000 : 3_600_000));
@@ -60,6 +70,11 @@ export function eventsFromIcs(ics: string, cal: Cal, range: { start: Date; end: 
       start: s,
       end: en,
       allDay: start.isDate,
+      description: e.description?.trim() || null,
+      recurring: recurrenceId !== null,
+      recurrenceId: recurrenceId ? toDate(recurrenceId, tzid).toISOString() : null,
+      href: source?.href ?? null,
+      etag: source?.etag ?? null,
     });
   };
 
@@ -68,21 +83,22 @@ export function eventsFromIcs(ics: string, cal: Cal, range: { start: Date; end: 
     for (const x of exceptions) if (x.getFirstPropertyValue("uid") === e.uid) e.relateException(x);
     const tzid = (master.getFirstProperty("dtstart")?.getParameter("tzid") as string | undefined) ?? null;
     if (!e.isRecurring()) {
-      push(e, e.startDate, e.endDate, tzid);
+      push(e, e.startDate, e.endDate, tzid, null);
       continue;
     }
     const it = e.iterator();
     for (let n = 0, next = it.next(); next && n < MAX_OCCURRENCES; n++, next = it.next()) {
       if (toDate(next, tzid) >= range.end) break;
       const d = e.getOccurrenceDetails(next);
-      push(d.item, d.startDate, d.endDate, tzid);
+      push(d.item, d.startDate, d.endDate, tzid, d.recurrenceId);
     }
   }
   // Edited occurrences whose master isn't in this object (servers sometimes split them).
   for (const x of exceptions) {
     if (vevents.some((v) => !v.hasProperty("recurrence-id") && v.getFirstPropertyValue("uid") === x.getFirstPropertyValue("uid"))) continue;
     const e = new ICAL.Event(x);
-    push(e, e.startDate, e.endDate, (x.getFirstProperty("dtstart")?.getParameter("tzid") as string | undefined) ?? null);
+    const tz = (x.getFirstProperty("dtstart")?.getParameter("tzid") as string | undefined) ?? null;
+    push(e, e.startDate, e.endDate, tz, (x.getFirstPropertyValue("recurrence-id") as ICAL.Time | null) ?? e.startDate);
   }
   return out;
 }
