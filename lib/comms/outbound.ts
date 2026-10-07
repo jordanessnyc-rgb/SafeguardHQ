@@ -7,16 +7,18 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import { toGsmFriendly, type QuoClient } from "@/lib/integrations/quo";
+import type { OutgoingMail } from "@/lib/integrations/titan-mail";
 import { sealContent } from "./sensitive";
 
 type Conn = Db | Tx;
 export type Outbound = typeof s.outboundMessages.$inferSelect;
 
 export type MailSender = {
-  send(msg: { from: string; to: string; subject: string; text: string; inReplyTo?: string | null }): Promise<{ messageId: string }>;
+  send(msg: OutgoingMail): Promise<{ messageId: string }>;
 };
 
-export type SendDeps = { quo: QuoClient | null; mail: MailSender | null };
+/** `files` fetches attachments from storage; without it, a message with attachments fails rather than going out bare. */
+export type SendDeps = { quo: QuoClient | null; mail: MailSender | null; files?: { download(bucket: string, path: string): Promise<Buffer> } };
 
 export async function createDraft(conn: Conn, values: typeof s.outboundMessages.$inferInsert): Promise<Outbound> {
   const [row] = await conn.insert(s.outboundMessages).values({ ...values, status: "DRAFT" }).returning();
@@ -58,7 +60,16 @@ export async function sendApproved(conn: Conn, id: string, deps: SendDeps): Prom
     } else {
       if (!deps.mail) throw new Error("Email sending isn't configured (TITAN_* settings).");
       const from = claimed.fromEmail ?? "sales@ess-nyc.com";
-      const res = await deps.mail.send({ from, to: claimed.toAddress, subject: claimed.subject ?? "", text: claimed.body, inReplyTo: claimed.inReplyTo });
+      const attachments: NonNullable<OutgoingMail["attachments"]> = [];
+      for (const att of claimed.attachments) {
+        if (!deps.files) throw new Error("Attachments can't be fetched from storage here.");
+        const [doc] = await conn.select({ bucket: s.documents.storageBucket, path: s.documents.storagePath, pricing: s.documents.containsPricing }).from(s.documents).where(eq(s.documents.id, att.documentId));
+        if (!doc?.bucket || !doc.path) throw new Error(`Attachment "${att.name}" has no file.`);
+        // A VA can't attach pricing documents (RLS hides them), and an owner shouldn't by accident.
+        if (doc.pricing && !claimed.containsPricing) throw new Error(`"${att.name}" contains ESS pricing; tick "Includes pricing" to send it.`);
+        attachments.push({ filename: att.name, content: await deps.files.download(doc.bucket, doc.path) });
+      }
+      const res = await deps.mail.send({ from, to: claimed.toAddress, cc: claimed.cc, subject: claimed.subject ?? "", text: claimed.body, inReplyTo: claimed.inReplyTo, attachments });
       externalId = res.messageId;
       fromAddress = from;
       channelLine = from;

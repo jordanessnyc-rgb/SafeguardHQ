@@ -62,16 +62,32 @@ export function imapClient(cfg: TitanConfig): ImapFlow {
 }
 
 /** Builds the exact RFC822 bytes once, sends them over SMTP, then files the same bytes in Sent. */
-export async function buildMessage(msg: { from: string; to: string; subject: string; text: string; inReplyTo?: string | null }) {
+export type OutgoingMail = {
+  from: string;
+  to: string;
+  cc?: string[];
+  subject: string;
+  text: string;
+  inReplyTo?: string | null;
+  /** Earlier Message-IDs in the thread (newest last); In-Reply-To is added if missing. */
+  references?: string[];
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
+};
+
+export async function buildMessage(msg: OutgoingMail) {
   const domain = msg.from.split("@")[1] ?? "ess-nyc.com";
   const messageId = `<${randomUUID()}@${domain}>`;
+  const references = [...(msg.references ?? []), ...(msg.inReplyTo && !(msg.references ?? []).includes(msg.inReplyTo) ? [msg.inReplyTo] : [])];
   const raw = await new MailComposer({
     from: msg.from,
     to: msg.to,
+    ...(msg.cc?.length ? { cc: msg.cc } : {}),
     subject: msg.subject,
     text: msg.text,
     messageId,
-    ...(msg.inReplyTo ? { inReplyTo: msg.inReplyTo, references: msg.inReplyTo } : {}),
+    ...(msg.inReplyTo ? { inReplyTo: msg.inReplyTo } : {}),
+    ...(references.length ? { references } : {}),
+    ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
   })
     .compile()
     .build();
@@ -91,7 +107,7 @@ export function titanSender(cfg: TitanConfig): MailSender {
     async send(msg) {
       const { messageId, raw } = await buildMessage(msg);
       // Envelope sender is the authenticated mailbox; From: may be sales@ (needs send-as — RUNBOOK).
-      await transport.sendMail({ envelope: { from: cfg.user, to: [msg.to] }, raw });
+      await transport.sendMail({ envelope: { from: cfg.user, to: [msg.to, ...(msg.cc ?? [])] }, raw });
       if (cfg.appendToSent) {
         const imap = imapClient(cfg);
         try {

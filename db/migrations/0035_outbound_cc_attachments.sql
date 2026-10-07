@@ -1,0 +1,2 @@
+ALTER TABLE "outbound_messages" ADD COLUMN "cc" text[] DEFAULT '{}'::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "outbound_messages" ADD COLUMN "attachments" jsonb DEFAULT '[]'::jsonb NOT NULL;

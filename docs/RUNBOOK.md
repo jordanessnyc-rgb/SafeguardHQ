@@ -55,6 +55,8 @@ The DB suites apply `db/test/supabase-stub.sql` (a minimal `auth.users` + `auth.
    - EU-hosted Titan accounts and GoDaddy-managed domains use different hosts; set `TITAN_IMAP_HOST` / `TITAN_SMTP_HOST`.
    - Test sending as `sales@`. If Titan rejects the alias as From, use `crm@` as the default From in Settings → Communications.
    - After the first send, check Sent in Titan. If there are two copies, set `MAIL_APPEND_TO_SENT=false`.
+   - **Archive / Delete from the Messages page** are carried out in the mailbox by the worker (within a minute of its next mail check). If a message says it couldn't be moved, the reason is on the activity (`raw.mailbox.error`); the usual one is that it was already moved in Titan.
+   - **Calls** can't be started through Quo's API. The *Call* button opens the number in the Quo app (or the phone's dialer); the call is logged by the webhook afterwards.
 3. **Anthropic:** set `ANTHROPIC_API_KEY` on the worker, and set a monthly AI cost cap in Settings.
 4. **Alerts:** in Settings → Communications, set "Alert texts go to" (Jordan's cell) and the line they're sent from.
 

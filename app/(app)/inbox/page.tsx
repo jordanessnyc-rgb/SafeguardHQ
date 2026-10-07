@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { ArrowLeft, ChevronLeft, ChevronRight, ImageOff, MessageSquare, Paperclip, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -7,7 +7,10 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { SubmitButton } from "@/components/forms";
 import { JobPicker } from "@/components/job-picker";
 import { EmptyState, PageHeader } from "@/components/page-header";
-import { QueueTabs } from "@/components/review-queue";
+import { QueueTabs, type MessageBox } from "@/components/review-queue";
+import { MessageActions } from "@/components/inbox/message-actions";
+import { NewMessageButton } from "@/components/inbox/new-message";
+import { Input } from "@/components/ui/input";
 import { RevealSensitive } from "@/components/reveal-sensitive";
 import { EmailFrame } from "@/components/inbox/email-frame";
 import { FileForm } from "@/components/inbox/file-form";
@@ -15,7 +18,7 @@ import { InboxKeys } from "@/components/inbox/inbox-keys";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { TRIAGE_CATEGORIES, type Triage } from "@/lib/ai/classify";
-import { label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
+import { fmtDate, label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
 import { emailDocument, splitQuoted } from "@/lib/mail/render";
 import type { EmailMeta, MailAddress } from "@/lib/mail/meta";
 import { formatPhone } from "@/lib/phone";
@@ -89,7 +92,19 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const user = await requireStaff();
   const sp = await searchParams;
   const now = new Date();
-  const { items, jobs, total, toApprove } = await user.db(async (tx) => ({
+  const box: MessageBox = sp.box === "inbox" || sp.box === "sent" || sp.box === "archived" ? sp.box : "review";
+  const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
+  const search: SQL | undefined = q ? or(ilike(s.activities.subject, `%${q}%`), ilike(s.activities.body, `%${q}%`), ilike(s.activities.fromAddress, `%${q}%`), ilike(s.activities.toAddress, `%${q}%`)) : undefined;
+  const notTrashed = sql`not (coalesce(${s.activities.raw}, '{}'::jsonb) ? 'trashed')`;
+  const boxWhere: Record<MessageBox, SQL | undefined> = {
+    review: inboxReviewWhere,
+    inbox: and(inArray(s.activities.type, ["EMAIL_IN", "SMS"]), eq(s.activities.direction, "INBOUND"), isNull(s.activities.archivedAt)),
+    sent: and(inArray(s.activities.type, ["EMAIL_OUT", "SMS"]), eq(s.activities.direction, "OUTBOUND"), isNull(s.activities.archivedAt)),
+    archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
+    outbox: undefined,
+  };
+  const where = and(boxWhere[box], search);
+  const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail } = await user.db(async (tx) => ({
     items: await tx
       .select({
         id: s.activities.id,
@@ -107,10 +122,14 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       })
       .from(s.activities)
       .leftJoin(s.contacts, eq(s.contacts.id, s.activities.contactId))
-      .where(inboxReviewWhere)
+      .where(where)
       .orderBy(desc(s.activities.occurredAt))
       .limit(100),
-    total: (await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere))[0].n,
+    total: (await tx.select({ n: count() }).from(s.activities).where(where))[0].n,
+    toFile: (await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere))[0].n,
+    lines: await tx.select({ id: s.phoneLines.id, label: s.phoneLines.label, lineKey: s.phoneLines.lineKey }).from(s.phoneLines),
+    templates: await tx.select({ key: s.messageTemplates.key, name: s.messageTemplates.name, channel: s.messageTemplates.channel }).from(s.messageTemplates).where(eq(s.messageTemplates.active, true)),
+    defaultFromEmail: (await tx.select({ v: s.settings.defaultFromEmail }).from(s.settings))[0]?.v ?? "sales@ess-nyc.com",
     toApprove: (await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING])))[0].n,
     jobs: await tx
       .select({ id: s.jobs.id, jobNumber: s.jobs.jobNumber, address: s.properties.addressLine })
@@ -121,18 +140,40 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       .limit(500),
   }));
 
+  const BOX_TEXT: Record<MessageBox, { description: string; empty: string; listLabel: string }> = {
+    review: { description: "Messages that still need a person: file each one under a category and a job.", empty: "All caught up — nothing to file.", listLabel: "to file" },
+    inbox: { description: "Every email and text that has come in. Reply, forward, archive or delete from here; your Titan mailbox follows.", empty: "Nothing in the inbox.", listLabel: "in the inbox" },
+    sent: { description: "Emails and texts sent from the CRM, plus copies of mail sent from Titan.", empty: "Nothing sent yet.", listLabel: "sent" },
+    archived: { description: "Archived mail and texts. Put one back in the inbox if you need it again.", empty: "Nothing archived.", listLabel: "archived" },
+    outbox: { description: "", empty: "", listLabel: "" },
+  };
+  const composeProps = { lines: lines.map((l) => ({ id: l.id, label: l.label })), templates, defaultFromEmail, isOwner: user.role === "OWNER" };
   const header = (
     <PageHeader
       title="Messages"
-      description="Messages that still need a person: file each one under a category and a job."
-      actions={<QueueTabs active="inbox" toFile={total} toApprove={toApprove} />}
+      description={BOX_TEXT[box].description}
+      actions={
+        <>
+          <NewMessageButton {...composeProps} />
+          <QueueTabs active={box} toFile={toFile} toApprove={toApprove} />
+        </>
+      }
     />
+  );
+  const searchForm = (
+    <form className="flex gap-1 border-b p-2" role="search">
+      {box !== "review" && <input type="hidden" name="box" value={box} />}
+      <Input name="q" type="search" defaultValue={q} placeholder="Search sender, subject or text" aria-label="Search messages" className="h-8" />
+    </form>
   );
   if (items.length === 0)
     return (
       <>
         {header}
-        <EmptyState>All caught up — nothing to file.</EmptyState>
+        <div className="overflow-hidden rounded-xl border bg-background">
+          {searchForm}
+          <EmptyState>{q ? `Nothing matches "${q}".` : BOX_TEXT[box].empty}</EmptyState>
+        </div>
       </>
     );
 
@@ -145,7 +186,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const index = found >= 0 ? found : Math.min(Math.max(0, at), items.length - 1);
   const explicit = Boolean(requested);
   const current = items[index];
-  const href = (i: number) => `/inbox?id=${items[i].id}&at=${i}`;
+  const base = `/inbox?${box === "review" ? "" : `box=${box}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
+  const href = (i: number) => `${base}id=${items[i].id}&at=${i}`;
+  const afterGone = items[index + 1] ? href(index + 1) : items[index - 1] ? href(index - 1) : base.replace(/[?&]$/, "");
   const prev = items[index - 1] ? href(index - 1) : null;
   const next = items[index + 1] ? href(index + 1) : null;
 
@@ -158,6 +201,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       .where(eq(s.activities.id, current.id)),
   );
   const { a, contact, jobNumber } = open;
+  const documents = a.jobId
+    ? await user.db((tx) => tx.select({ id: s.documents.id, title: s.documents.title, containsPricing: s.documents.containsPricing }).from(s.documents).where(and(eq(s.documents.jobId, a.jobId!), isNull(s.documents.archivedAt), isNotNull(s.documents.storagePath))))
+    : [];
   const meta = ((a.raw as { email?: EmailMeta } | null)?.email ?? null) as EmailMeta | null;
   const sms = a.type === "SMS";
   const contactName = contact?.id && (contact.firstName || contact.lastName) ? personName(contact) : null;
@@ -172,6 +218,33 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const job = a.jobId ? jobs.find((j) => j.id === a.jobId) : suggestJob(guess?.job_match_hints, jobs);
   const review = reviewActivity.bind(null, a.id);
   const recipients = meta ? [...meta.to.map((r) => who(r)), ...meta.cc.map((r) => `${who(r)} (cc)`)] : a.toAddress ? [a.toAddress] : [];
+  const [contactRow] = contact?.id ? await user.db((tx) => tx.select({ phones: s.contacts.phones, emails: s.contacts.emails }).from(s.contacts).where(eq(s.contacts.id, contact.id!))) : [];
+  const contactPhones = contactRow?.phones ?? [];
+  const contactEmails = contactRow?.emails ?? [];
+  const inbound = a.direction === "INBOUND";
+  const counterpart = sms ? (inbound ? a.fromAddress : a.toAddress) : (inbound ? (meta?.from?.address ?? a.fromAddress) : a.toAddress?.split(",")[0]?.trim());
+  const quoted = (a.body ?? "").split("\n").map((l) => `> ${l}`).join("\n");
+  const re = (sub: string | null, prefix: string) => (sub && new RegExp(`^${prefix}:`, "i").test(sub.trim()) ? sub : `${prefix}: ${sub ?? ""}`.trim());
+  const replyInitial = sms
+    ? { channel: "SMS" as const, to: counterpart ?? "", fromLineId: lines.find((l) => l.lineKey === a.channelLine)?.id, body: "" }
+    : { channel: "EMAIL" as const, to: counterpart ?? "", subject: re(a.subject, "Re"), inReplyTo: a.externalId, body: a.sensitive ? "" : `\n\nOn ${fmtDate(a.occurredAt, true)}, ${fromLabel} wrote:\n${quoted}` };
+  const forwardInitial = sms || a.sensitive
+    ? null
+    : { channel: "EMAIL" as const, to: "", subject: re(a.subject, "Fwd"), body: `\n\n---------- Forwarded message ----------\nFrom: ${fromLabel}${fromAddr ? ` <${fromAddr}>` : ""}\nDate: ${fmtDate(a.occurredAt, true)}\nSubject: ${a.subject ?? ""}\nTo: ${recipients.join(", ")}\n\n${a.body ?? ""}` };
+  // Texts read as a conversation: everything exchanged with this number, newest at the bottom.
+  const thread = sms && counterpart
+    ? (
+        await user.db((tx) =>
+          tx
+            .select({ id: s.activities.id, direction: s.activities.direction, body: s.activities.body, occurredAt: s.activities.occurredAt, sensitive: s.activities.sensitive, channelLine: s.activities.channelLine })
+            .from(s.activities)
+            .where(and(eq(s.activities.type, "SMS"), or(eq(s.activities.fromAddress, counterpart), eq(s.activities.toAddress, counterpart))))
+            .orderBy(desc(s.activities.occurredAt))
+            .limit(40),
+        )
+      ).reverse()
+    : [];
+  const callNumber = counterpart?.startsWith("+") ? counterpart : null;
 
   return (
     <>
@@ -179,8 +252,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       <div className="grid overflow-hidden rounded-xl border bg-background lg:grid-cols-[22rem_minmax(0,1fr)]">
         {/* ---------- message list ---------- */}
         <nav aria-label="Messages to file" className={cn("min-w-0 border-r lg:block", explicit && "hidden")}>
+          {searchForm}
           <div className="flex items-center justify-between border-b px-3 py-2 text-xs text-muted-foreground">
-            <span>{total > items.length ? `Newest ${items.length} of ${total}` : `${total} to file`}</span>
+            <span>{total > items.length ? `Newest ${items.length} of ${total}` : `${total} ${BOX_TEXT[box].listLabel}`}</span>
             <span className="hidden lg:inline">
               <kbd className="rounded border bg-muted px-1 font-mono">J</kbd> <kbd className="rounded border bg-muted px-1 font-mono">K</kbd> to move
             </span>
@@ -227,7 +301,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         {/* ---------- open message ---------- */}
         <article aria-label="Open message" className={cn("min-w-0 lg:block", !explicit && "hidden")}>
           <div className="flex items-center gap-1 border-b px-3 py-1.5">
-            <Link href="/inbox" className={cn(buttonVariants({ size: "sm", variant: "ghost" }), "lg:hidden")}>
+            <Link href={base.replace(/[?&]$/, "")} className={cn(buttonVariants({ size: "sm", variant: "ghost" }), "lg:hidden")}>
               <ArrowLeft /> All messages
             </Link>
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
@@ -309,7 +383,22 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
               {a.sensitive ? (
                 <RevealSensitive activityId={a.id} />
               ) : sms ? (
-                <div className="max-w-prose rounded-2xl rounded-tl-sm bg-muted px-4 py-2.5 text-sm whitespace-pre-line">{a.body || "(no text)"}</div>
+                <ol aria-label="Conversation" className="space-y-2">
+                  {(thread.length ? thread : [{ id: a.id, direction: a.direction, body: a.body, occurredAt: a.occurredAt, sensitive: false, channelLine: a.channelLine }]).map((m) => {
+                    const mine = m.direction === "OUTBOUND";
+                    return (
+                      <li key={m.id} className={cn("flex flex-col", mine ? "items-end" : "items-start")}>
+                        <div className={cn("max-w-prose rounded-2xl px-4 py-2.5 text-sm whitespace-pre-line", mine ? "rounded-tr-sm bg-primary text-primary-foreground" : "rounded-tl-sm bg-muted", m.id === a.id && "ring-2 ring-primary/40 ring-offset-2")}>
+                          {m.sensitive ? "(sealed — open the AIRnyc case to read)" : m.body || "(no text)"}
+                        </div>
+                        <time dateTime={m.occurredAt.toISOString()} className="mt-0.5 px-1 text-[11px] text-muted-foreground">
+                          {fmtDate(m.occurredAt, true)}
+                          {mine && m.channelLine ? ` · from ${lines.find((l) => l.lineKey === m.channelLine)?.label ?? m.channelLine}` : ""}
+                        </time>
+                      </li>
+                    );
+                  })}
+                </ol>
               ) : email ? (
                 <EmailFrame key={`${a.id}:${images}`} doc={email.doc} title={`Email: ${a.subject ?? "no subject"}`} />
               ) : (
@@ -344,7 +433,18 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
 
             {ai?.error && <p className="text-xs text-destructive">AI error: {ai.error}</p>}
 
-            {/* ---------- filing ---------- */}
+            {box !== "review" && (
+              <MessageActions
+                activityId={a.id}
+                nextHref={afterGone}
+                archived={Boolean(a.archivedAt)}
+                reply={replyInitial}
+                forward={forwardInitial}
+                call={callNumber}
+                compose={{ ...composeProps, phones: contactPhones, emails: contactEmails, context: { contactId: contact?.id ?? undefined, jobId: a.jobId ?? undefined, airnycCaseId: a.airnycCaseId ?? undefined }, documents: documents.map((d) => ({ ...d, title: d.title ?? "document" })) }}
+              />
+            )}
+            {box === "review" && (
             <section aria-label="File this message" className="space-y-3 rounded-lg border bg-sidebar/60 p-3">
               {guess && (
                 <FileForm action={review} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-primary/25 bg-background p-3">
@@ -399,6 +499,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                 .
               </p>
             </section>
+            )}
           </div>
         </article>
       </div>

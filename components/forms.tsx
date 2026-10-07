@@ -16,16 +16,23 @@ export function ActionForm({
   children,
   className,
   successMessage,
+  onSuccess,
 }: {
   action: Action;
   children: ReactNode;
   className?: string;
   successMessage?: string;
+  /** Called after a successful action (e.g. to close a composer). */
+  onSuccess?: () => void;
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(action, {});
   // Every successful save gets a "Saved" toast; errors stay next to the form, where the fix is.
   useEffect(() => {
-    if (state.ok) toast.success(state.message || successMessage || "Saved");
+    if (state.ok) {
+      toast.success(state.message || successMessage || "Saved");
+      onSuccess?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per result, not when the callback identity changes
   }, [state, successMessage]);
   return (
     <form action={formAction} className={className}>
