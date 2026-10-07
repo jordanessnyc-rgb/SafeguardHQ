@@ -36,7 +36,7 @@ function NavLinks({ isOwner, ai, counts, onNavigate }: { isOwner: boolean; ai: b
       {groupsFor(isOwner, ai).map((g) => {
         const links = (
         <div key={g.label} className="flex flex-col gap-0.5">
-          {!g.secondary && <div className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase">{g.label}</div>}
+          {!g.secondary && <div className="px-2.5 pt-1 pb-1.5 text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground/80 uppercase">{g.label}</div>}
           {g.items.map(({ href, label, icon: Icon, count, urgent }) => {
             const active = isActive(path, href) || (href === "/properties" && ["/contacts", "/organizations"].some((p) => isActive(path, p))) || (href === "/inbox" && isActive(path, "/outbox"));
             const n = href === "/inbox" ? counts.inbox + counts.outbox : count ? counts[count] : 0;
@@ -48,11 +48,11 @@ function NavLinks({ isOwner, ai, counts, onNavigate }: { isOwner: boolean; ai: b
                 aria-current={active ? "page" : undefined}
                 aria-label={n ? `${label}, ${n} waiting` : undefined}
                 className={cn(
-                  "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground",
-                  active && "bg-sidebar-accent font-medium text-sidebar-primary",
+                  "flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+                  active && "bg-card text-sidebar-primary shadow-card ring-1 ring-black/[0.05] hover:bg-card dark:ring-white/10",
                 )}
               >
-                <Icon className="size-4 shrink-0" aria-hidden />
+                <Icon className={cn("size-4 shrink-0", active ? "text-sidebar-primary" : "text-sidebar-foreground/55")} aria-hidden />
                 <span className="truncate">{label}</span>
                 <CountBadge n={n} urgent={urgent} />
               </Link>
@@ -62,7 +62,7 @@ function NavLinks({ isOwner, ai, counts, onNavigate }: { isOwner: boolean; ai: b
         );
         return g.secondary ? (
           <details key={`${g.label}-${path}`} open={g.items.some((i) => isActive(path, i.href)) || undefined} className="group">
-            <summary className="cursor-pointer rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent">{g.label}</summary>
+            <summary className="cursor-pointer rounded-lg px-2.5 py-2 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70">{g.label}</summary>
             {links}
           </details>
         ) : links;
@@ -98,7 +98,7 @@ function Identity({ name, role }: { name: string; role: string }) {
     .map((w) => w[0]?.toUpperCase())
     .join("");
   return (
-    <div className="flex items-center gap-2.5 border-t pt-3">
+    <div className="flex items-center gap-2.5 border-t border-sidebar-border pt-3">
       <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-(--brand-sage) text-xs font-semibold text-white">
         {initials}
       </span>
@@ -134,9 +134,11 @@ function Identity({ name, role }: { name: string; role: string }) {
 /** Desktop sidebar: brand, ⌘K search, + New, grouped links with live counts, and the signed-in person. */
 export function SideNav({ isOwner, ai, counts, name, role }: { isOwner: boolean; ai: boolean; counts: NavCounts; name: string; role: string }) {
   return (
-    <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-sidebar p-3 md:flex">
-      <Link href="/" className="flex items-center gap-2.5 px-1.5 pt-1">
-        <Image src="/ess-mark.png" alt="" width={36} height={36} priority className="size-9 shrink-0" />
+    <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col gap-5 overflow-y-auto border-r border-sidebar-border bg-sidebar p-4 md:flex">
+      <Link href="/" className="flex items-center gap-3 px-1 pt-1">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-card shadow-card ring-1 ring-black/[0.05]">
+          <Image src="/ess-mark.png" alt="" width={32} height={32} priority className="size-8" />
+        </span>
         <span className="leading-tight">
           <span className="block text-sm font-semibold">ESS CRM</span>
           <span className="block text-[11px] text-muted-foreground">Environmental Safeguard Solutions</span>

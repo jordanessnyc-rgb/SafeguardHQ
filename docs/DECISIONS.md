@@ -606,3 +606,13 @@ changes worth knowing:
 - **Schedule UI:** *New event* button and double-click on an empty slot; click a Titan event to change title, when, where, notes, or delete it; drag a Titan event to move it (one occurrence for a repeating one). Any calendar in the mailbox can be written to; which one is chosen per event.
 - **No invitations:** nothing ever gets `ATTENDEE`/`ORGANIZER`, so Titan never emails anyone (rule 6). Every create/change/delete is audit-logged (`titan_event`).
 - Tested live against Jordan's mailbox from the local app (create → edit → delete of a test event, cleaned up).
+
+## 2026-10-07 — Visual refresh: "make it feel like an application"
+
+- Jordan: the software "looks like mid-2000s software". The fix is a design system pass, not page-by-page rewrites, so every screen moves together:
+  - **Canvas and surfaces.** The page is a faint green-grey; cards, panes and the sidebar's active item are white and lifted (`shadow-card`, hairline ring) instead of flat boxes with 1 px grey borders. Radius 12 px. A `.panel` class gives hand-built containers (Messages, Schedule, lists) the same look as `Card`.
+  - **Type.** Inter (with its `cv11`/`ss01` alternates) replaces Geist; page titles are larger; table headers are small caps.
+  - **Controls.** Inputs and buttons are 36 px high with a white fill and a soft shadow; the primary button has a slight inner highlight; filter chips (`.chip`/`.chip-on`) are pills.
+  - **Schedule.** Day headers show the weekday and a large date (today in a green disc), a red "now" line, lighter gridlines, Titan events as tinted blocks with a colour bar rather than dashed outlines, and the long explanation folded behind "How the calendar works".
+  - **Messages.** The list sits on a muted pane with the open message white; the action bar is a muted strip.
+- Nothing functional changed; this is CSS and class names. Dark-mode tokens were kept in step.

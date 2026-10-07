@@ -43,7 +43,7 @@ export function MessageActions({ activityId, nextHref, archived, reply, forward,
     });
 
   return (
-    <section aria-label="Message actions" className="space-y-3 rounded-lg border bg-sidebar/60 p-3">
+    <section aria-label="Message actions" className="space-y-3 rounded-xl bg-muted/50 p-3 ring-1 ring-black/[0.04]">
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant={mode === "reply" ? "default" : "outline"} onClick={() => setMode(mode === "reply" ? null : "reply")}>
           <Reply /> {reply.channel === "SMS" ? "Text back" : "Reply"}
@@ -73,7 +73,7 @@ export function MessageActions({ activityId, nextHref, archived, reply, forward,
         </Button>
       </div>
       {mode && (
-        <div className="rounded-md border bg-background p-3">
+        <div className="rounded-xl bg-card p-4 shadow-card ring-1 ring-black/[0.05]">
           <ComposeMessage
             key={mode}
             phones={compose.phones}

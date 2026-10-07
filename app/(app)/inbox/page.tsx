@@ -161,7 +161,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     />
   );
   const searchForm = (
-    <form className="flex gap-1 border-b p-2" role="search">
+    <form className="flex gap-1 border-b border-border/70 p-2.5" role="search">
       {box !== "review" && <input type="hidden" name="box" value={box} />}
       <Input name="q" type="search" defaultValue={q} placeholder="Search sender, subject or text" aria-label="Search messages" className="h-8" />
     </form>
@@ -170,7 +170,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     return (
       <>
         {header}
-        <div className="overflow-hidden rounded-xl border bg-background">
+        <div className="panel overflow-hidden">
           {searchForm}
           <EmptyState>{q ? `Nothing matches "${q}".` : BOX_TEXT[box].empty}</EmptyState>
         </div>
@@ -249,17 +249,17 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   return (
     <>
       {header}
-      <div className="grid overflow-hidden rounded-xl border bg-background lg:grid-cols-[22rem_minmax(0,1fr)]">
+      <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
         {/* ---------- message list ---------- */}
-        <nav aria-label="Messages to file" className={cn("min-w-0 border-r lg:block", explicit && "hidden")}>
+        <nav aria-label="Messages to file" className={cn("min-w-0 border-r border-border/70 bg-muted/20 lg:block", explicit && "hidden")}>
           {searchForm}
-          <div className="flex items-center justify-between border-b px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between border-b border-border/70 px-3 py-2 text-xs text-muted-foreground">
             <span>{total > items.length ? `Newest ${items.length} of ${total}` : `${total} ${BOX_TEXT[box].listLabel}`}</span>
             <span className="hidden lg:inline">
               <kbd className="rounded border bg-muted px-1 font-mono">J</kbd> <kbd className="rounded border bg-muted px-1 font-mono">K</kbd> to move
             </span>
           </div>
-          <ul className="divide-y lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto">
+          <ul className="divide-y divide-border/60 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto">
             {items.map((m, i) => {
               const name = (m.type === "SMS" ? null : m.fromName) ?? (m.contact?.id ? personName(m.contact) : null) ?? (m.fromAddress?.startsWith("+") ? formatPhone(m.fromAddress) : m.fromAddress) ?? "Unknown";
               const active = m.id === current.id;
@@ -270,7 +270,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                     scroll={false}
                     data-inbox-item
                     aria-current={active ? "true" : undefined}
-                    className={cn("flex gap-3 px-3 py-2.5 hover:bg-muted/60", active && "bg-sidebar-accent hover:bg-sidebar-accent lg:shadow-[inset_3px_0_0_var(--color-primary)]")}
+                    className={cn("flex gap-3 px-3 py-3 transition-colors hover:bg-card", active && "bg-card hover:bg-card lg:shadow-[inset_3px_0_0_var(--color-primary)]")}
                   >
                     <Avatar name={name} className="mt-0.5 size-8 text-xs" />
                     <span className="min-w-0 flex-1">
@@ -300,7 +300,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
 
         {/* ---------- open message ---------- */}
         <article aria-label="Open message" className={cn("min-w-0 lg:block", !explicit && "hidden")}>
-          <div className="flex items-center gap-1 border-b px-3 py-1.5">
+          <div className="flex items-center gap-1 border-b border-border/70 px-3 py-1.5">
             <Link href={base.replace(/[?&]$/, "")} className={cn(buttonVariants({ size: "sm", variant: "ghost" }), "lg:hidden")}>
               <ArrowLeft /> All messages
             </Link>

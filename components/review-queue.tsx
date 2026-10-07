@@ -13,8 +13,8 @@ export function QueueTabs({ active, toFile, toApprove }: { active: MessageBox; t
       href={href}
       aria-current={active === key ? "page" : undefined}
       className={cn(
-        "flex h-8 items-center gap-1.5 rounded-md px-3 text-sm",
-        active === key ? "bg-background font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground",
+        "flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm transition-colors",
+        active === key ? "bg-card font-semibold text-primary shadow-card ring-1 ring-black/[0.05]" : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
       )}
     >
       {label}
@@ -22,7 +22,7 @@ export function QueueTabs({ active, toFile, toApprove }: { active: MessageBox; t
     </Link>
   );
   return (
-    <nav aria-label="Messages" className="inline-flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+    <nav aria-label="Messages" className="inline-flex flex-wrap gap-0.5 rounded-xl bg-muted p-1">
       {tab("review", "/inbox", "To file", toFile)}
       {tab("inbox", "/inbox?box=inbox", "Inbox")}
       {tab("sent", "/inbox?box=sent", "Sent")}

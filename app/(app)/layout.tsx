@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       <SideNav {...nav} />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileNav {...nav} />
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 pb-24 md:p-6 md:pb-6">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 p-4 pb-24 md:px-8 md:py-7 md:pb-8">{children}</main>
       </div>
       <CommandPalette isOwner={nav.isOwner} ai={nav.ai} />
     </div>
