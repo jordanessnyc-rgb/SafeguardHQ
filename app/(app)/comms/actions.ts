@@ -1,5 +1,7 @@
 "use server";
 
+import { storageDownloader } from "@/lib/supabase/service";
+
 import { aiEnabled } from "@/lib/ai/enabled";
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
@@ -16,7 +18,7 @@ import { mailSenderFromEnv } from "@/lib/integrations/titan-mail";
 import { toE164 } from "@/lib/phone";
 import { AI_PLACEHOLDER_RE, draftReply } from "@/lib/ai/draft";
 
-const deps = () => ({ quo: quoFromEnv(), mail: mailSenderFromEnv() });
+const deps = () => ({ quo: quoFromEnv(), mail: mailSenderFromEnv(), files: storageDownloader() });
 
 export async function renderTemplateFor(key: string, ids: { contactId?: string; jobId?: string }) {
   const user = await requireStaff();
@@ -44,6 +46,11 @@ const composeSchema = z
     jobId: optionalUuid,
     airnycCaseId: optionalUuid,
     inReplyTo: z.string().optional(),
+    cc: z
+      .string()
+      .optional()
+      .transform((v) => (v ?? "").split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))
+      .pipe(z.array(z.email("Check the Cc addresses")).max(10)),
     intent: z.enum(["draft", "send"]),
   })
   .superRefine((v, ctx) => {
@@ -61,9 +68,20 @@ export async function composeMessage(_prev: ActionState, form: FormData): Promis
     if (unfilled) throw new Error(`Fill in ${unfilled} before sending (or save as a draft).`);
     const containsPricing = form.get("containsPricing") === "on";
     if (containsPricing && user.role !== "OWNER") throw new Error("Only the owner can send messages that include pricing.");
+    const attachmentIds = z.array(z.uuid()).max(10).parse(form.getAll("attachmentId").map(String));
     const draft = await user.db(async (tx) => {
       const [job] = v.jobId ? await tx.select({ brand: s.jobs.brand }).from(s.jobs).where(eq(s.jobs.id, v.jobId)) : [];
+      // Attachments are the job's own documents (RLS already hides pricing files from VAs).
+      const docs = attachmentIds.length && v.channel === "EMAIL" ? await tx.select({ id: s.documents.id, title: s.documents.title, path: s.documents.storagePath }).from(s.documents).where(inArray(s.documents.id, attachmentIds)) : [];
+      if (docs.length !== attachmentIds.length) throw new Error("One of the attachments isn't available.");
+      const attachments = docs.map((d) => {
+        const ext = d.path?.match(/\.([a-z0-9]+)$/i)?.[1];
+        const title = d.title?.trim() || "document";
+        return { documentId: d.id, name: /\.[a-z0-9]+$/i.test(title) || !ext ? title : `${title}.${ext}` };
+      });
       return createDraft(tx, {
+        cc: v.channel === "EMAIL" ? v.cc : [],
+        attachments,
         channel: v.channel,
         source: v.templateKey ? "TEMPLATE" : "MANUAL",
         templateKey: v.templateKey,

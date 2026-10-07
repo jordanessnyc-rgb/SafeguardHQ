@@ -910,6 +910,9 @@ export const outboundMessages = pgTable(
     subject: text("subject"),
     body: text("body").notNull(),
     inReplyTo: text("in_reply_to"),
+    // Email only: extra recipients and job documents to attach (fetched from storage when sending).
+    cc: text("cc").array().notNull().default(sql`'{}'::text[]`),
+    attachments: jsonb("attachments").$type<{ documentId: string; name: string }[]>().notNull().default(sql`'[]'::jsonb`),
     brand: brandEnum("brand").notNull().default("ESS"),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),

@@ -11,6 +11,7 @@ import { schema as s, type Db } from "@/lib/db";
 import { imapClient, type TitanConfig } from "@/lib/integrations/titan-mail";
 import { ingestEmail, type DriveUploader, type Uploader } from "@/lib/mail/ingest";
 import { emailHeaders, emailHtml, emailMeta } from "@/lib/mail/meta";
+import { runMailboxOps } from "./mail-ops";
 
 const FOLDER = "INBOX";
 
@@ -183,12 +184,16 @@ export async function runMailListener(deps: Deps, signal?: AbortSignal): Promise
         })
         .catch((e) => log("[mail] backfill error", (e as Error).message));
       const kick = () => {
-        chain = chain.then(() => processNew(client, deps)).catch((e) => log("[mail] process error", (e as Error).message));
+        chain = chain
+          .then(() => processNew(client, deps))
+          // Archive/delete/restore asked for in the CRM, carried out here where IMAP works.
+          .then(() => runMailboxOps(client, deps.db, log))
+          .catch((e) => log("[mail] process error", (e as Error).message));
       };
       client.on("exists", kick);
       // Safety net every 60s (SPEC: "fall back to polling every 60s"): catches anything IDLE
       // didn't announce and keeps lastOkAt fresh for the 15-minute health check.
-      heartbeat = setInterval(kick, 60_000);
+      heartbeat = setInterval(kick, 20_000);
       await chain;
       await Promise.race([closed, new Promise((r) => signal?.addEventListener("abort", r))]);
     } catch (e) {

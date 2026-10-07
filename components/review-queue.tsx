@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-/** Tabs shared by Inbox review and Outbox, which together make up the Review queue. */
-export function QueueTabs({ active, toFile, toApprove }: { active: "inbox" | "outbox"; toFile: number; toApprove: number }) {
-  const tab = (key: "inbox" | "outbox", href: string, label: string, n: number) => (
+export type MessageBox = "review" | "inbox" | "sent" | "archived" | "outbox";
+
+/** The Messages tabs: the review queue, the whole mailbox, and drafts waiting for approval. */
+export function QueueTabs({ active, toFile, toApprove }: { active: MessageBox; toFile: number; toApprove: number }) {
+  const tab = (key: MessageBox, href: string, label: string, n?: number) => (
     <Link
       href={href}
       aria-current={active === key ? "page" : undefined}
@@ -16,12 +18,15 @@ export function QueueTabs({ active, toFile, toApprove }: { active: "inbox" | "ou
       )}
     >
       {label}
-      <span className={cn("rounded-full px-1.5 text-xs tabular-nums", n ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>{n}</span>
+      {n !== undefined && <span className={cn("rounded-full px-1.5 text-xs tabular-nums", n ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>{n}</span>}
     </Link>
   );
   return (
-    <nav aria-label="Message sections" className="inline-flex gap-1 rounded-lg bg-muted p-1">
-      {tab("inbox", "/inbox", "Incoming", toFile)}
+    <nav aria-label="Messages" className="inline-flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+      {tab("review", "/inbox", "To file", toFile)}
+      {tab("inbox", "/inbox?box=inbox", "Inbox")}
+      {tab("sent", "/inbox?box=sent", "Sent")}
+      {tab("archived", "/inbox?box=archived", "Archived")}
       {tab("outbox", "/outbox", "Drafts & approvals", toApprove)}
     </nav>
   );
