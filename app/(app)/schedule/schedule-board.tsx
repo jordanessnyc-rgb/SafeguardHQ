@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CalendarPlus, GripVertical, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -116,6 +116,17 @@ export function ScheduleBoard({
   }
   const [offCals, setOffCals] = useState<Set<string>>(new Set());
   const [pending, start] = useTransition();
+  // The "now" line: New York minutes since midnight, refreshed each minute (client only, so no hydration mismatch).
+  const [nowMinutes, setNowMinutes] = useState(-1);
+  useEffect(() => {
+    const tick = () => {
+      const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+      setNowMinutes(Number(p.find((x) => x.type === "hour")!.value) * 60 + Number(p.find((x) => x.type === "minute")!.value));
+    };
+    tick();
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const color = useMemo(() => new Map(staff.map((u, i) => [u.id, COLORS[i % COLORS.length]])), [staff]);
   const swatch = useMemo(() => new Map(staff.map((u, i) => [u.id, SWATCH[i % SWATCH.length]])), [staff]);
@@ -206,14 +217,14 @@ export function ScheduleBoard({
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
       <div className="min-w-0">
-        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-muted-foreground">Show:</span>
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="mr-0.5 text-muted-foreground">Show</span>
           {[{ id: "all", label: "Everyone" }, ...staff, { id: "none", label: "Unassigned" }].map((u) => (
             <button
               key={u.id}
               type="button"
               onClick={() => setWho(u.id)}
-              className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1", who === u.id ? "border-primary bg-sidebar-accent font-medium text-primary" : "hover:bg-muted")}
+              className={cn("chip", who === u.id && "chip-on")}
             >
               {u.id !== "all" && <span className={cn("size-2.5 rounded-full", u.id === "none" ? "bg-zinc-500" : swatch.get(u.id))} aria-hidden />}
               {u.label}
@@ -221,8 +232,8 @@ export function ScheduleBoard({
           ))}
         </div>
         {(calendars.length > 0 || calendarError) && (
-          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-muted-foreground">Titan:</span>
+          <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="mr-0.5 text-muted-foreground">Titan</span>
             {calendars.map((c) => {
               const on = !offCals.has(c.url);
               return (
@@ -231,7 +242,7 @@ export function ScheduleBoard({
                   type="button"
                   aria-pressed={on}
                   onClick={() => setOffCals((s) => (s.delete(c.url) ? new Set(s) : new Set(s).add(c.url)))}
-                  className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1", on ? "hover:bg-muted" : "text-muted-foreground line-through opacity-60 hover:bg-muted")}
+                  className={cn("chip", !on && "line-through opacity-50")}
                   title={on ? "Hide these events" : "Show these events"}
                 >
                   <span className="size-2.5 rounded-full" style={{ background: calColor(c.color) }} aria-hidden />
@@ -256,25 +267,29 @@ export function ScheduleBoard({
             )}
           </div>
         )}
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="panel overflow-x-auto">
           <div className="grid" style={{ gridTemplateColumns: `3.25rem repeat(${shown.length}, minmax(${shown.length > 1 ? "6.5rem" : "12rem"}, 1fr))`, minWidth: shown.length > 1 ? `${3.25 + shown.length * 6.5}rem` : undefined }}>
-            <div className="sticky left-0 z-10 border-b bg-background" />
-            {shown.map((d) => (
-              <Link
-                key={d}
-                href={`/schedule?view=day&date=${d}`}
-                className={cn("border-b border-l px-2 py-1.5 text-center text-xs font-medium hover:bg-muted", d === today && "bg-sidebar-accent text-primary")}
-                title="Open this day"
-              >
-                {dayLabel(d)}
-                <span className="ml-1 font-normal text-muted-foreground">{events.filter((e) => e.day === d).length || ""}</span>
-              </Link>
-            ))}
+            <div className="sticky left-0 z-10 border-b border-border/70 bg-card" />
+            {shown.map((d) => {
+              const n = events.filter((e) => e.day === d).length;
+              return (
+                <Link
+                  key={d}
+                  href={`/schedule?view=day&date=${d}`}
+                  className={cn("flex flex-col items-center gap-0.5 border-b border-l border-border/70 py-2 text-center hover:bg-muted/60", d === today && "bg-primary/[0.04]")}
+                  title="Open this day"
+                >
+                  <span className={cn("text-[10.5px] font-semibold tracking-[0.12em] uppercase", d === today ? "text-primary" : "text-muted-foreground")}>{new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short" })}</span>
+                  <span className={cn("flex size-7 items-center justify-center rounded-full text-base font-semibold tabular-nums", d === today && "bg-primary text-primary-foreground shadow-sm")}>{Number(d.slice(8, 10))}</span>
+                  <span className="h-3 text-[10px] text-muted-foreground">{n ? `${n} visit${n > 1 ? "s" : ""}` : ""}</span>
+                </Link>
+              );
+            })}
             {titanAllDay.some((e) => shown.includes(e.day)) && (
               <>
-                <div className="sticky left-0 z-10 border-b bg-background pr-1.5 pt-1 text-right text-[10px] text-muted-foreground">all day</div>
+                <div className="sticky left-0 z-10 border-b border-border/70 bg-card pr-1.5 pt-1 text-right text-[10px] text-muted-foreground">all day</div>
                 {shown.map((d) => (
-                  <div key={d} className="space-y-0.5 border-b border-l p-0.5">
+                  <div key={d} className="space-y-0.5 border-b border-l border-border/70 p-0.5">
                     {titanAllDay
                       .filter((e) => e.day === d)
                       .map((e) => (
@@ -282,7 +297,7 @@ export function ScheduleBoard({
                           key={e.id}
                           type="button"
                           onClick={() => setEditor({ kind: "edit", event: e })}
-                          className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] hover:ring-2 hover:ring-primary/40"
+                          className="block w-full truncate rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium transition-shadow hover:ring-2 hover:ring-primary/40"
                           style={{ background: `${calColor(cal.get(e.calendarUrl)?.color)}26`, borderLeft: `3px solid ${calColor(cal.get(e.calendarUrl)?.color)}` }}
                           title={`${e.title} (Titan: ${cal.get(e.calendarUrl)?.name ?? "calendar"})`}
                         >
@@ -293,10 +308,10 @@ export function ScheduleBoard({
                 ))}
               </>
             )}
-            <div className="sticky left-0 z-10 bg-background">
+            <div className="sticky left-0 z-10 bg-card">
               {Array.from({ length: rows }, (_, i) => (
-                <div key={i} style={{ height: ROW }} className="pr-1.5 text-right text-[10px] leading-none text-muted-foreground">
-                  {(first + i * SLOT) % 60 === 0 ? clock(first + i * SLOT) : ""}
+                <div key={i} style={{ height: ROW }} className="-translate-y-1.5 pr-2 text-right text-[10px] leading-none text-muted-foreground tabular-nums">
+                  {(first + i * SLOT) % 60 === 0 && i > 0 ? clock(first + i * SLOT) : ""}
                 </div>
               ))}
             </div>
@@ -309,7 +324,7 @@ export function ScheduleBoard({
                   key={d}
                   role="grid"
                   aria-label={`${dayLabel(d, "long")}: drop a job here to book it`}
-                  className={cn("relative border-l", d === today && "bg-sidebar/40")}
+                  className={cn("relative border-l border-border/70", d === today && "bg-primary/[0.025]")}
                   style={{ height: rows * ROW }}
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -333,8 +348,13 @@ export function ScheduleBoard({
                   title={calendars.length ? "Double-click an empty slot to add a calendar event" : undefined}
                 >
                   {Array.from({ length: rows }, (_, i) => (
-                    <div key={i} data-slot="1" style={{ top: i * ROW, height: ROW }} className={cn("absolute inset-x-0 border-t", (first + i * SLOT) % 60 === 0 ? "border-border" : "border-dashed border-border/40")} />
+                    <div key={i} data-slot="1" style={{ top: i * ROW, height: ROW }} className={cn("absolute inset-x-0 border-t", (first + i * SLOT) % 60 === 0 ? "border-border/70" : "border-border/25")} />
                   ))}
+                  {d === today && nowMinutes > first && nowMinutes < last && (
+                    <div style={{ top: ((nowMinutes - first) / SLOT) * ROW }} className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-red-500/80">
+                      <span className="absolute -top-[5px] -left-[4px] size-2 rounded-full bg-red-500" />
+                    </div>
+                  )}
                   {over?.day === d && (
                     <div style={{ top: ((over.minutes - first) / SLOT) * ROW, height: (120 / SLOT) * ROW }} className="pointer-events-none absolute inset-x-1 rounded-md border-2 border-dashed border-primary bg-primary/10 text-[10px] font-medium text-primary">
                       <span className="px-1">{clock(over.minutes)}</span>
@@ -351,8 +371,8 @@ export function ScheduleBoard({
                         draggable={Boolean(e.href)}
                         onDragStart={(ev) => ev.dataTransfer.setData("text/titan-id", e.id)}
                         onClick={() => setEditor({ kind: "edit", event: e })}
-                        style={{ top: ((e.minutes - first) / SLOT) * ROW + 1, height, left: `calc(${(l.lane / l.of) * 100}% + 2px)`, width: `calc(${100 / l.of}% - 4px)`, background: `${c}1f`, borderColor: `${c}66`, borderLeftColor: c }}
-                        className="absolute cursor-grab overflow-hidden rounded-md border border-l-4 border-dashed px-1.5 py-1 text-left text-[11px] leading-tight hover:ring-2 hover:ring-primary/40 active:cursor-grabbing"
+                        style={{ top: ((e.minutes - first) / SLOT) * ROW + 1, height, left: `calc(${(l.lane / l.of) * 100}% + 2px)`, width: `calc(${100 / l.of}% - 4px)`, background: `${c}24`, borderLeftColor: c }}
+                        className="absolute cursor-grab overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight shadow-xs transition-shadow hover:shadow-raised hover:ring-2 hover:ring-primary/30 active:cursor-grabbing"
                         aria-label={`${e.title}, ${e.when}. Titan calendar ${cal.get(e.calendarUrl)?.name ?? ""}. Click to change, drag to move.`}
                       >
                         <span className="block font-medium">{clock(e.minutes)}</span>
@@ -373,7 +393,7 @@ export function ScheduleBoard({
                         onClick={() => open(j)}
                         style={{ top: ((j.minutes! - first) / SLOT) * ROW + 1, height, left: `calc(${(l.lane / l.of) * 100}% + 2px)`, width: `calc(${100 / l.of}% - 4px)` }}
                         className={cn(
-                          "absolute cursor-grab overflow-hidden rounded-md border border-l-4 px-1.5 py-1 text-left text-[11px] leading-tight shadow-xs hover:ring-2 hover:ring-primary/40 active:cursor-grabbing",
+                          "absolute cursor-grab overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight shadow-xs ring-1 ring-black/[0.06] transition-shadow hover:shadow-raised hover:ring-primary/30 active:cursor-grabbing",
                           j.assignedTo ? color.get(j.assignedTo) ?? UNASSIGNED : UNASSIGNED,
                         )}
                         aria-label={`${j.jobNumber}, ${j.service}, ${clock(j.minutes!)}. Click to change.`}
@@ -393,22 +413,25 @@ export function ScheduleBoard({
             })}
           </div>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Drag a job onto the calendar to book it, or drag a booked visit to move it. Click a visit to change its time, length or who&apos;s going. Changes reach the Titan calendar within 5 minutes; clients are never notified.
-          {calendars.length > 0 && " Events with dashed borders are your Titan calendar events: click one to change or delete it, drag it to move it, or double-click an empty slot to add one. Those changes go to Titan right away."}
-        </p>
+        <details className="mt-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none hover:text-foreground">How the calendar works</summary>
+          <p className="mt-1 max-w-prose">
+            Drag a job onto the calendar to book it, or drag a booked visit to move it. Click a visit to change its time, length or who&apos;s going. Changes reach the Titan calendar within 5 minutes; clients are never notified.
+            {calendars.length > 0 && " Tinted events are your Titan calendar events: click one to change or delete it, drag it to move it, or double-click an empty slot to add one. Those changes go to Titan right away."}
+          </p>
+        </details>
       </div>
 
-      <aside aria-label="Jobs to schedule" className="rounded-lg border">
-        <div className="border-b p-3">
+      <aside aria-label="Jobs to schedule" className="panel self-start">
+        <div className="border-b border-border/70 p-3">
           <h2 className="text-sm font-semibold">To schedule <span className="font-normal text-muted-foreground">({waiting.length})</span></h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Open jobs with no visit booked. Ready-to-book jobs are first.</p>
           <Input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search job, address, client" aria-label="Search jobs to schedule" className="mt-2 h-8" />
         </div>
-        <ul className="max-h-[70vh] divide-y overflow-y-auto">
+        <ul className="max-h-[70vh] divide-y divide-border/60 overflow-y-auto">
           {filtered.length === 0 && <li className="p-3 text-sm text-muted-foreground">{waiting.length ? "No match." : "Everything open is booked."}</li>}
           {filtered.map((j) => (
-            <li key={j.id} draggable onDragStart={(e) => e.dataTransfer.setData("text/job-id", j.id)} className="flex cursor-grab items-start gap-1.5 p-2.5 text-xs hover:bg-muted/60 active:cursor-grabbing">
+            <li key={j.id} draggable onDragStart={(e) => e.dataTransfer.setData("text/job-id", j.id)} className="flex cursor-grab items-start gap-1.5 p-3 text-xs transition-colors hover:bg-muted/50 active:cursor-grabbing">
               <GripVertical className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1">
                 <Link href={`/jobs/${j.id}`} className="font-mono hover:underline">{j.jobNumber}</Link> · {j.service}

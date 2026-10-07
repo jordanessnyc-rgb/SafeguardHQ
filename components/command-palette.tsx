@@ -31,7 +31,7 @@ export function SearchButton({ className, iconOnly }: { className?: string; icon
       type="button"
       onClick={openPalette}
       className={cn(
-        "flex h-9 items-center gap-2 rounded-lg border bg-background px-2.5 text-sm text-muted-foreground hover:border-primary/50 hover:text-foreground",
+        "flex h-10 items-center gap-2 rounded-xl border-0 bg-card px-3 text-sm text-muted-foreground shadow-card ring-1 ring-black/[0.05] transition-shadow hover:ring-primary/40 hover:text-foreground dark:ring-white/10",
         className,
       )}
     >
