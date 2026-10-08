@@ -13,10 +13,10 @@ const RECORDS = [
 export function RecordsNav() {
   const path = usePathname();
   return (
-    <nav aria-label="Clients & properties" className="mb-5 flex gap-1 border-b">
+    <nav aria-label="Clients & properties" className="seg mb-5">
       {RECORDS.map(({ href, label }) => {
         const active = path === href || path.startsWith(`${href}/`);
-        return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cn("-mb-px border-b-2 px-4 py-2 text-sm", active ? "border-primary font-semibold text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}>{label}</Link>;
+        return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cn("seg-item", active && "seg-on")}>{label}</Link>;
       })}
     </nav>
   );
