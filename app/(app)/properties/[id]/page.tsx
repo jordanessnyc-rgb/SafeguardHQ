@@ -4,7 +4,7 @@ import { Timeline } from "@/components/timeline";
 import { ConfirmSubmit } from "@/components/confirm-submit";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import { ExternalLink } from "lucide-react";
+import { Building2, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActionForm, Field, SubmitButton } from "@/components/forms";
-import { EmptyState, PageHeader } from "@/components/page-header";
+import { EmptyState } from "@/components/page-header";
+import { Fact, FactGrid, MetaChip, RecordHeader } from "@/components/record-header";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { fmtDate, label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
@@ -86,19 +87,22 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
 
   return (
     <>
-      <PageHeader
+      <RecordHeader
+        icon={<Building2 />}
         title={
           <>
             {p.addressLine}
             {p.unit ? `, #${p.unit}` : ""}
           </>
         }
-        description={
-          <span className="flex flex-wrap items-center gap-2">
-            {p.borough} {p.zip}
-            <span className="font-mono text-xs">BBL {p.bbl ?? "unresolved"} · BIN {p.bin ?? "—"}</span>
+        chips={
+          <>
+            {(p.borough || p.zip) && <MetaChip>{[p.borough, p.zip].filter(Boolean).join(" ")}</MetaChip>}
+            <MetaChip label="BBL"><span className="font-mono">{p.bbl ?? "unresolved"}</span></MetaChip>
+            <MetaChip label="BIN"><span className="font-mono">{p.bin ?? "—"}</span></MetaChip>
+            {jobs.length > 0 && <MetaChip>{jobs.length} job{jobs.length === 1 ? "" : "s"}</MetaChip>}
             {p.isNycha && <Badge variant="destructive">NYCHA — landlord consent risk</Badge>}
-          </span>
+          </>
         }
         actions={
           <>
@@ -113,7 +117,7 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
       />
 
       {p.enrichmentStatus !== "OK" && (
-        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p className="mb-4 rounded-xl border border-amber-300/70 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
           NYC data {p.enrichmentStatus === "PENDING" ? "hasn't been pulled yet" : `is ${p.enrichmentStatus.toLowerCase()}`}.
           {p.enrichmentError && <span className="block whitespace-pre-line text-xs">{p.enrichmentError}</span>}
         </p>
@@ -124,13 +128,15 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
           <CardHeader>
             <CardTitle>Building</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1 text-sm">
-            <Fact k="Owner (PLUTO)" v={p.ownerName} />
-            <Fact k="Building class" v={p.buildingClass} />
-            <Fact k="Residential units" v={p.unitsRes} />
-            <Fact k="Year built" v={p.yearBuilt} />
-            <Fact k="HPD registration" v={p.hpdRegistrationId} />
-            <Fact k="Data pulled" v={fmtDate(p.enrichedAt, true)} />
+          <CardContent className="space-y-3 text-sm">
+            <FactGrid className="sm:grid-cols-2 lg:grid-cols-2">
+              <Fact label="Owner (PLUTO)">{p.ownerName}</Fact>
+              <Fact label="Building class">{p.buildingClass}</Fact>
+              <Fact label="Residential units">{p.unitsRes}</Fact>
+              <Fact label="Year built">{p.yearBuilt}</Fact>
+              <Fact label="HPD registration">{p.hpdRegistrationId}</Fact>
+              <Fact label="Data pulled">{fmtDate(p.enrichedAt, true)}</Fact>
+            </FactGrid>
             {p.bbl && (
               <div className="flex flex-wrap gap-3 pt-2 text-xs">
                 <a className="inline-flex items-center gap-1 text-primary hover:underline" target="_blank" rel="noreferrer" href={`https://hpdonline.nyc.gov/hpdonline/building/search-results?boroId=${p.bbl[0]}&block=${Number(p.bbl.slice(1, 6))}&lot=${Number(p.bbl.slice(6))}`}>
@@ -258,10 +264,10 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
           <CardContent className="max-h-[28rem] space-y-2 overflow-y-auto text-sm">
             {jobs.length === 0 && <p className="text-muted-foreground">No jobs at this property yet.</p>}
             {jobs.map((j) => (
-              <Link key={j.id} href={`/jobs/${j.id}`} className="flex justify-between gap-2 rounded-md border p-2 hover:bg-muted">
+              <Link key={j.id} href={`/jobs/${j.id}`} className="flex items-center justify-between gap-2 rounded-xl bg-card p-3 shadow-card ring-1 ring-black/[0.05] transition-[box-shadow,transform] hover:-translate-y-px hover:shadow-raised hover:ring-primary/30">
                 <span>
-                  <span className="font-mono text-xs">{j.jobNumber}</span> · {label(SERVICE_LABELS, j.serviceCode)}
-                  <span className="block text-xs text-muted-foreground">{fmtDate(j.deliveredAt ?? j.createdAt)}</span>
+                  <span className="font-medium">{label(SERVICE_LABELS, j.serviceCode)}</span>
+                  <span className="block text-xs text-muted-foreground"><span className="font-mono">{j.jobNumber}</span> · {fmtDate(j.deliveredAt ?? j.createdAt)}</span>
                 </span>
                 <Badge variant="secondary">{stageName(j)}</Badge>
               </Link>
@@ -306,14 +312,5 @@ export default async function PropertyPage({ params, searchParams }: PageProps<"
         </CardContent>
       </Card>
     </>
-  );
-}
-
-function Fact({ k, v }: { k: string; v: string | number | null | undefined }) {
-  return (
-    <div className="flex justify-between gap-3">
-      <span className="text-muted-foreground">{k}</span>
-      <span className="text-right">{v ?? "—"}</span>
-    </div>
   );
 }

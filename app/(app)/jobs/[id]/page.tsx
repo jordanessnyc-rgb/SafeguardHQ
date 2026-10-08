@@ -6,7 +6,7 @@ import { jobNextStep, nextJobStage } from "@/lib/jobs/next-step";
 import { FieldReadings } from "@/components/field-readings";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { FolderOpen, MessageSquare } from "lucide-react";
+import { ClipboardList, FolderOpen, MessageSquare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActionForm, SubmitButton } from "@/components/forms";
-import { PageHeader } from "@/components/page-header";
+import { MetaChip, RecordHeader } from "@/components/record-header";
 import { Status } from "@/components/status";
 import { TaskList } from "@/components/task-list";
 import { Timeline } from "@/components/timeline";
@@ -175,55 +175,54 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
         <span aria-hidden>/</span>
         <span className="font-mono">{job.jobNumber}</span>
       </nav>
-      <PageHeader
-        title={
-          <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            {property?.addressLine ?? label(SERVICE_LABELS, job.serviceCode)}{property?.unit ? ` · Unit ${property.unit}` : ""}
-            <span className="font-mono text-base font-normal text-muted-foreground">{job.jobNumber}</span>
-          </span>
-        }
-        description={
-          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <Badge variant={stale ? "destructive" : "default"}>
+      <RecordHeader
+        icon={<ClipboardList />}
+        title={<>{property?.addressLine ?? label(SERVICE_LABELS, job.serviceCode)}{property?.unit ? ` · Unit ${property.unit}` : ""}</>}
+        code={job.jobNumber}
+        chips={
+          <>
+            <Badge variant={stale ? "destructive" : "default"} className="h-7 px-2.5">
               {current?.name ?? job.stage} · {daysInStage(job.stageEnteredAt)}d{stale ? ` (limit ${current?.staleAfterDays}d)` : ""}
             </Badge>
-            {(job.priority === "URGENT" || job.priority === "HIGH") && <Badge variant="destructive">{titleCase(job.priority)} priority</Badge>}
+            {(job.priority === "URGENT" || job.priority === "HIGH") && <Badge variant="destructive" className="h-7 px-2.5">{titleCase(job.priority)} priority</Badge>}
+            <MetaChip>{label(SERVICE_LABELS, job.serviceCode)}</MetaChip>
             {property && (
-              <Link className="hover:underline" href={`/properties/${property.id}`}>
-                {property.addressLine}
-                {property.unit ? ` #${property.unit}` : ""}
-                {property.borough ? `, ${property.borough}` : ""}
-              </Link>
+              <MetaChip label="Property">
+                <Link href={`/properties/${property.id}`}>
+                  {property.addressLine}
+                  {property.unit ? ` #${property.unit}` : ""}
+                  {property.borough ? `, ${property.borough}` : ""}
+                </Link>
+              </MetaChip>
             )}
-            {org && <Link className="hover:underline" href={`/organizations/${org.id}`}>· {org.name}</Link>}
-            <span>· {label(SERVICE_LABELS, job.serviceCode)} · {label(BRAND_LABELS, job.brand)}</span>
-            {job.title && <span>· {job.title}</span>}
-          </span>
+            {org && <MetaChip label="Client"><Link href={`/organizations/${org.id}`}>{org.name}</Link></MetaChip>}
+            <MetaChip>{label(BRAND_LABELS, job.brand)}</MetaChip>
+            {job.title && <MetaChip>{job.title}</MetaChip>}
+          </>
         }
         actions={
-          <div className="flex flex-wrap items-start justify-end gap-2">
+          <>
             {job.driveFolderUrl ? (
-              <a href={job.driveFolderUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "lg" })}>
+              <a href={job.driveFolderUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
                 <FolderOpen /> Drive
               </a>
             ) : (
               <ActionForm action={createJobDriveFolder.bind(null, id)} className="flex flex-col items-end gap-1">
-                <SubmitButton variant="outline" size="lg">Create Drive folder</SubmitButton>
+                <SubmitButton variant="outline">Create Drive folder</SubmitButton>
               </ActionForm>
             )}
             {contact && !contact.doNotContact && (
-              <Link href={`/jobs/${id}?tab=messages`} className={buttonVariants({ variant: "outline", size: "lg" })}>
+              <Link href={`/jobs/${id}?tab=messages`} className={buttonVariants({ variant: "outline" })}>
                 <MessageSquare /> Message client
               </Link>
             )}
-
-          </div>
+          </>
         }
       />
 
       {tab === "overview" && <JobNextStep jobId={id} jobNumber={job.jobNumber} step={nextStep} next={nextStage ? { key: nextStage.key, name: nextStage.name, blocked: blockers.get(nextStage.key) ?? [] } : null} stages={stageOptions} canMarkLost={!current?.isTerminal} />}
 
-      <details className="mb-4 rounded-xl border bg-card p-4">
+      <details className="panel mb-4 p-4">
         <summary className="cursor-pointer text-sm font-medium">Detailed workflow <span className="ml-2 font-normal text-muted-foreground">{current?.name ?? job.stage}{nextStage ? ` → ${nextStage.name}` : ""}</span></summary>
         <section aria-label="Pipeline progress" className="mt-4">
         {current?.isTerminal && (
