@@ -159,9 +159,9 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         description="Find a job by address or client, then see what needs to happen next."
         actions={
           <>
-            <div className="flex rounded-lg border p-0.5">
-              <Link href={qs({ view: "board", stage: undefined, service: undefined, stale: undefined, sort: undefined })} className={buttonVariants({ size: "sm", variant: view === "board" ? "secondary" : "ghost" })}>Board</Link>
-              <Link href={qs({ view: "list" })} className={buttonVariants({ size: "sm", variant: view === "list" ? "secondary" : "ghost" })}>List</Link>
+            <div className="seg">
+              <Link href={qs({ view: "board", stage: undefined, service: undefined, stale: undefined, sort: undefined })} className={cn("seg-item", view === "board" && "seg-on")}>Board</Link>
+              <Link href={qs({ view: "list" })} className={cn("seg-item", view === "list" && "seg-on")}>List</Link>
             </div>
             <Link href="/jobs/new" className={buttonVariants()}>New job</Link>
           </>
@@ -176,7 +176,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           ))}
         <FilterForm action="/jobs" className={view === "board" ? "ml-auto w-full sm:w-auto" : "w-full"}>
           <input type="hidden" name="view" value={view} />
-          <label className="flex h-8 items-center gap-2 rounded-lg border px-2.5 text-sm">
+          <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm shadow-xs">
             <input type="checkbox" name="mine" value="1" defaultChecked={mine} className="size-4 accent-primary" />
             Mine
           </label>
@@ -201,7 +201,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
                 <option value="">All services</option>
                 {Object.entries(SERVICE_LABELS).filter(([k]) => k !== "AIRNYC").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </NativeSelect>
-              <label className="flex h-8 items-center gap-2 rounded-lg border px-2.5 text-sm">
+              <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm shadow-xs">
                 <input type="checkbox" name="stale" value="1" defaultChecked={staleOnly} className="size-4 accent-primary" />
                 Stale only
               </label>
@@ -283,9 +283,9 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
 
 function Stat({ label: title, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" }) {
   return (
-    <div className="rounded-lg border bg-card px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{title}</div>
-      <div className={cn("text-lg font-semibold tabular-nums", tone === "good" && "text-primary")}>{value}</div>
+    <div className="panel px-4 py-3">
+      <div className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{title}</div>
+      <div className={cn("mt-0.5 text-2xl font-semibold tracking-tight tabular-nums", tone === "good" && "text-primary")}>{value}</div>
       {sub && <div className="truncate text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );

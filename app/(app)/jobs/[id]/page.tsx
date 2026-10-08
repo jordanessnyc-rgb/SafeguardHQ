@@ -259,7 +259,7 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
         </section>
       </details>
 
-      <nav aria-label="Job sections" className="mb-4 flex gap-1 overflow-x-auto border-b">
+      <nav aria-label="Job sections" className="mb-5 flex gap-1 overflow-x-auto border-b border-border/70">
         {tabs.map((t) => (
           <Link
             key={t.key}
@@ -267,8 +267,8 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
             scroll={false}
             aria-current={t.key === tab ? "page" : undefined}
             className={cn(
-              "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm",
-              t.key === tab ? "border-primary font-semibold text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
+              "-mb-px flex shrink-0 items-center gap-1.5 rounded-t-lg border-b-2 px-3.5 py-2.5 text-sm transition-colors",
+              t.key === tab ? "border-primary font-semibold text-primary" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
             )}
           >
             {t.label}

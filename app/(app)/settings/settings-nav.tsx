@@ -20,12 +20,12 @@ export function SettingsNav({ groups }: { groups: SettingsGroup[] }) {
     <div className="flex flex-col gap-4">
       {groups.map((g) => (
         <div key={g.label} className="flex flex-col gap-0.5">
-          <div className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase">{g.label}</div>
+          <div className="px-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground/80 uppercase">{g.label}</div>
           {g.items.map((i) => {
             const active = i.href === here;
             const cls = cn(
-              "flex min-h-8 items-center gap-2 rounded-md px-2.5 py-1 text-sm hover:bg-muted",
-              active && "bg-sidebar-accent font-medium text-sidebar-primary hover:bg-sidebar-accent",
+              "flex min-h-9 items-center gap-2 rounded-lg px-3 py-1 text-sm text-foreground/80 transition-colors hover:bg-muted",
+              active && "bg-card font-semibold text-primary shadow-card ring-1 ring-black/[0.05] hover:bg-card",
             );
             const inner = (
               <>
@@ -52,7 +52,7 @@ export function SettingsNav({ groups }: { groups: SettingsGroup[] }) {
       <nav aria-label="Settings sections" className="hidden w-60 shrink-0 md:block">
         {list}
       </nav>
-      <details className="group rounded-lg border md:hidden">
+      <details className="group panel md:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm font-medium">
           <span>
             <span className="text-muted-foreground">Section: </span>

@@ -87,17 +87,15 @@ export function Kanban({ columns, jobs, showValue = false }: { columns: Column[]
                 move(e.dataTransfer.getData("text/job-id"), col.key);
               }}
               className={cn(
-                "flex w-64 shrink-0 flex-col rounded-lg border bg-muted/40 p-2",
-                col.isTerminal && "bg-muted/20",
-                dragOver === col.key && "border-primary bg-sidebar-accent",
+                "flex w-68 shrink-0 flex-col rounded-2xl bg-muted/60 p-2 ring-1 ring-black/[0.04] transition-colors",
+                col.isTerminal && "bg-muted/30",
+                dragOver === col.key && "bg-accent ring-2 ring-primary/40",
               )}
             >
-              <div className="mb-2 flex items-center justify-between px-1 text-xs font-medium">
-                <span>{col.name}</span>
-                <span className="text-muted-foreground">
-                  {showValue && !col.isTerminal && cards.some((j) => j.value) ? `${usd0(cards.reduce((n, j) => n + (j.value ?? 0), 0))} · ` : ""}
-                  {cards.length}
-                </span>
+              <div className="mb-2 flex items-center gap-2 px-1.5 pt-1 text-xs">
+                <span className="text-[12.5px] font-semibold">{col.name}</span>
+                <span className="rounded-full bg-card px-1.5 text-[11px] font-semibold text-muted-foreground tabular-nums shadow-xs ring-1 ring-black/[0.05]">{cards.length}</span>
+                {showValue && !col.isTerminal && cards.some((j) => j.value) ? <span className="ml-auto text-[11px] font-medium text-muted-foreground tabular-nums">{usd0(cards.reduce((n, j) => n + (j.value ?? 0), 0))}</span> : null}
               </div>
               <div className="flex min-h-16 flex-col gap-2">
                 {cards.map((j) => (
@@ -105,9 +103,9 @@ export function Kanban({ columns, jobs, showValue = false }: { columns: Column[]
                     key={j.id}
                     draggable
                     onDragStart={(e) => e.dataTransfer.setData("text/job-id", j.id)}
-                    className="group relative rounded-md border bg-card text-xs shadow-xs hover:border-primary"
+                    className="group relative cursor-grab rounded-xl bg-card text-xs shadow-card ring-1 ring-black/[0.05] transition-[box-shadow,transform] hover:-translate-y-px hover:shadow-raised hover:ring-primary/30 active:cursor-grabbing"
                   >
-                    <Link href={`/jobs/${j.id}`} className="block p-2 pr-8">
+                    <Link href={`/jobs/${j.id}`} className="block p-3 pr-9">
                       <div className="flex items-center gap-1">
                         {!col.isTerminal && (
                           <span
@@ -120,7 +118,7 @@ export function Kanban({ columns, jobs, showValue = false }: { columns: Column[]
                         {showValue && j.value ? <span className="ml-auto font-medium tabular-nums">{usd0(j.value)}</span> : null}
                         {j.priority === "URGENT" || j.priority === "HIGH" ? <Badge variant="destructive">{j.priority.toLowerCase()}</Badge> : null}
                       </div>
-                      <div className="mt-1 font-medium">{j.service}</div>
+                      <div className="mt-1.5 text-[13px] font-semibold">{j.service}</div>
                       {j.address && <div className="truncate text-muted-foreground">{j.address}</div>}
                       {j.client && <div className="truncate text-muted-foreground">{j.client}</div>}
                       <div className={cn("mt-1 text-[11px]", j.stale ? "font-medium text-destructive" : "text-muted-foreground")}>
