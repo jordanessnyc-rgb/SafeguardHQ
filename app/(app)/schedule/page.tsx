@@ -38,9 +38,9 @@ export default async function SchedulePage({ searchParams }: PageProps<"/schedul
         description={title}
         actions={
           <>
-            <div className="flex rounded-lg border p-0.5">
-              <Link href={href(date, "day")} className={buttonVariants({ size: "sm", variant: view === "day" ? "secondary" : "ghost" })}>Day</Link>
-              <Link href={href(date, "week")} className={buttonVariants({ size: "sm", variant: view === "week" ? "secondary" : "ghost" })}>Week</Link>
+            <div className="seg">
+              <Link href={href(date, "day")} className={cn("seg-item", view === "day" && "seg-on")}>Day</Link>
+              <Link href={href(date, "week")} className={cn("seg-item", view === "week" && "seg-on")}>Week</Link>
             </div>
             <div className="flex gap-1">
               <Link href={href(shiftDay(date, -step))} className={buttonVariants({ size: "sm", variant: "outline" })} aria-label={`Previous ${view}`}>‹</Link>

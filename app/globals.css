@@ -163,6 +163,16 @@
   .chip-on {
     @apply border-primary/30 bg-card text-primary shadow-xs;
   }
+  /* Segmented control: a muted track with the chosen item raised in white. */
+  .seg {
+    @apply inline-flex items-center gap-0.5 rounded-xl bg-muted p-1;
+  }
+  .seg-item {
+    @apply inline-flex h-7 items-center rounded-lg px-3 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:text-foreground;
+  }
+  .seg-on {
+    @apply bg-card text-primary shadow-card ring-1 ring-black/[0.05];
+  }
 }
 :root {
   --brand-forest: #146432;
