@@ -19,6 +19,14 @@ export const triggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("JOB_CREATED"), pipelineKey: z.string().max(40).optional() }),
   /** A new person is added. */
   z.object({ type: z.literal("CONTACT_CREATED") }),
+  /** A known person emails, texts or calls in (never AIRnyc or spam). */
+  z.object({ type: z.literal("MESSAGE_RECEIVED"), channel: z.enum(["any", "EMAIL", "SMS", "CALL"]).default("any") }),
+  /** A set time before a scheduled inspection (a new run if it's rescheduled). */
+  z.object({ type: z.literal("BEFORE_SCHEDULED"), amount: z.number().int().min(1).max(60), unit: z.enum(["hours", "days"]), pipelineKey: z.string().max(40).optional() }),
+  /** A job's invoice is paid in full (FreshBooks). */
+  z.object({ type: z.literal("INVOICE_PAID") }),
+  /** A set number of days before a job's next compliance cycle is due (Compliance page rules). */
+  z.object({ type: z.literal("COMPLIANCE_DUE"), daysBefore: z.number().int().min(0).max(365) }),
 ]);
 export type Trigger = z.infer<typeof triggerSchema>;
 export type TriggerType = Trigger["type"];
@@ -74,6 +82,10 @@ export const TRIGGER_LABELS: Record<TriggerType, string> = {
   TAG_ADDED: "A tag is added",
   JOB_CREATED: "A new job is created",
   CONTACT_CREATED: "A new person is added",
+  MESSAGE_RECEIVED: "A client emails, texts or calls",
+  BEFORE_SCHEDULED: "Before a scheduled inspection",
+  INVOICE_PAID: "An invoice is paid",
+  COMPLIANCE_DUE: "A compliance cycle is coming due",
 };
 
 export const STEP_LABELS: Record<StepType, string> = {

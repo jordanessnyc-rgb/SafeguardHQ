@@ -16,7 +16,7 @@
  *    (A moves a job to X, B moves it back) can't loop.
  *  - Messages are sent only after the run's transaction commits.
  */
-import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import type { WorkflowLogEntry } from "@/db/schema";
 import { approve, createDraft, sendApproved, type SendDeps } from "@/lib/comms/outbound";
@@ -50,7 +50,7 @@ export function workflowDefinition(w: Pick<Workflow, "trigger" | "conditions" | 
 
 type Event = { key: string; at: Date; jobId: string | null; contactId: string | null; orgId: string | null };
 
-async function newEvents(db: Db, w: Workflow, trigger: Trigger): Promise<Event[]> {
+async function newEvents(db: Db, w: Workflow, trigger: Trigger, now: Date): Promise<Event[]> {
   const since = w.activatedAt!;
   const seen = (key: ReturnType<typeof sql>) =>
     sql`not exists (select 1 from ${s.workflowRuns} r where r.workflow_id = ${w.id} and r.trigger_key = ${key})`;
@@ -103,6 +103,62 @@ async function newEvents(db: Db, w: Workflow, trigger: Trigger): Promise<Event[]
       }
       return out;
     }
+    case "MESSAGE_RECEIVED": {
+      // Only messages from a known person; never AIRnyc-linked or sealed content (CLAUDE.md rule 5), never spam.
+      const types = trigger.channel === "EMAIL" ? ["EMAIL_IN"] : trigger.channel === "SMS" ? ["SMS"] : trigger.channel === "CALL" ? ["CALL"] : ["EMAIL_IN", "SMS", "CALL"];
+      const rows = await db.execute<{ key: string; at: Date; job_id: string | null; contact_id: string }>(sql`
+        select a.id::text as key, a.occurred_at as at, a.job_id, a.contact_id
+        from ${s.activities} a
+        where a.direction = 'INBOUND' and a.type::text in (${sql.join(types.map((t) => sql`${t}`), sql`, `)})
+          and a.contact_id is not null and a.airnyc_case_id is null and not a.sensitive
+          and coalesce(a.triage_category, '') <> 'SPAM'
+          and a.occurred_at >= ${since} and a.occurred_at <= ${now}
+          and ${seen(sql`a.id::text`)}
+        order by a.occurred_at limit ${ENROL_BATCH}`);
+      return rows.rows.map((r) => ({ key: r.key, at: new Date(r.at), jobId: r.job_id, contactId: r.contact_id, orgId: null }));
+    }
+    case "BEFORE_SCHEDULED": {
+      // Fires once the reminder moment (scheduled time minus the offset) has come, for inspections still
+      // ahead. Unlike the other triggers this doesn't require the moment to be after switch-on: switching
+      // on a "2 days before" reminder should still cover tomorrow's inspection. A rescheduled inspection
+      // is a new event (the key carries the time).
+      const hours = trigger.amount * (trigger.unit === "days" ? 24 : 1);
+      const key = sql`'appt:' || j.id || ':' || (extract(epoch from j.scheduled_at) * 1000)::bigint`;
+      const rows = await db.execute<{ key: string; at: Date; id: string }>(sql`
+        select ${key} as key, j.scheduled_at - make_interval(hours => ${hours}) as at, j.id
+        from ${s.jobs} j
+        where j.scheduled_at is not null and j.archived_at is null and j.stage <> 'LOST'
+          and j.scheduled_at > ${now}
+          and j.scheduled_at - make_interval(hours => ${hours}) <= ${now}
+          ${trigger.pipelineKey ? sql`and j.pipeline_key = ${trigger.pipelineKey}` : sql``}
+          and ${seen(key)}
+        order by j.scheduled_at limit ${ENROL_BATCH}`);
+      return rows.rows.map((r) => ({ key: r.key, at: new Date(r.at), jobId: r.id, contactId: null, orgId: null }));
+    }
+    case "INVOICE_PAID": {
+      const key = sql`'paid:' || f.job_id || ':' || (extract(epoch from f.paid_at) * 1000)::bigint`;
+      const rows = await db.execute<{ key: string; at: Date; job_id: string }>(sql`
+        select ${key} as key, f.paid_at as at, f.job_id
+        from ${s.jobFinancials} f
+        where f.paid_at >= ${since} and f.paid_at <= ${now} and ${seen(key)}
+        order by f.paid_at limit ${ENROL_BATCH}`);
+      return rows.rows.map((r) => ({ key: r.key, at: new Date(r.at), jobId: r.job_id, contactId: null, orgId: null }));
+    }
+    case "COMPLIANCE_DUE": {
+      // next_cycle_due is a New York date; the event is midnight New York, `daysBefore` days earlier. Like
+      // BEFORE_SCHEDULED, any cycle not yet due counts, even if the reminder moment was before switch-on.
+      const at = sql`((j.next_cycle_due - ${trigger.daysBefore}::int)::timestamp at time zone 'America/New_York')`;
+      const key = sql`'cycle:' || j.id || ':' || j.next_cycle_due::text`;
+      const rows = await db.execute<{ key: string; at: Date; id: string }>(sql`
+        select ${key} as key, ${at} as at, j.id
+        from ${s.jobs} j
+        where j.next_cycle_due is not null and j.archived_at is null
+          and ${at} <= ${now}
+          and j.next_cycle_due >= (${now}::timestamptz at time zone 'America/New_York')::date
+          and ${seen(key)}
+        order by j.next_cycle_due limit ${ENROL_BATCH}`);
+      return rows.rows.map((r) => ({ key: r.key, at: new Date(r.at), jobId: r.id, contactId: null, orgId: null }));
+    }
   }
 }
 
@@ -113,7 +169,7 @@ export async function enrolWorkflowEvents(db: Db, now = new Date()): Promise<num
   for (const w of active) {
     const def = workflowDefinition(w);
     if (!def) continue;
-    for (const e of await newEvents(db, w, def.trigger)) {
+    for (const e of await newEvents(db, w, def.trigger, now)) {
       // Loop guard: one run per record per workflow per 24h. The event is still recorded (as skipped)
       // so it isn't picked up again later.
       const recent = await db
@@ -315,7 +371,8 @@ async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: n
       const [reply] = await tx
         .select({ id: s.activities.id })
         .from(s.activities)
-        .where(and(eq(s.activities.direction, "INBOUND"), gte(s.activities.occurredAt, run.eventAt), or(...who)))
+        // Strictly after the event: a run started by an incoming message mustn't stop on that same message.
+        .where(and(eq(s.activities.direction, "INBOUND"), gt(s.activities.occurredAt, run.eventAt), or(...who)))
         .limit(1);
       return reply ? { kind: "stop", log: entry(now, i, "stopped", `${label}: the client replied, so the workflow stopped here.`) } : ok("no reply yet, carrying on.");
     }

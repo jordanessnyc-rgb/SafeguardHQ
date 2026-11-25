@@ -32,6 +32,14 @@ export function describeTrigger(t: Trigger, o: EditorOptions): string {
       return `A new job is created${pipeline(t.pipelineKey)}`;
     case "CONTACT_CREATED":
       return "A new person is added";
+    case "MESSAGE_RECEIVED":
+      return t.channel === "any" ? "A client emails, texts or calls" : `A client ${t.channel === "EMAIL" ? "emails" : t.channel === "SMS" ? "texts" : "calls"}`;
+    case "BEFORE_SCHEDULED":
+      return `${t.amount} ${t.amount === 1 ? t.unit.replace(/s$/, "") : t.unit} before a scheduled inspection${pipeline(t.pipelineKey)}`;
+    case "INVOICE_PAID":
+      return "An invoice is paid";
+    case "COMPLIANCE_DUE":
+      return t.daysBefore ? `A compliance cycle is due in ${t.daysBefore} days` : "A compliance cycle is due";
   }
 }
 

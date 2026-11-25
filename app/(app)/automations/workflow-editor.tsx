@@ -58,6 +58,10 @@ function blankTrigger(type: Trigger["type"], o: EditorOptions): Trigger {
     case "TAG_ADDED": return { type, tagId: o.tags[0]?.id ?? "", entity: "any" };
     case "JOB_CREATED": return { type };
     case "CONTACT_CREATED": return { type };
+    case "MESSAGE_RECEIVED": return { type, channel: "any" };
+    case "BEFORE_SCHEDULED": return { type, amount: 1, unit: "days" };
+    case "INVOICE_PAID": return { type };
+    case "COMPLIANCE_DUE": return { type, daysBefore: 60 };
   }
 }
 
@@ -132,7 +136,39 @@ export function WorkflowEditor({ initial, options, action, canEdit }: { initial:
             {t.type === "JOB_STAGE_ENTERED" && (
               <Row label="Stage"><StageSelect value={t.stage} onChange={(stage) => set("trigger", { ...t, stage })} options={options} label="Stage" /></Row>
             )}
-            {(t.type === "JOB_STAGE_ENTERED" || t.type === "JOB_CREATED") && (
+            {t.type === "MESSAGE_RECEIVED" && (
+              <Row label="Message type">
+                <NativeSelect value={t.channel} onChange={(e) => set("trigger", { ...t, channel: e.target.value as typeof t.channel })} aria-label="Message type">
+                  <option value="any">Email, text or call</option>
+                  <option value="EMAIL">Email</option>
+                  <option value="SMS">Text</option>
+                  <option value="CALL">Call</option>
+                </NativeSelect>
+              </Row>
+            )}
+            {t.type === "BEFORE_SCHEDULED" && (
+              <Row label="How long before">
+                <span className="flex items-center gap-2">
+                  <Input type="number" min={1} max={60} value={t.amount} onChange={(e) => set("trigger", { ...t, amount: Math.min(60, Math.max(1, Number(e.target.value) || 1)) })} aria-label="How long before" className="w-20" />
+                  <NativeSelect value={t.unit} onChange={(e) => set("trigger", { ...t, unit: e.target.value as typeof t.unit })} aria-label="Unit" className="w-auto">
+                    <option value="hours">hours</option>
+                    <option value="days">days</option>
+                  </NativeSelect>
+                  <span className="text-sm text-muted-foreground">before the inspection time</span>
+                </span>
+              </Row>
+            )}
+            {t.type === "COMPLIANCE_DUE" && (
+              <Row label="Days before due">
+                <span className="flex items-center gap-2">
+                  <Input type="number" min={0} max={365} value={t.daysBefore} onChange={(e) => set("trigger", { ...t, daysBefore: Math.min(365, Math.max(0, Number(e.target.value) || 0)) })} aria-label="Days before due" className="w-24" />
+                  <span className="text-sm text-muted-foreground">days before the next cycle is due (from the Compliance rules)</span>
+                </span>
+              </Row>
+            )}
+            {t.type === "MESSAGE_RECEIVED" && <p className="text-xs text-muted-foreground">Only messages from someone already in the CRM. AIRnyc messages and spam never start a workflow.</p>}
+            {t.type === "INVOICE_PAID" && <p className="text-xs text-muted-foreground">When FreshBooks reports a job&apos;s invoice paid in full. No amounts are ever put in messages.</p>}
+            {(t.type === "JOB_STAGE_ENTERED" || t.type === "JOB_CREATED" || t.type === "BEFORE_SCHEDULED") && (
               <Row label="Pipeline">
                 <NativeSelect value={t.pipelineKey ?? ""} onChange={(e) => set("trigger", { ...t, pipelineKey: e.target.value || undefined })} aria-label="Pipeline">
                   <option value="">Any pipeline</option>
