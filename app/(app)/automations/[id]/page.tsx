@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmSubmit } from "@/components/confirm-submit";
 import { SubmitButton } from "@/components/forms";
@@ -46,7 +45,7 @@ export default async function WorkflowPage({ params }: PageProps<"/automations/[
         <Link href="/automations" className="hover:underline">Automations</Link> / {w.name}
       </nav>
       <PageHeader
-        title={<span className="flex flex-wrap items-center gap-2">{w.name} <Status tone={w.active ? "ok" : "off"}>{w.active ? "On" : "Off"}</Status>{w.autoSend && <Badge variant="destructive">Sends automatically</Badge>}</span>}
+        title={<span className="flex flex-wrap items-center gap-2">{w.name} <Status tone={w.active ? "ok" : "off"}>{w.active ? "On" : "Off"}</Status></span>}
         description={def ? `When ${describeTrigger(def.trigger, options).replace(/^./, (x) => x.toLowerCase())}.${w.active && w.activatedAt ? ` On since ${fmtDate(w.activatedAt, true)}.` : ""}` : undefined}
         actions={
           isOwner ? (
@@ -68,7 +67,7 @@ export default async function WorkflowPage({ params }: PageProps<"/automations/[
           action={saveWorkflow.bind(null, w.id)}
           canEdit={isOwner}
           options={options}
-          initial={{ name: w.name, description: w.description ?? "", autoSend: w.autoSend, trigger: w.trigger, conditions: w.conditions, steps: w.steps }}
+          initial={{ name: w.name, description: w.description ?? "", trigger: w.trigger, conditions: w.conditions, steps: w.steps }}
         />
         <Card className="h-fit gap-0 py-0">
           <CardHeader className="border-b py-4">

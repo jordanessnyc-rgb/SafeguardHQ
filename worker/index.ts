@@ -197,12 +197,12 @@ async function main() {
     }),
   );
 
-  // Workflows (Automations page): start runs for new events, then carry due runs forward. Emails/texts
-  // are drafts unless that workflow's auto-send is on; sending happens only in business hours.
+  // Workflows (Automations page): start runs for new events, then carry due runs forward. Workflows never
+  // send: their emails/texts are Outbox drafts a person approves.
   timers.push(
     every(60_000, "automations", async () => {
-      const r = await runAutomations(adminDb(), { quo: quoFromEnv(), mail: mailSenderFromEnv() });
-      if (r.started || r.advanced || r.failed) console.log(`[automations] ${r.started} started, ${r.advanced} advanced, ${r.sent} sent, ${r.failed} failed`);
+      const r = await runAutomations(adminDb());
+      if (r.started || r.advanced || r.failed) console.log(`[automations] ${r.started} started, ${r.advanced} advanced, ${r.failed} failed`);
     }),
   );
 

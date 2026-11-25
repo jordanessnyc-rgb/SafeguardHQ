@@ -6,7 +6,6 @@ import { ActionForm, SubmitButton } from "@/components/forms";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ActionState } from "@/lib/actions";
@@ -29,7 +28,7 @@ export type EditorOptions = {
   services: [string, string][];
 };
 
-export type EditorValue = { name: string; description: string; autoSend: boolean; trigger: Trigger; conditions: Condition[]; steps: Step[] };
+export type EditorValue = { name: string; description: string; trigger: Trigger; conditions: Condition[]; steps: Step[] };
 
 /** A sensible starting shape for each step / condition / trigger type picked from a menu. */
 function blankStep(type: Step["type"], o: EditorOptions): Step {
@@ -310,18 +309,10 @@ export function WorkflowEditor({ initial, options, action, canEdit }: { initial:
         </Card>
 
         {messages && (
-          <Card className="border-amber-300/70">
-            <CardContent className="space-y-1 pt-6">
-              <div className="flex items-center gap-2">
-                <input id="autoSend" type="checkbox" name="autoSend" checked={v.autoSend} onChange={(e) => set("autoSend", e.target.checked)} className="size-4 accent-primary" />
-                <Label htmlFor="autoSend">Send emails and texts automatically</Label>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Off (recommended to start): each message waits in the Outbox for someone to approve it. On: they go out by themselves during business hours,
-                except a message with a blank field (like a missing date), which still waits for approval. AIRnyc cases and do-not-contact people are never messaged.
-              </p>
-            </CardContent>
-          </Card>
+          <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+            Workflows never send by themselves: each email or text lands in the Outbox as a draft, and someone approves it before it goes out.
+            AIRnyc cases and do-not-contact people are never messaged.
+          </p>
         )}
       </fieldset>
       {canEdit ? <SubmitButton>Save workflow</SubmitButton> : <p className="text-sm text-muted-foreground">Only the owner can change workflows.</p>}

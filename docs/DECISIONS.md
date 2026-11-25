@@ -642,3 +642,9 @@ changes worth knowing:
 - **An invoice is paid** (`INVOICE_PAID`): `job_financials.paid_at` set after switch-on. Messages never include amounts (no token exposes money).
 - **A compliance cycle is coming due** (`COMPLIANCE_DUE`, N days before `jobs.next_cycle_due`, which comes from the Compliance rules Jordan enters). Past-due cycles don't trigger.
 - **Deliberate exception to "only events after switch-on":** the two reminder triggers (before an inspection, compliance due) cover anything still ahead even if its reminder moment passed before the workflow was switched on. Otherwise switching on a "2 days before" reminder would silently skip tomorrow's inspections. Each appointment/cycle still triggers once.
+
+## 2026-11-25 — Workflows never send on their own
+
+- Requested the same day: "at least someone must approve" every workflow email or text. The per-workflow "send automatically" switch is removed (column dropped in `0040_workflows_no_auto_send.sql`), and the engine no longer approves or sends anything: an email/text step only creates an Outbox draft. This supersedes the auto-send notes in the part 2 entry above.
+- With nothing sent automatically, drafting no longer waits for business hours (the person approving decides when it goes). Blank fill-ins show as `[scheduled date]` etc. in the draft, and the run log says which to fill in.
+- The global Settings → "Auto-send emails/texts" switches don't apply to workflows; they still only cover the messages they did before (missed-call text-back and AI/template replies).

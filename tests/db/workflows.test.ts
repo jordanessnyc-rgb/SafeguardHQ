@@ -1,14 +1,13 @@
 /**
  * Workflow engine (automation part 2): enrolment (only after switch-on, never twice, loop guard),
- * conditions, steps (wait, email/text drafts vs auto-send, tasks, tags, stage moves, stop if replied),
- * and the safety rules (AIRnyc, do-not-contact, business hours). Needs TEST_DATABASE_URL.
+ * conditions, steps (wait, email/text drafts — never sent, tasks, tags, stage moves, stop if replied),
+ * and the safety rules (AIRnyc, do-not-contact). Needs TEST_DATABASE_URL.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { definitionSchema, type Definition } from "@/lib/automation/definition";
 import { advanceWorkflowRuns, enrolWorkflowEvents, runAutomations } from "@/lib/automation/engine";
-import type { SendDeps } from "@/lib/comms/outbound";
 import { findOrCreateTag, addTag } from "@/lib/tags";
 import { createUser, hasTestDb, pgError, setupTestDb, type TestDb, type TestUser } from "../helpers/db";
 
@@ -35,11 +34,6 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
   let t: TestDb;
   let owner: TestUser;
   let va: TestUser;
-  const sent: { to: string; subject: string; text: string }[] = [];
-  const deps: SendDeps = {
-    quo: null,
-    mail: { send: async (m) => (sent.push({ to: String(m.to), subject: m.subject, text: m.text ?? "" }), { messageId: `<m${sent.length}@test>` }) },
-  };
 
   beforeAll(async () => {
     t = await setupTestDb();
@@ -89,7 +83,7 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     const { job: j } = await job();
     await moveTo(j.id, "SCHEDULED");
 
-    expect(await runAutomations(t.db, deps, NOW)).toMatchObject({ started: 1, advanced: 1, sent: 0 });
+    expect(await runAutomations(t.db, NOW)).toMatchObject({ started: 1, advanced: 1 });
     expect(await enrolWorkflowEvents(t.db, NOW)).toBe(0); // same event: no second run
 
     const [draft] = await outbox(j.id);
@@ -98,12 +92,11 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     let [run] = await runs(w.id);
     expect(run).toMatchObject({ status: "WAITING", stepIndex: 2 });
     expect(run.resumeAt.getTime()).toBe(NOW.getTime() + 48 * HOUR);
-    expect(sent).toHaveLength(0);
 
     // Not due yet → nothing happens; after two days the task is created and the run finishes.
-    await advanceWorkflowRuns(t.db, deps, new Date(NOW.getTime() + HOUR));
+    await advanceWorkflowRuns(t.db, new Date(NOW.getTime() + HOUR));
     expect((await runs(w.id))[0].status).toBe("WAITING");
-    await advanceWorkflowRuns(t.db, deps, new Date(NOW.getTime() + 49 * HOUR));
+    await advanceWorkflowRuns(t.db, new Date(NOW.getTime() + 49 * HOUR));
     [run] = await runs(w.id);
     expect(run.status).toBe("DONE");
     const tasks = await t.db.select().from(s.tasks).where(eq(s.tasks.jobId, j.id));
@@ -112,33 +105,22 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     await t.db.update(s.workflows).set({ active: false }).where(eq(s.workflows.id, w.id));
   });
 
-  it("auto-send sends during business hours, but waits until opening time", async () => {
-    const w = await workflow("Lab pending → update", { trigger: { type: "JOB_STAGE_ENTERED", stage: "LAB_PENDING" }, steps: [{ type: "SEND_EMAIL", subject: "Samples are at the lab", body: "Hi {{first_name}}, results in about a week." }] }, { autoSend: true });
-    const { job: j } = await job({ emails: ["auto@example.com"] });
+  it("never sends: emails are Outbox drafts at any hour, with blank fields marked for whoever approves", async () => {
+    const w = await workflow("Lab pending → update", { trigger: { type: "JOB_STAGE_ENTERED", stage: "LAB_PENDING" }, steps: [{ type: "SEND_EMAIL", subject: "Samples are at the lab", body: "Hi {{first_name}}, we'll see you again on {{scheduled_date}}." }] });
+    const { job: j } = await job({ emails: ["lab@example.com"] });
     await t.db.insert(s.samples).values({ jobId: j.id, sampleId: "S-1", type: "AIR", status: "SUBMITTED" });
     await moveTo(j.id, "LAB_PENDING");
 
-    const night = new Date("2026-09-30T03:00:00Z"); // 11 PM New York
-    await runAutomations(t.db, deps, night);
-    expect(await outbox(j.id)).toHaveLength(0);
-    expect((await runs(w.id))[0]).toMatchObject({ status: "WAITING", stepIndex: 0 });
-
-    const morning = new Date("2026-09-30T14:00:00Z");
-    expect(await runAutomations(t.db, deps, morning)).toMatchObject({ sent: 1 });
+    const night = new Date("2026-09-30T03:00:00Z"); // 11 PM New York: drafting doesn't wait for business hours
+    await runAutomations(t.db, night);
     const [msg] = await outbox(j.id);
-    expect(msg.status).toBe("SENT");
-    expect(sent.at(-1)).toMatchObject({ to: "auto@example.com", subject: "Samples are at the lab" });
-    await t.db.update(s.workflows).set({ active: false }).where(eq(s.workflows.id, w.id));
-  });
-
-  it("auto-send keeps a message with gaps as a draft instead of sending it", async () => {
-    const w = await workflow("Reminder", { trigger: { type: "JOB_STAGE_ENTERED", stage: "QUALIFIED" }, steps: [{ type: "SEND_EMAIL", subject: "Reminder", body: "See you on {{scheduled_date}}." }] }, { autoSend: true });
-    const { job: j } = await job({ emails: ["gap@example.com"] });
-    await moveTo(j.id, "QUALIFIED");
-    await runAutomations(t.db, deps, NOW);
-    const [msg] = await outbox(j.id);
-    expect(msg.status).toBe("DRAFT");
-    expect((await runs(w.id))[0].log.map((l) => l.note).join(" ")).toMatch(/missing scheduled date/);
+    expect(msg).toMatchObject({ status: "DRAFT", toAddress: "lab@example.com", subject: "Samples are at the lab", approvedAt: null });
+    expect(msg.body).toContain("[scheduled date]");
+    const [run] = await runs(w.id);
+    expect(run.status).toBe("DONE");
+    expect(run.log.map((l) => l.note).join(" ")).toMatch(/drafted in the Outbox for someone to approve\. Fill in scheduled date/);
+    const sentAnything = await t.db.select().from(s.outboundMessages).where(eq(s.outboundMessages.status, "SENT"));
+    expect(sentAnything).toHaveLength(0);
     await t.db.update(s.workflows).set({ active: false }).where(eq(s.workflows.id, w.id));
   });
 
@@ -148,7 +130,7 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     const plain = await job();
     const tagged = await job();
     await addTag(t.db, "contact", tagged.contact.id, vip.id);
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     const byJob = new Map((await runs(w.id)).map((r) => [r.jobId, r]));
     expect(byJob.get(plain.job.id)?.status).toBe("SKIPPED");
     expect(byJob.get(plain.job.id)?.log[0].note).toMatch(/required tag/);
@@ -171,7 +153,7 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     });
     const { job: j, contact } = await job();
     await addTag(t.db, "job", j.id, hot.id);
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     const [run] = await runs(w.id);
     expect(run.status).toBe("DONE");
     expect(run.log.map((l) => l.outcome)).toEqual(["ok", "failed", "ok", "ok"]);
@@ -187,9 +169,9 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     const [replied] = await t.db.insert(s.contacts).values({ firstName: "Ana", phones: ["+19295550111"] }).returning();
     const [dnc] = await t.db.insert(s.contacts).values({ firstName: "Bo", phones: ["+19295550112"], doNotContact: true }).returning();
     const [quiet] = await t.db.insert(s.contacts).values({ firstName: "Cy", phones: ["+19295550113"] }).returning();
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     await t.db.insert(s.activities).values({ type: "SMS", direction: "INBOUND", contactId: replied.id, body: "Yes please", occurredAt: new Date(Date.now() + 1000) });
-    await runAutomations(t.db, deps, new Date(NOW.getTime() + 25 * HOUR));
+    await runAutomations(t.db, new Date(NOW.getTime() + 25 * HOUR));
 
     const byContact = new Map((await runs(w.id)).map((r) => [r.contactId, r]));
     expect(byContact.get(replied.id)?.status).toBe("STOPPED");
@@ -204,7 +186,7 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
   it("never touches AIRnyc jobs", async () => {
     const w = await workflow("All new jobs", { trigger: { type: "JOB_CREATED" }, steps: [{ type: "SEND_EMAIL", subject: "Hi", body: "Hello" }] });
     const { job: j } = await job({}, { serviceCode: "AIRNYC", pipelineKey: "AIRNYC", stage: "REFERRAL_RECEIVED" });
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     const run = (await runs(w.id)).find((r) => r.jobId === j.id);
     expect(run?.status).toBe("SKIPPED");
     expect(run?.log[0].note).toMatch(/AIRnyc/);
@@ -216,9 +198,9 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     const w = await workflow("Ping-pong", { trigger: { type: "JOB_STAGE_ENTERED", stage: "QUALIFIED" }, steps: [{ type: "MOVE_STAGE", stage: "LEAD" }] });
     const { job: j } = await job();
     await moveTo(j.id, "QUALIFIED");
-    await runAutomations(t.db, deps, NOW); // moves it back to LEAD
+    await runAutomations(t.db, NOW); // moves it back to LEAD
     await moveTo(j.id, "QUALIFIED");
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     const statuses = (await runs(w.id)).map((r) => r.status).sort();
     expect(statuses).toEqual(["DONE", "SKIPPED"]);
     await t.db.update(s.workflows).set({ active: false }).where(eq(s.workflows.id, w.id));
@@ -227,9 +209,9 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
   it("switching a workflow off stops its waiting runs", async () => {
     const w = await workflow("Long wait", { trigger: { type: "CONTACT_CREATED" }, steps: [{ type: "WAIT", amount: 1, unit: "hours" }, { type: "NOTIFY_OWNER", message: "Hello" }] });
     await t.db.insert(s.contacts).values({ firstName: "Di" });
-    await runAutomations(t.db, deps, NOW);
+    await runAutomations(t.db, NOW);
     await t.db.update(s.workflows).set({ active: false }).where(eq(s.workflows.id, w.id));
-    await advanceWorkflowRuns(t.db, deps, new Date(NOW.getTime() + 2 * HOUR));
+    await advanceWorkflowRuns(t.db, new Date(NOW.getTime() + 2 * HOUR));
     expect((await runs(w.id)).every((r) => r.status === "STOPPED")).toBe(true);
   });
 
@@ -238,7 +220,7 @@ describe.skipIf(!hasTestDb)("workflow engine", () => {
     expect(seen.length).toBeGreaterThan(0);
     const msg = await pgError(va.as((tx) => tx.insert(s.workflows).values({ name: "Sneaky", trigger: { type: "CONTACT_CREATED" } })));
     expect(msg).toMatch(/row-level security/);
-    const upd = await va.as((tx) => tx.update(s.workflows).set({ autoSend: true }).returning());
+    const upd = await va.as((tx) => tx.update(s.workflows).set({ name: "Changed by a VA" }).returning());
     expect(upd).toHaveLength(0);
   });
 });

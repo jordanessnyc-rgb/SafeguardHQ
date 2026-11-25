@@ -9,22 +9,20 @@
  *              (`skip locked`), so two workers can't both act on it and a crash rolls the step back.
  *
  * Safety rules, whatever a workflow says:
- *  - Emails and texts are DRAFTS for a person to approve unless the workflow's auto-send switch is on
- *    (CLAUDE.md rule 6). They go out only during business hours.
+ *  - Workflows NEVER send anything. An email or text step only creates an Outbox draft, and a person
+ *    approves and sends it (CLAUDE.md rule 6; there is deliberately no auto-send for workflows).
  *  - AIRnyc jobs are never touched (CLAUDE.md rule 5); do-not-contact people are never messaged.
  *  - A workflow runs at most once per record per 24 hours, so two workflows that trigger each other
  *    (A moves a job to X, B moves it back) can't loop.
- *  - Messages are sent only after the run's transaction commits.
  */
 import { and, asc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { schema as s, type Db, type Tx } from "@/lib/db";
 import type { WorkflowLogEntry } from "@/db/schema";
-import { approve, createDraft, sendApproved, type SendDeps } from "@/lib/comms/outbound";
+import { createDraft } from "@/lib/comms/outbound";
 import { renderTemplate } from "@/lib/comms/templates";
 import { templateVars } from "@/lib/comms/template-vars";
 import { stageRuleMessage } from "@/lib/pipeline/rules";
 import { addTag, removeTag } from "@/lib/tags";
-import { isWithinBusinessHours } from "@/lib/time";
 import { definitionSchema, STEP_LABELS, waitMs, type Condition, type Definition, type Step, type Trigger } from "./definition";
 
 type Workflow = typeof s.workflows.$inferSelect;
@@ -32,7 +30,6 @@ type Run = typeof s.workflowRuns.$inferSelect;
 type LogEntry = WorkflowLogEntry;
 
 const COOLDOWN_MS = 24 * 3_600_000;
-const BUSINESS_HOURS_RETRY_MS = 15 * 60_000;
 const ENROL_BATCH = 200;
 const ADVANCE_BATCH = 100;
 
@@ -260,7 +257,7 @@ type StepResult =
 
 type Settings = typeof s.settings.$inferSelect;
 
-async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: number, cfg: Settings | undefined, now: Date, toSend: string[]): Promise<StepResult> {
+async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: number, cfg: Settings | undefined, now: Date): Promise<StepResult> {
   const label = `${i + 1}. ${STEP_LABELS[step.type]}`;
   const ok = (note: string): StepResult => ({ kind: "next", log: entry(now, i, "ok", `${label}: ${note}`) });
   const skipped = (note: string): StepResult => ({ kind: "next", log: entry(now, i, "skipped", `${label}: ${note}`) });
@@ -274,12 +271,10 @@ async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: n
       const c = ctx.contact;
       if (!c) return skipped("no client contact to message.");
       if (c.doNotContact) return skipped(`${c.firstName ?? "The contact"} is marked do-not-contact.`);
-      const hours = cfg?.businessHours as Record<string, { open: string; close: string } | null> | undefined;
-      if (hours && !isWithinBusinessHours(now, hours)) return { kind: "wait", until: new Date(now.getTime() + BUSINESS_HOURS_RETRY_MS) }; // retry this step later
       const brand = ctx.job?.brand ?? c.brand;
       const vars = await templateVars(tx, { contactId: c.id, jobId: ctx.job?.id });
-      const render = (t: string) => renderTemplate(t, vars, { missing: w.autoSend ? "blank" : "placeholder" });
-      let draft: { id: string };
+      // Blank fields show as [scheduled date] etc., so whoever approves the draft sees what to fill in.
+      const render = (t: string) => renderTemplate(t, vars, { missing: "placeholder" });
       let missing: string[];
       if (step.type === "SEND_EMAIL") {
         const to = c.emails[0];
@@ -287,7 +282,7 @@ async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: n
         const subject = render(step.subject);
         const text = render(step.body);
         missing = [...subject.missing, ...text.missing];
-        draft = await createDraft(tx, { channel: "EMAIL", source: "SYSTEM", templateKey: `${WORKFLOW_TEMPLATE_PREFIX}${w.id}`, toAddress: to, fromEmail: cfg?.defaultFromEmail ?? null, subject: subject.text, body: text.text, brand, contactId: c.id, jobId: ctx.job?.id ?? null });
+        await createDraft(tx, { channel: "EMAIL", source: "SYSTEM", templateKey: `${WORKFLOW_TEMPLATE_PREFIX}${w.id}`, toAddress: to, fromEmail: cfg?.defaultFromEmail ?? null, subject: subject.text, body: text.text, brand, contactId: c.id, jobId: ctx.job?.id ?? null });
       } else {
         const to = c.phones[0];
         if (!to) return skipped("the contact has no phone.");
@@ -295,15 +290,11 @@ async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: n
         if (!line) return skipped(`no Quo line is set up for ${brand === "GAS_PRO" ? "Gas Pro" : "ESS"}.`);
         const text = render(step.body);
         missing = text.missing;
-        draft = await createDraft(tx, { channel: "SMS", source: "SYSTEM", templateKey: `${WORKFLOW_TEMPLATE_PREFIX}${w.id}`, toAddress: to, fromLineId: line.id, body: text.text, brand, contactId: c.id, jobId: ctx.job?.id ?? null });
+        await createDraft(tx, { channel: "SMS", source: "SYSTEM", templateKey: `${WORKFLOW_TEMPLATE_PREFIX}${w.id}`, toAddress: to, fromLineId: line.id, body: text.text, brand, contactId: c.id, jobId: ctx.job?.id ?? null });
       }
       const what = step.type === "SEND_EMAIL" ? "email" : "text";
-      if (!w.autoSend) return ok(`${what} drafted for approval (Outbox).`);
-      // Auto-send never sends a message with gaps in it: it waits for a person instead.
-      if (missing.length) return ok(`${what} drafted for approval: it's missing ${[...new Set(missing)].join(", ").replace(/_/g, " ")}.`);
-      await approve(tx, draft.id, null);
-      toSend.push(draft.id);
-      return ok(`${what} sent automatically.`);
+      const gaps = missing.length ? ` Fill in ${[...new Set(missing)].join(", ").replace(/_/g, " ")} before sending.` : "";
+      return ok(`${what} drafted in the Outbox for someone to approve.${gaps}`);
     }
 
     case "CREATE_TASK": {
@@ -379,9 +370,8 @@ async function runStep(tx: Tx, w: Workflow, run: Run, ctx: Ctx, step: Step, i: n
   }
 }
 
-/** Carries one locked run forward. Returns the outbound message ids to send once committed. */
-async function advanceRun(tx: Tx, run: Run, w: Workflow, cfg: Settings | undefined, now: Date): Promise<string[]> {
-  const toSend: string[] = [];
+/** Carries one locked run forward. */
+async function advanceRun(tx: Tx, run: Run, w: Workflow, cfg: Settings | undefined, now: Date): Promise<void> {
   const log = [...run.log];
   const save = (patch: Partial<typeof s.workflowRuns.$inferInsert>) => tx.update(s.workflowRuns).set({ log, updatedAt: now, ...patch }).where(eq(s.workflowRuns.id, run.id));
 
@@ -389,24 +379,24 @@ async function advanceRun(tx: Tx, run: Run, w: Workflow, cfg: Settings | undefin
   if (!def) {
     log.push(entry(now, null, "failed", "The workflow's settings are invalid; open it and save it again."));
     await save({ status: "FAILED" });
-    return toSend;
+    return;
   }
   if (!w.active || w.archivedAt) {
     log.push(entry(now, null, "stopped", "The workflow was switched off."));
     await save({ status: "STOPPED" });
-    return toSend;
+    return;
   }
 
   const ctx = await loadContext(tx, run);
   if (ctx.job?.airnycCaseId || ctx.job?.pipelineKey === "AIRNYC") {
     log.push(entry(now, null, "skipped", "AIRnyc jobs are never automated."));
     await save({ status: "SKIPPED" });
-    return toSend;
+    return;
   }
   if (ctx.job?.archivedAt || ctx.contact?.archivedAt) {
     log.push(entry(now, null, "stopped", "The record was archived."));
     await save({ status: "STOPPED" });
-    return toSend;
+    return;
   }
   if (run.stepIndex === 0 && run.status === "RUNNING") {
     for (const c of def.conditions) {
@@ -414,34 +404,31 @@ async function advanceRun(tx: Tx, run: Run, w: Workflow, cfg: Settings | undefin
       if (why) {
         log.push(entry(now, null, "skipped", `Conditions not met: ${why}`));
         await save({ status: "SKIPPED" });
-        return toSend;
+        return;
       }
     }
   }
 
   let i = run.stepIndex;
   while (i < def.steps.length) {
-    const r = await runStep(tx, w, run, ctx, def.steps[i], i, cfg, now, toSend);
+    const r = await runStep(tx, w, run, ctx, def.steps[i], i, cfg, now);
     if (r.log) log.push(r.log);
     if (r.kind === "stop") {
       await save({ status: "STOPPED", stepIndex: i });
-      return toSend;
+      return;
     }
     if (r.kind === "wait") {
-      // A Wait step is done once it starts waiting; an outreach step outside business hours is retried.
-      const next = def.steps[i].type === "WAIT" ? i + 1 : i;
-      await save({ status: "WAITING", stepIndex: next, resumeAt: r.until });
-      return toSend;
+      await save({ status: "WAITING", stepIndex: i + 1, resumeAt: r.until });
+      return;
     }
     i++;
   }
   log.push(entry(now, null, "ok", "Finished."));
   await save({ status: "DONE", stepIndex: i });
-  return toSend;
 }
 
 /** Advances every due run. Returns counts for the worker log. */
-export async function advanceWorkflowRuns(db: Db, deps: SendDeps | null, now = new Date()): Promise<{ advanced: number; sent: number; failed: number }> {
+export async function advanceWorkflowRuns(db: Db, now = new Date()): Promise<{ advanced: number; failed: number }> {
   const [cfg] = await db.select().from(s.settings);
   const due = await db
     .select({ id: s.workflowRuns.id })
@@ -452,19 +439,16 @@ export async function advanceWorkflowRuns(db: Db, deps: SendDeps | null, now = n
 
   let advanced = 0;
   let failed = 0;
-  const toSend: string[] = [];
   for (const { id } of due) {
     try {
-      const ids = await db.transaction(async (tx) => {
+      const done = await db.transaction(async (tx) => {
         const [run] = await tx.select().from(s.workflowRuns).where(and(eq(s.workflowRuns.id, id), inArray(s.workflowRuns.status, ["RUNNING", "WAITING"]), lte(s.workflowRuns.resumeAt, now))).for("update", { skipLocked: true });
-        if (!run) return null; // another worker has it, or it already moved on
+        if (!run) return false; // another worker has it, or it already moved on
         const [w] = await tx.select().from(s.workflows).where(eq(s.workflows.id, run.workflowId));
-        return advanceRun(tx, run, w, cfg, now);
+        await advanceRun(tx, run, w, cfg, now);
+        return true;
       });
-      if (ids) {
-        advanced++;
-        toSend.push(...ids);
-      }
+      if (done) advanced++;
     } catch (e) {
       failed++;
       const note = entry(now, null, "failed", `Error: ${(e as Error).message.slice(0, 300)}`);
@@ -474,38 +458,12 @@ export async function advanceWorkflowRuns(db: Db, deps: SendDeps | null, now = n
         .where(eq(s.workflowRuns.id, id));
     }
   }
-  return { advanced, failed, sent: await sendApprovedWorkflowMessages(db, deps, toSend) };
+  return { advanced, failed };
 }
 
-/**
- * Sends auto-send workflow messages after their run committed — plus any left APPROVED by a crash
- * between commit and send (older than two minutes), so none is stranded.
- */
-async function sendApprovedWorkflowMessages(db: Db, deps: SendDeps | null, fresh: string[]): Promise<number> {
-  if (!deps) return 0;
-  const stranded = await db
-    .select({ id: s.outboundMessages.id })
-    .from(s.outboundMessages)
-    .where(
-      and(
-        eq(s.outboundMessages.status, "APPROVED"),
-        eq(s.outboundMessages.source, "SYSTEM"),
-        sql`${s.outboundMessages.templateKey} like ${`${WORKFLOW_TEMPLATE_PREFIX}%`}`,
-        lte(s.outboundMessages.approvedAt, new Date(Date.now() - 120_000)),
-      ),
-    )
-    .limit(50);
-  let sent = 0;
-  for (const id of new Set([...fresh, ...stranded.map((r) => r.id)])) {
-    const r = await sendApproved(db, id, deps).catch(() => null);
-    if (r?.status === "SENT") sent++;
-  }
-  return sent;
-}
-
-/** One worker tick: enrol new events, then advance due runs. */
-export async function runAutomations(db: Db, deps: SendDeps | null, now = new Date()) {
+/** One worker tick: enrol new events, then advance due runs. Never sends anything. */
+export async function runAutomations(db: Db, now = new Date()) {
   const started = await enrolWorkflowEvents(db, now);
-  const r = await advanceWorkflowRuns(db, deps, now);
+  const r = await advanceWorkflowRuns(db, now);
   return { started, ...r };
 }

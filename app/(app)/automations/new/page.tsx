@@ -20,7 +20,7 @@ export default async function NewWorkflowPage() {
         action={saveWorkflow.bind(null, null)}
         canEdit
         options={options}
-        initial={{ name: "", description: "", autoSend: false, trigger: { type: "JOB_STAGE_ENTERED", stage: options.stages.find((st) => st.key === "SCHEDULED")?.key ?? options.stages[0]?.key ?? "" }, conditions: [], steps: [{ type: "SEND_EMAIL", subject: "Your inspection at {{address}}", body: "Hi {{first_name}},\n\nThis confirms your inspection at {{address}} on {{scheduled_date}} at {{scheduled_time}}.\n\n{{brand_name}} · {{brand_phone}}" }] }}
+        initial={{ name: "", description: "", trigger: { type: "JOB_STAGE_ENTERED", stage: options.stages.find((st) => st.key === "SCHEDULED")?.key ?? options.stages[0]?.key ?? "" }, conditions: [], steps: [{ type: "SEND_EMAIL", subject: "Your inspection at {{address}}", body: "Hi {{first_name}},\n\nThis confirms your inspection at {{address}} on {{scheduled_date}} at {{scheduled_time}}.\n\n{{brand_name}} · {{brand_phone}}" }] }}
       />
     </>
   );

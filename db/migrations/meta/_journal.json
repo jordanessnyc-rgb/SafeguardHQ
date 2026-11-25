@@ -281,6 +281,13 @@
       "when": 1795625819650,
       "tag": "0039_workflows_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795630317572,
+      "tag": "0040_workflows_no_auto_send",
+      "breakpoints": true
     }
   ]
 }

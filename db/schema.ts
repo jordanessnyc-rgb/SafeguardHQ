@@ -1324,8 +1324,7 @@ export const workflows = pgTable("workflows", {
   trigger: jsonb("trigger").$type<import("../lib/automation/definition").Trigger>().notNull(),
   conditions: jsonb("conditions").$type<import("../lib/automation/definition").Condition[]>().notNull().default(sql`'[]'::jsonb`),
   steps: jsonb("steps").$type<import("../lib/automation/definition").Step[]>().notNull().default(sql`'[]'::jsonb`),
-  // Off: emails/texts land in the Outbox as drafts for approval (CLAUDE.md rule 6). On: sent by themselves.
-  autoSend: boolean("auto_send").notNull().default(false),
+  // No auto-send: a workflow's emails/texts are always Outbox drafts a person approves (CLAUDE.md rule 6).
 });
 
 export const workflowRunStatusEnum = pgEnum("workflow_run_status", ["RUNNING", "WAITING", "DONE", "STOPPED", "SKIPPED", "FAILED"]);

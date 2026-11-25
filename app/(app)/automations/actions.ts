@@ -12,7 +12,6 @@ import { definitionSchema } from "@/lib/automation/definition";
 const formSchema = z.object({
   name: z.string().trim().min(1, "Give the workflow a name.").max(100),
   description: z.string().trim().max(500).optional(),
-  autoSend: z.boolean(),
 });
 
 /**
@@ -23,7 +22,7 @@ export async function saveWorkflow(id: string | null, _prev: ActionState, form: 
   const user = await requireOwner();
   let newId: string | null = null;
   const res = await safeAction(async () => {
-    const f = formSchema.parse({ name: form.get("name") ?? "", description: String(form.get("description") ?? "") || undefined, autoSend: form.get("autoSend") === "on" });
+    const f = formSchema.parse({ name: form.get("name") ?? "", description: String(form.get("description") ?? "") || undefined });
     let raw: unknown;
     try {
       raw = JSON.parse(String(form.get("definition") ?? ""));
@@ -32,7 +31,7 @@ export async function saveWorkflow(id: string | null, _prev: ActionState, form: 
     }
     const parsed = definitionSchema.safeParse(raw);
     if (!parsed.success) return { error: parsed.error.issues.map((i) => i.message).join("; ") };
-    const values = { name: f.name, description: f.description ?? null, autoSend: f.autoSend, ...parsed.data };
+    const values = { name: f.name, description: f.description ?? null, ...parsed.data };
     await user.db(async (tx) => {
       if (id) await tx.update(s.workflows).set(values).where(eq(s.workflows.id, z.uuid().parse(id)));
       else newId = (await tx.insert(s.workflows).values(values).returning({ id: s.workflows.id }))[0].id;

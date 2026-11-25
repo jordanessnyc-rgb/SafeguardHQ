@@ -48,7 +48,7 @@ describe.skipIf(!hasTestDb)("workflow triggers (part 3)", () => {
     const [airCase] = await t.db.insert(s.airnycCases).values({ caseId: `PHS_${Date.now() % 10000}`, network: "PHS" }).returning();
     await msg({ airnycCaseId: airCase.id });
 
-    await runAutomations(t.db, null, new Date(Date.now() + 60_000));
+    await runAutomations(t.db, new Date(Date.now() + 60_000));
     const r = await runs(w.id);
     expect(r.map((x) => x.triggerKey)).toEqual([good.id]);
     // The message that started it doesn't count as "the client replied".
@@ -84,7 +84,7 @@ describe.skipIf(!hasTestDb)("workflow triggers (part 3)", () => {
     const { job: j } = await job({ stage: "INVOICED" });
     const { job: unpaid } = await job({ stage: "INVOICED" });
     await t.db.insert(s.jobFinancials).values([{ jobId: j.id, quotedAmount: "650.00", paidAt: new Date() }, { jobId: unpaid.id, quotedAmount: "650.00" }]);
-    await runAutomations(t.db, null, new Date(Date.now() + 60_000));
+    await runAutomations(t.db, new Date(Date.now() + 60_000));
     const r = await runs(w.id);
     expect(r.map((x) => [x.jobId, x.status])).toEqual([[j.id, "DONE"]]);
     const tasks = await t.db.select().from(s.tasks).where(eq(s.tasks.jobId, j.id));

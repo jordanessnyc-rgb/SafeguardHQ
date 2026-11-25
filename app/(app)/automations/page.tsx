@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { desc, gte, sql } from "drizzle-orm";
 import { buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/page-header";
 import { Status } from "@/components/status";
@@ -38,7 +37,7 @@ export default async function AutomationsPage() {
     <>
       <PageHeader
         title="Automations"
-        description="Workflows that run by themselves: when something happens (a job changes stage, a tag is added, a new lead comes in), do a series of steps. Emails and texts wait for approval unless a workflow is set to send them."
+        description="Workflows that run by themselves: when something happens (a job changes stage, a tag is added, a new lead comes in), do a series of steps. Emails and texts are always drafts for someone to approve; a workflow never sends on its own."
         actions={isOwner ? <Link href="/automations/new" className={buttonVariants()}>New workflow</Link> : undefined}
       />
       {workflows.length === 0 ? (
@@ -57,7 +56,6 @@ export default async function AutomationsPage() {
                     <span className="min-w-0 flex-1 basis-64">
                       <span className="flex flex-wrap items-center gap-2 font-medium">
                         {w.name}
-                        {w.autoSend && <Badge variant="destructive">Sends automatically</Badge>}
                       </span>
                       <span className="block text-sm text-muted-foreground">{def ? `When ${describeTrigger(def.trigger, options).replace(/^./, (x) => x.toLowerCase())}: ${describeSteps(def.steps)}` : "Needs fixing: open it and save again."}</span>
                     </span>
