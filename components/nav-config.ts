@@ -35,7 +35,6 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; secondary?: boole
   { label: "Workspaces", items: [
     { href: "/airnyc", label: "AIRnyc cases", icon: HeartPulse },
     { href: "/bids", label: "Government bids", icon: Gavel },
-    { href: "/automations", label: "Automations", icon: Workflow },
   ] },
   { label: "More tools", secondary: true, items: [
     { href: "/tasks", label: "All tasks", icon: CheckSquare, count: "tasks" },
@@ -44,6 +43,7 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; secondary?: boole
     { href: "/contacts", label: "People", icon: Users },
     { href: "/organizations", label: "Companies", icon: Landmark },
     { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+    { href: "/automations", label: "Automations", icon: Workflow },
     { href: "/search", label: "Ask the CRM", icon: Sparkles, aiOnly: true },
   ] },
   { label: "Owner tools", secondary: true, ownerOnly: true, items: [
