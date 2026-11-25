@@ -1307,3 +1307,55 @@ export const jobTags = pgTable(
   },
   (t) => [primaryKey({ columns: [t.tagId, t.jobId] }), index("job_tags_job_idx").on(t.jobId)],
 );
+
+// ---------------------------------------------------------------------------
+// Workflows (automation part 2): "when <trigger>, if <conditions>, do <steps>". The definition is
+// JSON validated by lib/automation/definition.ts. Staff can read; only the OWNER creates, edits or
+// switches them on (RLS 0039). The worker enrols matching events as runs and advances them.
+// ---------------------------------------------------------------------------
+
+export const workflows = pgTable("workflows", {
+  ...baseColumns(),
+  name: text("name").notNull(),
+  description: text("description"),
+  active: boolean("active").notNull().default(false),
+  // Only events at or after this moment start runs, so switching a workflow on never replays history.
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  trigger: jsonb("trigger").$type<import("../lib/automation/definition").Trigger>().notNull(),
+  conditions: jsonb("conditions").$type<import("../lib/automation/definition").Condition[]>().notNull().default(sql`'[]'::jsonb`),
+  steps: jsonb("steps").$type<import("../lib/automation/definition").Step[]>().notNull().default(sql`'[]'::jsonb`),
+  // Off: emails/texts land in the Outbox as drafts for approval (CLAUDE.md rule 6). On: sent by themselves.
+  autoSend: boolean("auto_send").notNull().default(false),
+});
+
+export const workflowRunStatusEnum = pgEnum("workflow_run_status", ["RUNNING", "WAITING", "DONE", "STOPPED", "SKIPPED", "FAILED"]);
+
+export type WorkflowLogEntry = { at: string; step: number | null; outcome: "ok" | "skipped" | "stopped" | "failed" | "waiting"; note: string };
+
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workflowId: uuid("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    // Identifies the triggering event (stage-change activity id, tag link, new record id): a run is
+    // never started twice for the same event.
+    triggerKey: text("trigger_key").notNull(),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id").references(() => organizations.id, { onDelete: "cascade" }),
+    status: workflowRunStatusEnum("status").notNull().default("RUNNING"),
+    stepIndex: integer("step_index").notNull().default(0),
+    resumeAt: timestamp("resume_at", { withTimezone: true }).notNull().defaultNow(),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
+    log: jsonb("log").$type<WorkflowLogEntry[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("workflow_runs_event_uq").on(t.workflowId, t.triggerKey),
+    index("workflow_runs_due_idx").on(t.status, t.resumeAt),
+    index("workflow_runs_workflow_idx").on(t.workflowId, t.createdAt),
+  ],
+);

@@ -5,12 +5,14 @@
  */
 import { and, asc, count, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
-import { schema as s, type Tx } from "@/lib/db";
+import { schema as s, type Db, type Tx } from "@/lib/db";
 import { col } from "@/lib/db/sql";
 import { isTagColor, type Tag, type TagColor } from "@/lib/tag-style";
 
 export { isTagColor, type Tag, type TagColor };
 export type TagEntity = "contact" | "organization" | "job";
+/** Works in a user (RLS) transaction or with the worker's privileged connection (automations). */
+type Conn = Db | Tx;
 
 const LINKS = {
   contact: { table: s.contactTags, key: s.contactTags.contactId },
@@ -29,12 +31,12 @@ export function cleanTagName(raw: unknown): string | null {
 }
 
 /** Every active tag, A–Z. */
-export async function listTags(tx: Tx): Promise<Tag[]> {
+export async function listTags(tx: Conn): Promise<Tag[]> {
   return tx.select({ id: s.tags.id, name: s.tags.name, color: s.tags.color }).from(s.tags).where(isNull(s.tags.archivedAt)).orderBy(asc(sql`lower(${s.tags.name})`));
 }
 
 /** Tags with how many contacts, companies and jobs carry each (Settings → Tags). */
-export async function tagUsage(tx: Tx) {
+export async function tagUsage(tx: Conn) {
   const n = (link: (typeof LINKS)[TagEntity]) => tx.select({ tagId: link.table.tagId, n: count() }).from(link.table).groupBy(link.table.tagId);
   const [all, contacts, orgs, jobs] = await Promise.all([
     tx.select().from(s.tags).where(isNull(s.tags.archivedAt)).orderBy(asc(sql`lower(${s.tags.name})`)),
@@ -48,12 +50,12 @@ export async function tagUsage(tx: Tx) {
 }
 
 /** Tags on one record. */
-export async function tagsFor(tx: Tx, entity: TagEntity, id: string): Promise<Tag[]> {
+export async function tagsFor(tx: Conn, entity: TagEntity, id: string): Promise<Tag[]> {
   return (await tagsForMany(tx, entity, [id])).get(id) ?? [];
 }
 
 /** Tags for a page of records in one query: record id → its tags (A–Z). */
-export async function tagsForMany(tx: Tx, entity: TagEntity, ids: string[]): Promise<Map<string, Tag[]>> {
+export async function tagsForMany(tx: Conn, entity: TagEntity, ids: string[]): Promise<Map<string, Tag[]>> {
   const out = new Map<string, Tag[]>();
   if (!ids.length) return out;
   const link = LINKS[entity];
@@ -71,7 +73,7 @@ export async function tagsForMany(tx: Tx, entity: TagEntity, ids: string[]): Pro
  * Finds a tag by name (case-insensitive), creating it when it doesn't exist yet. A tag that was
  * archived comes back when someone uses its name again.
  */
-export async function findOrCreateTag(tx: Tx, rawName: unknown, color: TagColor = "gray"): Promise<Tag> {
+export async function findOrCreateTag(tx: Conn, rawName: unknown, color: TagColor = "gray"): Promise<Tag> {
   const name = cleanTagName(rawName);
   if (!name) throw new Error("Tag names are 1–40 characters.");
   const [existing] = await tx.select().from(s.tags).where(eq(sql`lower(${s.tags.name})`, name.toLowerCase()));
@@ -84,7 +86,7 @@ export async function findOrCreateTag(tx: Tx, rawName: unknown, color: TagColor 
 }
 
 /** Puts a tag on a record. Adding a tag the record already has is a no-op. Returns true if it was new. */
-export async function addTag(tx: Tx, entity: TagEntity, recordId: string, tagId: string): Promise<boolean> {
+export async function addTag(tx: Conn, entity: TagEntity, recordId: string, tagId: string): Promise<boolean> {
   const rows =
     entity === "contact"
       ? await tx.insert(s.contactTags).values({ tagId, contactId: recordId }).onConflictDoNothing().returning({ tagId: s.contactTags.tagId })
@@ -94,7 +96,7 @@ export async function addTag(tx: Tx, entity: TagEntity, recordId: string, tagId:
   return rows.length > 0;
 }
 
-export async function removeTag(tx: Tx, entity: TagEntity, recordId: string, tagId: string): Promise<void> {
+export async function removeTag(tx: Conn, entity: TagEntity, recordId: string, tagId: string): Promise<void> {
   const link = LINKS[entity];
   await tx.delete(link.table).where(and(eq(link.table.tagId, tagId), eq(link.key, recordId)));
 }

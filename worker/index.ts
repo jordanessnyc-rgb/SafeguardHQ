@@ -12,6 +12,7 @@
  *  - DocuSign webhook deliveries left unprocessed are retried (SPEC §6.7), every 20 min
  *  - weekly CSV export → Google Drive or the private Supabase Storage "backups" bucket (SPEC §13)
  *  - bid listings: NYC City Record open data every 6 h; bid alert emails → bids every 2 min (SPEC §8)
+ *  - workflows (Automations page): new events → runs, due runs advanced, every minute
  *
  * Uses the privileged DATABASE_URL connection (no user session): writes bypass RLS by design.
  */
@@ -48,6 +49,7 @@ import { mailHealthCheck } from "./health";
 import { runMailListener } from "./mail";
 import { graphFromEnv } from "@/lib/integrations/microsoft-graph";
 import { recordSync, syncTracker } from "@/lib/airnyc/graph-sync";
+import { runAutomations } from "@/lib/automation/engine";
 
 /** Runs fn every `ms`, never overlapping itself. */
 function every(ms: number, name: string, fn: () => Promise<unknown>) {
@@ -192,6 +194,15 @@ async function main() {
     every(5 * 60_000, "digest", async () => {
       const r = await sendDigestIfDue(adminDb(), { mail: mailSenderFromEnv(), quo: quoFromEnv() });
       if (r === "sent" || r === "no-recipients") console.log(`[digest] ${r}`);
+    }),
+  );
+
+  // Workflows (Automations page): start runs for new events, then carry due runs forward. Emails/texts
+  // are drafts unless that workflow's auto-send is on; sending happens only in business hours.
+  timers.push(
+    every(60_000, "automations", async () => {
+      const r = await runAutomations(adminDb(), { quo: quoFromEnv(), mail: mailSenderFromEnv() });
+      if (r.started || r.advanced || r.failed) console.log(`[automations] ${r.started} started, ${r.advanced} advanced, ${r.sent} sent, ${r.failed} failed`);
     }),
   );
 
