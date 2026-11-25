@@ -26,6 +26,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { authUsers } from "drizzle-orm/supabase";
+import type { TagColor } from "../lib/tag-style";
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -1248,3 +1249,61 @@ export const workerStatus = pgTable("worker_status", {
   lastError: text("last_error"),
   intervalSeconds: integer("interval_seconds"), // how often it's meant to run, to spot stalls
 });
+
+// ---------------------------------------------------------------------------
+// Tags (automation part 1): labels on contacts, companies and jobs. One shared list of tags;
+// each record can carry any of them. Staff (OWNER + VA) tag; only the OWNER deletes a tag.
+// The join rows keep who added the tag and when — workflows (part 2) trigger on new rows.
+// ---------------------------------------------------------------------------
+
+export const tags = pgTable(
+  "tags",
+  {
+    ...baseColumns(),
+    name: text("name").notNull(),
+    color: text("color").$type<TagColor>().notNull().default("gray"),
+    description: text("description"),
+  },
+  (t) => [uniqueIndex("tags_name_uq").on(sql`lower(${t.name})`)],
+);
+
+const taggedAt = () => ({
+  tagId: uuid("tag_id")
+    .notNull()
+    .references(() => tags.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: uuid("created_by").default(sql`auth.uid()`),
+});
+
+export const contactTags = pgTable(
+  "contact_tags",
+  {
+    ...taggedAt(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.contactId] }), index("contact_tags_contact_idx").on(t.contactId)],
+);
+
+export const organizationTags = pgTable(
+  "organization_tags",
+  {
+    ...taggedAt(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.orgId] }), index("organization_tags_org_idx").on(t.orgId)],
+);
+
+export const jobTags = pgTable(
+  "job_tags",
+  {
+    ...taggedAt(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.jobId] }), index("job_tags_job_idx").on(t.jobId)],
+);

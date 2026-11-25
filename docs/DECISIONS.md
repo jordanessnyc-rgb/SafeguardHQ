@@ -616,3 +616,12 @@ changes worth knowing:
   - **Schedule.** Day headers show the weekday and a large date (today in a green disc), a red "now" line, lighter gridlines, Titan events as tinted blocks with a colour bar rather than dashed outlines, and the long explanation folded behind "How the calendar works".
   - **Messages.** The list sits on a muted pane with the open message white; the action bar is a muted strip.
 - Nothing functional changed; this is CSS and class names. Dark-mode tokens were kept in step.
+
+## 2026-11-25 — Automation part 1: tags
+
+- **Not in SPEC.** Requested on 2026-11-25 (with Jordan's approval) as the first of three parts of a HubSpot/GoHighLevel-style automation system: (1) tags, (2) a workflow engine with triggers, conditions and steps, (3) the remaining triggers. Each part ships as its own PR.
+- **One shared tag list** (`tags`: name, colour, description) usable on people, companies and jobs, through three link tables (`contact_tags`, `organization_tags`, `job_tags`) rather than one polymorphic table, so each link has a real foreign key and deleting a record or tag cascades. Names are unique ignoring case (`lower(name)` index); typing an existing name in any case reuses that tag.
+- **Who can do what (RLS, migration 0037).** Tags are working labels, not money or member data, so OWNER + VA can see, create, rename, add and remove them, like the other core CRM tables. Deleting a tag (which takes it off every record) is OWNER only. FIELD, SUB and no-role users see no tags. Tested in `tests/db/tags.test.ts`.
+- **Link rows keep `created_at` / `created_by`.** Part 2's "tag added" trigger reads new link rows; removing a tag deletes the row, so there's no history of removals yet (part 2 adds an event if a "tag removed" trigger needs one).
+- **UI.** A tag editor under the header on person, company and job pages (suggests existing tags as you type; a new name creates the tag). People, Companies and the Jobs list get an "Any tag" filter and show each row's tags. Settings → Tags lists every tag with how many people/companies/jobs use it (each count links to the filtered list), and lets staff rename/recolour and the owner delete.
+- **Known flaky test, unrelated:** `tests/db/calendar.test.ts` asserts the calendar text doesn't contain "650" (the test job's price), but the text includes the job's random UUID, so roughly 1 run in 140 fails when the UUID contains "650". Left as is in this PR; worth tightening to "$650"/"650.00" separately.

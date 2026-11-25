@@ -253,6 +253,20 @@
       "when": 1791331436986,
       "tag": "0035_outbound_cc_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795625031200,
+      "tag": "0036_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795625038984,
+      "tag": "0037_tags_rls",
+      "breakpoints": true
     }
   ]
 }
