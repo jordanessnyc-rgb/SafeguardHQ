@@ -3,11 +3,12 @@ import { and, count, eq, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { Check, Circle, CircleCheck } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { EmptyState, PageHeader } from "@/components/page-header";
+import { DashboardBox } from "@/components/dashboard-box";
+import { PageHeader } from "@/components/page-header";
 import { setTaskStatus } from "@/app/(app)/tasks/actions";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
-import { buildNeedsYou, type NeedsKind } from "@/lib/dashboard/needs-you";
+import { buildNeedsYou, type NeedsItem, type NeedsKind } from "@/lib/dashboard/needs-you";
 import { setupChecklist } from "@/lib/dashboard/setup";
 import { label, SERVICE_LABELS } from "@/lib/labels";
 import { loadPipelines } from "@/lib/pipeline/config";
@@ -28,6 +29,43 @@ const KIND: Record<NeedsKind, { label: string; className: string }> = {
 };
 
 const time = (d: Date | null) => (d ? d.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }) : "—");
+
+/** How "Needs your attention" is split into boxes on the Today page. */
+const GROUPS: { key: string; title: string; description: string; kinds: NeedsKind[]; ownerOnly?: boolean }[] = [
+  { key: "approve", title: "To approve & file", description: "Drafts waiting for your OK and messages to file. Nothing goes to a client until you approve it.", kinds: ["approve", "file"] },
+  { key: "tasks", title: "Tasks due", description: "Your open tasks, most urgent first.", kinds: ["task"] },
+  { key: "stale", title: "Stale jobs", description: "Jobs sitting in a stage longer than its limit.", kinds: ["stale"] },
+  { key: "lab", title: "Lab results", description: "Samples back from the lab, waiting for review.", kinds: ["lab"] },
+  { key: "invoice", title: "Unpaid invoices", description: "Invoices that are open or past due.", kinds: ["invoice"], ownerOnly: true },
+  { key: "deadlines", title: "Deadlines coming up", description: "Expiring licenses and insurance, compliance cycles coming due, and bids due soon.", kinds: ["expiring", "compliance", "bid"] },
+];
+
+function NeedsList({ items }: { items: NeedsItem[] }) {
+  return (
+    <ul className="divide-y">
+      {items.map((n) => (
+        <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap">
+          <span className={cn("shrink-0 rounded px-2 py-0.5 text-center text-[11px] font-semibold sm:w-22", KIND[n.kind].className)}>{KIND[n.kind].label}</span>
+          {/* basis-56: on a phone the title keeps the row and the when/action wrap below it. */}
+          <Link href={n.href} className="min-w-0 flex-1 basis-56 hover:underline sm:basis-auto">
+            <span className="block truncate text-sm font-medium">{n.title}</span>
+            {n.meta && <span className="block truncate text-xs text-muted-foreground">{n.meta}</span>}
+          </Link>
+          {n.when && <span className={cn("ml-auto text-xs whitespace-nowrap sm:ml-0", n.late ? "font-medium text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>{n.when}</span>}
+          {n.taskId ? (
+            <form action={setTaskStatus.bind(null, n.taskId, "DONE", "/")}>
+              <Button type="submit" size="sm" variant="outline" aria-label={`Mark “${n.title}” done`}>
+                <Check /> Done
+              </Button>
+            </form>
+          ) : (
+            <Link href={n.href} className={buttonVariants({ size: "sm", variant: "outline" })}>{n.action}</Link>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default async function Dashboard() {
   const user = await requireStaff();
@@ -73,6 +111,10 @@ export default async function Dashboard() {
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const first = user.fullName?.split(" ")[0];
 
+  const setupLeft = d.setup.filter((i) => !i.done).length;
+  // needs is already sorted most-urgent first, so each box keeps that order.
+  const groups = GROUPS.filter((g) => isOwner || !g.ownerOnly).map((g) => ({ ...g, items: d.needs.filter((n) => g.kinds.includes(n.kind)) }));
+
   const tiles = [
     { k: "Open jobs", v: d.openJobs.length, href: "/jobs?view=list", link: "All open jobs" },
     { k: "Leads", v: count_("LEAD", "QUALIFIED"), href: "/jobs?view=list&stage=LEAD,QUALIFIED", link: "Lead + Qualified" },
@@ -93,15 +135,16 @@ export default async function Dashboard() {
           </>
         }
       />
-      {d.setup.some((i) => !i.done) && (
-        <Card className="mb-5 gap-0 border-primary/40 py-0">
-          <CardHeader className="border-b py-4">
-            <CardTitle>Finish setting up</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {d.setup.filter((i) => i.done).length} of {d.setup.length} done · this card goes away when everything is set
-            </p>
-          </CardHeader>
-          <CardContent className="px-0">
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+        {setupLeft > 0 && (
+          <DashboardBox
+            title="Finish setting up"
+            count={setupLeft}
+            countLabel={`${d.setup.length - setupLeft} of ${d.setup.length} done · ${setupLeft} left`}
+            description="This box goes away when everything is set."
+            progress={(d.setup.length - setupLeft) / d.setup.length}
+            tone="primary"
+          >
             <ul className="divide-y">
               {d.setup.map((i) => (
                 <li key={i.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 sm:flex-nowrap">
@@ -116,49 +159,16 @@ export default async function Dashboard() {
                 </li>
               ))}
             </ul>
-          </CardContent>
-        </Card>
-      )}
+          </DashboardBox>
+        )}
+        {groups.map((g) => (
+          <DashboardBox key={g.key} title={g.title} count={g.items.length} preview={g.items[0]?.title} description={g.description} tone={g.items.some((n) => n.late) ? "warn" : "default"}>
+            <NeedsList items={g.items} />
+          </DashboardBox>
+        ))}
+      </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <Card className="gap-0 py-0">
-          <CardHeader className="border-b py-4">
-            <CardTitle>Needs your attention</CardTitle>
-            <p className="text-xs text-muted-foreground">Most urgent first · each row has one next step</p>
-          </CardHeader>
-          <CardContent className="px-0">
-            {d.needs.length === 0 ? (
-              <div className="p-4">
-                <EmptyState>Nothing is waiting on you. Nice.</EmptyState>
-              </div>
-            ) : (
-              <ul className="divide-y">
-                {d.needs.map((n) => (
-                  <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap">
-                    <span className={cn("shrink-0 rounded px-2 py-0.5 text-center text-[11px] font-semibold sm:w-22", KIND[n.kind].className)}>{KIND[n.kind].label}</span>
-                    {/* basis-56: on a phone the title keeps the row and the when/action wrap below it. */}
-                    <Link href={n.href} className="min-w-0 flex-1 basis-56 hover:underline sm:basis-auto">
-                      <span className="block truncate text-sm font-medium">{n.title}</span>
-                      {n.meta && <span className="block truncate text-xs text-muted-foreground">{n.meta}</span>}
-                    </Link>
-                    {n.when && <span className={cn("ml-auto text-xs whitespace-nowrap sm:ml-0", n.late ? "font-medium text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>{n.when}</span>}
-                    {n.taskId ? (
-                      <form action={setTaskStatus.bind(null, n.taskId, "DONE", "/")}>
-                        <Button type="submit" size="sm" variant="outline" aria-label={`Mark “${n.title}” done`}>
-                          <Check /> Done
-                        </Button>
-                      </form>
-                    ) : (
-                      <Link href={n.href} className={buttonVariants({ size: "sm", variant: "outline" })}>{n.action}</Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Today&apos;s route</CardTitle>
@@ -198,7 +208,6 @@ export default async function Dashboard() {
               </CardContent>
             </Card>
           )}
-        </div>
       </div>
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
         {tiles.map((t) => (
