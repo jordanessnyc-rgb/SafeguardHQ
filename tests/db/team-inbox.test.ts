@@ -1,10 +1,10 @@
 /**
- * Team inbox & internal chat: My inbox (sent to me + assigned) / Unassigned views, conversation assignment (thread-wide),
+ * Team inbox & internal chat: My inbox (received + sent + my texts + assigned) / Unassigned views, conversation assignment (thread-wide),
  * internal notes (never outbound, blocked on AIRnyc), @mention notifications, team chat unread counts,
  * and RLS. The mention parser is tested without a database.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { mentionedIds, splitMentions } from "@/lib/team/mentions";
 import { addInternalNote, assignConversation, notesFor, postTeamMessage, teamMembers, unreadForNav, viewWhere } from "@/lib/team/inbox";
@@ -56,19 +56,35 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
   const email = async (v: Partial<typeof s.activities.$inferInsert>) =>
     (await t.db.insert(s.activities).values({ type: "EMAIL_IN", direction: "INBOUND", subject: "Access", body: "Hello", ...v }).returning())[0];
   const ids = async (who: TestUser, view: "mine" | "unassigned") =>
-    (await who.as((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(and(eq(s.activities.type, "EMAIL_IN"), viewWhere(view, { id: who.id, email: who.claims.email! }))))).map((r) => r.id).sort();
+    (await who.as((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), viewWhere(view, { id: who.id, email: who.claims.email! }))))).map((r) => r.id).sort();
   const to = (...addresses: string[]) => ({ raw: { email: { from: { name: "PM", address: "pm@acme.test" }, to: addresses.map((address) => ({ name: "", address })), cc: [] } } });
 
-  it("My inbox = emails sent to me + conversations assigned to me; Unassigned = neither", async () => {
+  it("My inbox = what I received, what I sent, my text conversations and what's assigned to me", async () => {
     const toMaria = await email({ threadKey: "<t1>", ...to(va.claims.email!.toUpperCase()) }); // case doesn't matter
+    // Sent from the CRM by Maria (approved_by), and sent from her own mailbox (from_address).
+    const [crmSent] = await t.db.insert(s.activities).values({ type: "EMAIL_OUT", direction: "OUTBOUND", subject: "Quote", externalId: "<out-1@ess>", toAddress: "client@acme.test" }).returning();
+    await t.db.insert(s.outboundMessages).values({ channel: "EMAIL", status: "SENT", toAddress: "client@acme.test", body: "Quote attached", externalId: "<out-1@ess>", approvedBy: va.id });
+    const [mailboxSent] = await t.db.insert(s.activities).values({ type: "EMAIL_OUT", direction: "OUTBOUND", subject: "Re: access", fromAddress: va.claims.email!, toAddress: "super@acme.test" }).returning();
+    // Sam texted a tenant from the CRM; the tenant's reply is Sam's.
+    await t.db.insert(s.outboundMessages).values({ channel: "SMS", status: "SENT", toAddress: "+19295550199", body: "Hi, confirming Friday", approvedBy: va2.id, sentAt: new Date() });
+    const [reply] = await t.db.insert(s.activities).values({ type: "SMS", direction: "INBOUND", fromAddress: "+19295550199", body: "Yes Friday works" }).returning();
+    // Assigned to Sam, with a later reply in the same thread.
     const first = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") });
-    const reply = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") }); // same thread, arrives later
+    const later = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") });
     const loose = await email({ threadKey: "<t3>", ...to("sales@ess-nyc.com") });
-
     await va2.as(async (tx) => assignConversation(tx, { activity: first, assignee: va2.id, actor: { id: va2.id, name: "Sam Park" } }));
-    expect(await ids(va, "mine")).toEqual([toMaria.id]);
-    expect(await ids(va2, "mine")).toEqual([first.id, reply.id].sort()); // the reply follows the thread
-    expect(await ids(va, "unassigned")).toEqual([loose.id]); // mail to sales@ nobody has taken yet
+
+    expect(await ids(va, "mine")).toEqual([toMaria.id, crmSent.id, mailboxSent.id].sort());
+    expect(await ids(va2, "mine")).toEqual([reply.id, first.id, later.id].sort());
+    expect(await ids(va, "unassigned")).toEqual([loose.id]); // mail to sales@ nobody has taken
+  });
+
+  it("an assignment wins over who the email was sent to", async () => {
+    const msg = await email({ threadKey: "<t9>", ...to(va.claims.email!) });
+    await owner.as(async (tx) => assignConversation(tx, { activity: msg, assignee: va2.id, actor: { id: owner.id, name: "Jordan Adhami" } }));
+    expect(await ids(va2, "mine")).toContain(msg.id);
+    expect(await ids(va, "mine")).not.toContain(msg.id);
+    await t.db.delete(s.conversationAssignments).where(eq(s.conversationAssignments.conversationKey, "<t9>"));
   });
 
   it("assigning someone else notifies them; unassigning removes it", async () => {

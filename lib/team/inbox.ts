@@ -3,9 +3,15 @@
  *
  *  - A conversation is identified by its message's thread key (email thread root / Quo conversation),
  *    or the message's own id when it has none, so replies in an assigned thread follow automatically.
- *  - My inbox = conversations assigned to me + emails sent to me (my login email is in To or Cc).
- *    Texts aren't addressed to a person, so they reach My inbox only by being assigned.
- *  - Unassigned = not assigned and not addressed to anyone on the team (e.g. mail to sales@).
+ *  - Every message belongs to at most one team member (its "owner"), checked in this order:
+ *      1. the person its conversation is assigned to;
+ *      2. the person who sent it (from the CRM: outbound_messages.approved_by; from their own
+ *         mailbox: from_address is their login email);
+ *      3. the person it was emailed to (their login email in To or Cc);
+ *      4. for texts: the person who last texted that number from the CRM, so replies to my texts
+ *         are mine too.
+ *  - My inbox = messages whose owner is me (received, sent, and my text conversations, in one list).
+ *  - Unassigned = messages with no owner (e.g. mail to sales@ nobody has taken).
  *  - Internal notes are activities of type NOTE / direction INTERNAL: there is no code path that sends
  *    an activity, so a note can never reach the client.
  */
@@ -30,20 +36,28 @@ function addressedTo(email: SQL): SQL {
       where lower(r->>'address') = lower(${email}))
     or ${col(s.activities.toAddress)} ilike '%' || ${email} || '%')`;
 }
-const teamEmails = sql`(select p.email from ${s.profiles} p where p.role in ('OWNER', 'VA'))`;
+const isTeam = (id: SQL) => sql`${id} in (select p.user_id from ${s.profiles} p where p.role in ('OWNER', 'VA'))`;
+const counterpart = sql`(case when ${col(s.activities.direction)} = 'INBOUND' then ${col(s.activities.fromAddress)} else ${col(s.activities.toAddress)} end)`;
+
+/** The team member a listed message belongs to (see the order at the top of this file), or null. */
+export const ownerSql = sql<string | null>`coalesce(
+  (select ca.assignee from ${s.conversationAssignments} ca where ca.conversation_key = ${keySql}),
+  (select om.approved_by from ${s.outboundMessages} om
+    where ${col(s.activities.direction)} = 'OUTBOUND' and om.external_id = ${col(s.activities.externalId)} and ${isTeam(sql`om.approved_by`)} limit 1),
+  (select p.user_id from ${s.profiles} p
+    where p.role in ('OWNER', 'VA') and ${col(s.activities.direction)} = 'OUTBOUND' and lower(${col(s.activities.fromAddress)}) = lower(p.email) limit 1),
+  (select p.user_id from ${s.profiles} p where p.role in ('OWNER', 'VA') and ${addressedTo(sql`p.email`)} limit 1),
+  (select om.approved_by from ${s.outboundMessages} om
+    where ${col(s.activities.type)} = 'SMS' and om.channel = 'SMS' and om.status = 'SENT' and ${isTeam(sql`om.approved_by`)}
+      and om.to_address = ${counterpart}
+    order by om.sent_at desc nulls last limit 1))`;
 
 /** WHERE fragment (on `activities`) for a Messages view. */
 export function viewWhere(view: InboxView, user: { id: string; email: string }): SQL | undefined {
-  const assignedTo = (who: SQL) => sql`exists (select 1 from ${s.conversationAssignments} ca where ca.conversation_key = ${keySql} and ${who})`;
-  if (view === "mine") return sql`(${assignedTo(sql`ca.assignee = ${user.id}`)} or ${addressedTo(sql`${user.email}`)})`;
-  if (view === "unassigned") return sql`(not ${assignedTo(sql`true`)} and not exists (select 1 from ${teamEmails} te(email) where ${addressedTo(sql`te.email`)}))`;
+  if (view === "mine") return sql`${ownerSql} = ${user.id}`;
+  if (view === "unassigned") return sql`${ownerSql} is null`;
   return undefined;
 }
-
-/** The person each listed message belongs to: its conversation's assignee, else the team member it was sent to. */
-export const ownerSql = sql<string | null>`coalesce(
-  (select ca.assignee from ${s.conversationAssignments} ca where ca.conversation_key = ${keySql}),
-  (select p.user_id from ${s.profiles} p where p.role in ('OWNER', 'VA') and ${addressedTo(sql`p.email`)} limit 1))`;
 
 /** OWNER + VA accounts: the people who can be assigned, mentioned and chat. */
 export async function teamMembers(tx: Tx): Promise<(Member & { email: string })[]> {

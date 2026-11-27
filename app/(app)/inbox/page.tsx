@@ -112,10 +112,13 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
   };
-  const where = and(boxWhere[box], search, viewWhere(view, me));
+  // My inbox in the Inbox box is a personal history: what I received and what I sent, in one list.
+  const myHistory = and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNull(s.activities.archivedAt));
+  const boxFor = (v: InboxView) => (v === "mine" && box === "inbox" ? myHistory : boxWhere[box]);
+  const where = and(boxFor(view), search, viewWhere(view, me));
   const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail, members, mineCount, unassignedCount } = await user.db(async (tx) => ({
     members: await teamMembers(tx),
-    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("mine", me))))[0].n,
+    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxFor("mine"), viewWhere("mine", me))))[0].n,
     unassignedCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("unassigned", me))))[0].n,
     items: await tx
       .select({
@@ -164,7 +167,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const header = (
     <PageHeader
       title="Messages"
-      description={BOX_TEXT[box].description}
+      description={view === "mine" && box === "inbox" ? "Your messages: emails you received and sent, your text conversations, and anything assigned to you." : BOX_TEXT[box].description}
       actions={
         <>
           <NewMessageButton {...composeProps} />
@@ -200,7 +203,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         <div className="panel overflow-hidden">
           {viewTabs}
           {searchForm}
-          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here was sent to you or assigned to you." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
+          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here yet: no emails to or from you, texts you've sent, or conversations assigned to you." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
         </div>
       </>
     );
