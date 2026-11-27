@@ -18,8 +18,6 @@ import { boardStats } from "@/lib/pipeline/stats";
 import { loadPipelines } from "@/lib/pipeline/config";
 import { daysInStage, isStale } from "@/lib/pipeline/rules";
 import { cn } from "@/lib/utils";
-import { TagRow } from "@/components/tag-chip";
-import { hasTag, listTags, tagParam, tagsForMany } from "@/lib/tags";
 import { Kanban, type BoardJob } from "./kanban";
 
 export const metadata = { title: "Jobs" };
@@ -53,7 +51,6 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const stageFilter = str(sp.stage).split(",").filter(Boolean);
   const service = s.jobs.serviceCode.enumValues.find((v) => v === str(sp.service)) ?? "";
   const staleOnly = sp.stale === "1";
-  const tag = tagParam(sp.tag);
   const status = STATUSES.find(([k]) => k === sp.status)?.[0] ?? "open";
   const sort = SORTS.some(([k]) => k === sp.sort) ? String(sp.sort) : "newest";
   const view = jobsView(sp);
@@ -61,7 +58,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   const bsort = BOARD_SORTS.find(([k]) => k === sp.bsort)?.[0] ?? "newest";
   const isOwner = user.role === "OWNER";
 
-  const { pipelines, rows, stats, allTags } = await user.db(async (tx) => {
+  const { pipelines, rows, stats } = await user.db(async (tx) => {
     const pipelines = (await loadPipelines(tx)).filter((p) => p.key !== "AIRNYC");
     const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
     const terminal = [...new Set(pipelines.flatMap((p) => p.stages.filter((st) => st.isTerminal).map((st) => st.key)))];
@@ -96,7 +93,6 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
           view === "list" && status === "closed" && terminal.length && !stageFilter.length ? inArray(s.jobs.stage, terminal) : undefined,
           view === "list" && stageFilter.length ? inArray(s.jobs.stage, stageFilter) : undefined,
           view === "list" && service ? eq(s.jobs.serviceCode, service) : undefined,
-          view === "list" && tag ? hasTag("job", s.jobs.id, tag) : undefined,
           q
             ? or(
                 ilike(s.jobs.jobNumber, `%${q}%`),
@@ -110,7 +106,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
       .orderBy(desc(s.jobs.createdAt))
       .limit(5000);
     const stats = view === "board" && pipelineKey ? await boardStats(tx, pipelines.find((p) => p.key === pipelineKey)!) : null;
-    return { pipelines, rows, pipelineKey, stats, allTags: await listTags(tx) };
+    return { pipelines, rows, pipelineKey, stats };
   });
   const pipelineKey = pipelines.find((p) => p.key === sp.pipeline)?.key ?? pipelines[0]?.key;
   const pipeline = pipelines.find((p) => p.key === pipelineKey)!;
@@ -139,7 +135,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   if (bsort === "days") boardCards.sort((a, b) => b.daysInStage - a.daysInStage);
   else if (bsort === "quiet") boardCards.sort((a, b) => (b.lastTouchDays ?? b.daysInStage) - (a.lastTouchDays ?? a.daysInStage));
   else if (bsort === "value") boardCards.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
-  const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, tag, stale: staleOnly ? "1" : undefined, status: status === "open" ? undefined : status, sort: sort === "newest" ? undefined : sort };
+  const listParams = { stage: stageFilter.join(",") || undefined, service: service || undefined, stale: staleOnly ? "1" : undefined, status: status === "open" ? undefined : status, sort: sort === "newest" ? undefined : sort };
   const qs = (o: Record<string, string | undefined>) => {
     return jobsHref({ view, pipeline: pipelineKey, q: q || undefined, mine: mine ? "1" : undefined, bsort: view === "board" && bsort !== "newest" ? bsort : undefined, ...(view === "list" ? listParams : {}) }, o);
   };
@@ -150,10 +146,9 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
   if (sort === "days") listRows.sort((a, b) => b.c.daysInStage - a.c.daysInStage);
   else if (sort === "number") listRows.sort((a, b) => a.c.jobNumber.localeCompare(b.c.jobNumber));
   else if (sort === "stage") listRows.sort((a, b) => (stageRank.get(a.c.stage) ?? 99) - (stageRank.get(b.c.stage) ?? 99));
-  const filtered = Boolean(stageFilter.length || service || tag || staleOnly || q || mine || status !== "open");
+  const filtered = Boolean(stageFilter.length || service || staleOnly || q || mine || status !== "open");
   const win = pageWindow(listRows.length, pageFrom(sp.page));
   const pageRows = listRows.slice(win.offset, win.offset + PAGE_SIZE);
-  const rowTags = pageRows.length ? await user.db((tx) => tagsForMany(tx, "job", pageRows.map(({ c }) => c.id))) : new Map();
   const pageHref = (page: number) => qs({ view: "list", page: String(page) });
   const openOnBoard = view === "board" ? rows.filter((r) => !stageByKey.get(`${r.job.pipelineKey}:${r.job.stage}`)?.isTerminal).length : 0;
 
@@ -165,7 +160,7 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
         actions={
           <>
             <div className="seg">
-              <Link href={qs({ view: "board", stage: undefined, service: undefined, tag: undefined, stale: undefined, sort: undefined })} className={cn("seg-item", view === "board" && "seg-on")}>Board</Link>
+              <Link href={qs({ view: "board", stage: undefined, service: undefined, stale: undefined, sort: undefined })} className={cn("seg-item", view === "board" && "seg-on")}>Board</Link>
               <Link href={qs({ view: "list" })} className={cn("seg-item", view === "list" && "seg-on")}>List</Link>
             </div>
             <Link href="/jobs/new" className={buttonVariants()}>New job</Link>
@@ -206,12 +201,6 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
                 <option value="">All services</option>
                 {Object.entries(SERVICE_LABELS).filter(([k]) => k !== "AIRNYC").map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </NativeSelect>
-              {allTags.length > 0 && (
-                <NativeSelect name="tag" defaultValue={tag ?? ""} aria-label="Filter by tag" className="w-auto">
-                  <option value="">Any tag</option>
-                  {allTags.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </NativeSelect>
-              )}
               <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm shadow-xs">
                 <input type="checkbox" name="stale" value="1" defaultChecked={staleOnly} className="size-4 accent-primary" />
                 Stale only
@@ -273,7 +262,6 @@ export default async function JobsPage({ searchParams }: PageProps<"/jobs">) {
                     <div className="text-xs text-muted-foreground">{c.service} · {c.jobNumber}</div>
                     <div className="mt-1 text-xs sm:hidden">{c.client ?? "No client linked"}</div>
                     {c.nextTask && <div className="mt-1 text-xs lg:hidden">Next: {c.nextTask.title}</div>}
-                    <TagRow tags={rowTags.get(c.id)} className="mt-1" />
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{c.client ?? "—"}</TableCell>
                   <TableCell>

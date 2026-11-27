@@ -16,10 +16,6 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { MetaChip, RecordHeader } from "@/components/record-header";
-import { TagEditor } from "@/components/tag-editor";
-import { listTags, tagsFor } from "@/lib/tags";
-import { addTagAction, removeTagAction } from "@/app/(app)/tags/actions";
-
 import { Status } from "@/components/status";
 import { TaskList } from "@/components/task-list";
 import { Timeline } from "@/components/timeline";
@@ -113,10 +109,10 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
             .orderBy(asc(s.organizations.name)),
         }
       : null;
-    return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, field, compose: await loadComposeData(tx), tags: await tagsFor(tx, "job", id), allTags: await listTags(tx) };
+    return { ...row, stages, samples, documents, tasks, activities, options, financials: fin, money, field, compose: await loadComposeData(tx) };
   });
   if (!data) notFound();
-  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, field, compose, tags, allTags } = data;
+  const { job, property, org, contact, stages, samples, documents, tasks, activities, options, financials, money, field, compose } = data;
   const aiOn = aiEnabled();
   const docusignReady = Boolean(docusignConfigFromEnv());
 
@@ -223,9 +219,6 @@ export default async function JobPage({ params, searchParams }: PageProps<"/jobs
           </>
         }
       />
-      <div className="-mt-3 mb-5 sm:pl-16">
-        <TagEditor tags={tags} allTags={allTags} add={addTagAction.bind(null, "job", id)} remove={removeTagAction.bind(null, "job", id)} />
-      </div>
 
       {tab === "overview" && <JobNextStep jobId={id} jobNumber={job.jobNumber} step={nextStep} next={nextStage ? { key: nextStage.key, name: nextStage.name, blocked: blockers.get(nextStage.key) ?? [] } : null} stages={stageOptions} canMarkLost={!current?.isTerminal} />}
 

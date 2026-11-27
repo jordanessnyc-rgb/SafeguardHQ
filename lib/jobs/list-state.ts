@@ -11,7 +11,7 @@ export function jobsView(params: Record<string, string | string[] | undefined>):
 export function jobsHref(current: Params, changes: Params = {}): string {
   const params = { ...current, ...changes };
   if (params.view === "board") {
-    for (const key of ["stage", "service", "tag", "stale", "status", "sort", "page"]) delete params[key];
+    for (const key of ["stage", "service", "stale", "status", "sort", "page"]) delete params[key];
   } else delete params.bsort;
   return listHref("/jobs", params);
 }
