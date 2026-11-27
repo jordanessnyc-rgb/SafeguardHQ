@@ -8,7 +8,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { mentionedIds, splitMentions } from "@/lib/team/mentions";
 import { loadContactPanel } from "@/lib/team/contact-panel";
-import { addInternalNote, assignConversation, notesFor, postTeamMessage, teamMembers, unreadForNav, viewWhere } from "@/lib/team/inbox";
+import { filterConversations, listConversations, loadThread, markConversationRead, toggleStar } from "@/lib/team/conversations";
+import { conversationKey, addInternalNote, assignConversation, notesFor, postTeamMessage, teamMembers, unreadForNav, viewWhere } from "@/lib/team/inbox";
 import { createUser, hasTestDb, pgError, setupTestDb, type TestDb, type TestUser } from "../helpers/db";
 
 describe("@mentions (no database)", () => {
@@ -61,7 +62,7 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
   const to = (...addresses: string[]) => ({ raw: { email: { from: { name: "PM", address: "pm@acme.test" }, to: addresses.map((address) => ({ name: "", address })), cc: [] } } });
 
   it("My inbox = what I received, what I sent, my text conversations and what's assigned to me", async () => {
-    const toMaria = await email({ threadKey: "<t1>", ...to(va.claims.email!.toUpperCase()) }); // case doesn't matter
+    const toMaria = await email({ fromAddress: "pm1@acme.test", ...to(va.claims.email!.toUpperCase()) }); // case doesn't matter
     // Sent from the CRM by Maria (approved_by), and sent from her own mailbox (from_address).
     const [crmSent] = await t.db.insert(s.activities).values({ type: "EMAIL_OUT", direction: "OUTBOUND", subject: "Quote", externalId: "<out-1@ess>", toAddress: "client@acme.test" }).returning();
     await t.db.insert(s.outboundMessages).values({ channel: "EMAIL", status: "SENT", toAddress: "client@acme.test", body: "Quote attached", externalId: "<out-1@ess>", approvedBy: va.id });
@@ -70,9 +71,9 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
     await t.db.insert(s.outboundMessages).values({ channel: "SMS", status: "SENT", toAddress: "+19295550199", body: "Hi, confirming Friday", approvedBy: va2.id, sentAt: new Date() });
     const [reply] = await t.db.insert(s.activities).values({ type: "SMS", direction: "INBOUND", fromAddress: "+19295550199", body: "Yes Friday works" }).returning();
     // Assigned to Sam, with a later reply in the same thread.
-    const first = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") });
-    const later = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") });
-    const loose = await email({ threadKey: "<t3>", ...to("sales@ess-nyc.com") });
+    const first = await email({ fromAddress: "kevin@acme.test", ...to("sales@ess-nyc.com") });
+    const later = await email({ fromAddress: "Kevin@acme.test", ...to("sales@ess-nyc.com") }); // same person, any case
+    const loose = await email({ fromAddress: "priya@acme.test", ...to("sales@ess-nyc.com") });
     await va2.as(async (tx) => assignConversation(tx, { activity: first, assignee: va2.id, actor: { id: va2.id, name: "Sam Park" } }));
 
     expect(await ids(va, "mine")).toEqual([toMaria.id, crmSent.id, mailboxSent.id].sort());
@@ -81,32 +82,32 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
   });
 
   it("an assignment wins over who the email was sent to", async () => {
-    const msg = await email({ threadKey: "<t9>", ...to(va.claims.email!) });
+    const msg = await email({ fromAddress: "pm9@acme.test", ...to(va.claims.email!) });
     await owner.as(async (tx) => assignConversation(tx, { activity: msg, assignee: va2.id, actor: { id: owner.id, name: "Jordan Adhami" } }));
     expect(await ids(va2, "mine")).toContain(msg.id);
     expect(await ids(va, "mine")).not.toContain(msg.id);
-    await t.db.delete(s.conversationAssignments).where(eq(s.conversationAssignments.conversationKey, "<t9>"));
+    await t.db.delete(s.conversationAssignments).where(eq(s.conversationAssignments.conversationKey, conversationKey(msg)));
   });
 
   it("assigning someone else notifies them; unassigning removes it", async () => {
-    const msg = await email({ threadKey: "<t4>", subject: "Mold question", ...to("sales@ess-nyc.com") });
+    const msg = await email({ fromAddress: "pm4@acme.test", subject: "Mold question", ...to("sales@ess-nyc.com") });
     await owner.as((tx) => assignConversation(tx, { activity: msg, assignee: va.id, actor: { id: owner.id, name: "Jordan Adhami" } }));
     const mine = await va.as((tx) => tx.select().from(s.notifications).where(eq(s.notifications.kind, "ASSIGNED")));
     expect(mine.map((n) => n.title)).toEqual(["Jordan Adhami assigned you “Mold question”"]);
-    expect(mine[0].href).toBe(`/inbox?box=inbox&id=${msg.id}`);
+    expect(mine[0].href).toBe(`/inbox?c=${encodeURIComponent("a:pm4@acme.test")}`);
     await owner.as((tx) => assignConversation(tx, { activity: msg, assignee: null, actor: { id: owner.id, name: "Jordan Adhami" } }));
     expect((await ids(va, "unassigned"))).toContain(msg.id);
   });
 
   it("internal notes stay internal, show on the conversation and notify @mentions", async () => {
-    const msg = await email({ threadKey: "<t5>", jobId });
-    const reply = await email({ threadKey: "<t5>", jobId });
+    const msg = await email({ fromAddress: "pm5@acme.test", jobId });
+    const reply = await email({ fromAddress: "pm5@acme.test", jobId });
     const before = await t.db.select().from(s.outboundMessages);
     const r = await va.as(async (tx) => addInternalNote(tx, { activity: msg, body: "@Jordan Adhami they want Friday. @Sam can you confirm?", author: { id: va.id, name: "Maria Lopez" }, members: await teamMembers(tx) }));
     expect(r.mentions.sort()).toEqual([owner.id, va2.id].sort());
 
     // Same conversation from the reply's side; and nothing was queued to send.
-    const notes = await owner.as((tx) => notesFor(tx, reply.threadKey!));
+    const notes = await owner.as((tx) => notesFor(tx, conversationKey(reply)));
     expect(notes.map((n) => n.authorId)).toEqual([va.id]);
     expect(await t.db.select().from(s.outboundMessages)).toHaveLength(before.length);
     const [row] = await t.db.select().from(s.activities).where(eq(s.activities.id, r.id));
@@ -117,7 +118,7 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
   });
 
   it("notes are refused on AIRnyc / sealed messages", async () => {
-    const sealed = await email({ threadKey: "<t6>", sensitive: true });
+    const sealed = await email({ fromAddress: "pm6@acme.test", sensitive: true });
     const msg = await pgError(va.as(async (tx) => addInternalNote(tx, { activity: sealed, body: "member called back", author: { id: va.id, name: "Maria Lopez" }, members: [] })));
     expect(msg).toMatch(/AIRnyc/);
   });
@@ -151,6 +152,43 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
     expect(asVa?.documents.map((x) => x.title)).toEqual(["LL152 report"]);
     const asOwner = await owner.as((tx) => loadContactPanel(tx, c.id));
     expect(asOwner?.documents.map((x) => x.title).sort()).toEqual(["LL152 report", "Proposal with price"]);
+  });
+
+  it("conversation list: one row per person, unread since last opened, recent and starred", async () => {
+    const [c] = await t.db.insert(s.contacts).values({ firstName: "Toby", lastName: "Oldaker", phones: ["+19295550177"] }).returning();
+    const key = `c:${c.id}`;
+    await t.db.insert(s.activities).values([
+      { type: "SMS", direction: "INBOUND", contactId: c.id, fromAddress: "+19295550177", body: "Hello?", occurredAt: new Date(Date.now() - 60_000) },
+      { type: "SMS", direction: "OUTBOUND", contactId: c.id, toAddress: "+19295550177", body: "Hi Toby!", occurredAt: new Date(Date.now() - 30_000) },
+      { type: "SMS", direction: "INBOUND", contactId: c.id, fromAddress: "+19295550177", body: "Stop", occurredAt: new Date() },
+    ]);
+    let rows = await va.as((tx) => listConversations(tx, { me: va.id }));
+    const toby = rows.find((r) => r.key === key)!;
+    expect(toby).toMatchObject({ firstName: "Toby", unread: 2, starred: false, snippet: "Stop" });
+    expect(rows.filter((r) => r.key === key)).toHaveLength(1);
+    expect(filterConversations(rows, "team", "unread").map((r) => r.key)).toContain(key);
+
+    await va.as(async (tx) => {
+      await markConversationRead(tx, va.id, [key]);
+      expect(await toggleStar(tx, va.id, key)).toBe(true);
+    });
+    rows = await va.as((tx) => listConversations(tx, { me: va.id }));
+    expect(rows.find((r) => r.key === key)).toMatchObject({ unread: 0, starred: true });
+    expect(filterConversations(rows, "team", "recent").map((r) => r.key)).toEqual([key]);
+    expect(filterConversations(rows, "team", "starred").map((r) => r.key)).toEqual([key]);
+    // Stars and reads are personal.
+    const theirs = await va2.as((tx) => listConversations(tx, { me: va2.id }));
+    expect(theirs.find((r) => r.key === key)).toMatchObject({ unread: 2, starred: false });
+    expect(await va2.as((tx) => tx.select().from(s.conversationStars))).toHaveLength(0);
+  });
+
+  it("thread: messages and internal comments in order", async () => {
+    const [c] = await t.db.insert(s.contacts).values({ firstName: "Lisa", lastName: "Miller" }).returning();
+    const [m1] = await t.db.insert(s.activities).values({ type: "EMAIL_IN", direction: "INBOUND", contactId: c.id, subject: "Credit", body: "What's the credit?", occurredAt: new Date(Date.now() - 120_000) }).returning();
+    await va.as(async (tx) => addInternalNote(tx, { activity: m1, body: "Check with Jordan", author: { id: va.id, name: "Maria Lopez" }, members: await teamMembers(tx) }));
+    await t.db.insert(s.activities).values({ type: "EMAIL_OUT", direction: "OUTBOUND", contactId: c.id, subject: "Re: Credit", body: "It's $200", occurredAt: new Date(Date.now() + 60_000) });
+    const thread = await owner.as((tx) => loadThread(tx, `c:${c.id}`));
+    expect(thread.map((i) => (i.kind === "note" ? `note:${i.body}` : i.a.subject))).toEqual(["Credit", "note:Check with Jordan", "Re: Credit"]);
   });
 
   it("RLS: field staff see nothing; you can't post as someone else or read others' notifications", async () => {

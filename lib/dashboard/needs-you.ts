@@ -76,7 +76,7 @@ export async function buildNeedsYou(tx: Tx, opts: { userId: string; isOwner: boo
       meta: inbox.blocked ? `${inbox.blocked} AIRnyc (AI not allowed to read — needs a person)` : "The AI wasn't sure where these belong",
       when: inbox.oldest ? `Oldest ${ago(inbox.oldest, now)}` : null,
       late: false,
-      href: "/inbox",
+      href: "/inbox?box=review",
       action: "Start filing",
       rank: 20,
     });

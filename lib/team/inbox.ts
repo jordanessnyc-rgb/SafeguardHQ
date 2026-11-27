@@ -1,8 +1,9 @@
 /**
  * Team inbox & internal chat. Everything runs in the caller's RLS transaction (staff only).
  *
- *  - A conversation is identified by its message's thread key (email thread root / Quo conversation),
- *    or the message's own id when it has none, so replies in an assigned thread follow automatically.
+ *  - A conversation is everything exchanged with one person: key "c:<contact id>" when the message is
+ *    linked to a contact, else "a:<their email or phone>", else "m:<message id>". So assigning a
+ *    conversation covers every email, text and call with that person, past and future.
  *  - Every message belongs to at most one team member (its "owner"), checked in this order:
  *      1. the person its conversation is assigned to;
  *      2. the person who sent it (from the CRM: outbound_messages.approved_by; from their own
@@ -22,8 +23,18 @@ import { mentionedIds, type Member } from "./mentions";
 
 export type InboxView = "team" | "mine" | "unassigned";
 
-export const conversationKey = (a: { threadKey: string | null; id: string }) => a.threadKey ?? a.id;
-const keySql = sql`coalesce(${col(s.activities.threadKey)}, ${col(s.activities.id)}::text)`;
+type KeyFields = { id: string; contactId: string | null; direction: string | null; fromAddress: string | null; toAddress: string | null };
+/** The other party's address on a message: the sender of inbound mail/texts, the first recipient of outbound. */
+export const counterpartOf = (a: Omit<KeyFields, "id" | "contactId">) =>
+  ((a.direction === "INBOUND" ? a.fromAddress : a.toAddress) ?? "").split(",")[0].trim().toLowerCase() || null;
+export function conversationKey(a: KeyFields): string {
+  if (a.contactId) return `c:${a.contactId}`;
+  const who = counterpartOf(a);
+  return who ? `a:${who}` : `m:${a.id}`;
+}
+/** SQL twin of conversationKey(), for `activities` rows. Keep the two in step. */
+export const keySql = sql<string>`(case when ${col(s.activities.contactId)} is not null then 'c:' || ${col(s.activities.contactId)}::text
+  else coalesce('a:' || nullif(lower(trim(split_part(case when ${col(s.activities.direction)} = 'INBOUND' then ${col(s.activities.fromAddress)} else ${col(s.activities.toAddress)} end, ',', 1))), ''), 'm:' || ${col(s.activities.id)}::text) end)`;
 
 /**
  * True when the message was addressed to `email` (To or Cc). Uses the parsed headers kept in
@@ -69,10 +80,9 @@ export async function teamMembers(tx: Tx): Promise<(Member & { email: string })[
   return rows.map((r) => ({ id: r.id, name: r.name?.trim() || r.email.split("@")[0], email: r.email }));
 }
 
-/** Where a message opens in Messages (the right box, so ?id= finds it). */
-export function messageHref(a: { id: string; direction: string | null; archivedAt: Date | null }) {
-  const box = a.archivedAt ? "archived" : a.direction === "OUTBOUND" ? "sent" : "inbox";
-  return `/inbox?box=${box}&id=${a.id}`;
+/** Where a conversation opens in Messages: the conversation view, scrolled to that person. */
+export function messageHref(a: KeyFields) {
+  return `/inbox?c=${encodeURIComponent(conversationKey(a))}`;
 }
 
 export async function assignmentFor(tx: Tx, key: string) {
@@ -83,7 +93,7 @@ export async function assignmentFor(tx: Tx, key: string) {
 /** Assigns (or, with null, unassigns) a conversation, and tells the new assignee unless it's you. */
 export async function assignConversation(
   tx: Tx,
-  opts: { activity: { id: string; threadKey: string | null; direction: string | null; archivedAt: Date | null; subject: string | null; type: string }; assignee: string | null; actor: { id: string; name: string } },
+  opts: { activity: KeyFields & { archivedAt: Date | null; subject: string | null; type: string }; assignee: string | null; actor: { id: string; name: string } },
 ) {
   const key = conversationKey(opts.activity);
   if (!opts.assignee) {

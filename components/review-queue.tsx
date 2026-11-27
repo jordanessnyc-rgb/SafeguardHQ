@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-export type MessageBox = "review" | "inbox" | "sent" | "archived" | "outbox";
+export type MessageBox = "conversations" | "review" | "inbox" | "sent" | "archived" | "outbox";
 
 /** The Messages tabs: the review queue, the whole mailbox, and drafts waiting for approval. */
 export function QueueTabs({ active, toFile, toApprove }: { active: MessageBox; toFile: number; toApprove: number }) {
@@ -23,7 +23,8 @@ export function QueueTabs({ active, toFile, toApprove }: { active: MessageBox; t
   );
   return (
     <nav aria-label="Messages" className="inline-flex flex-wrap gap-0.5 rounded-xl bg-muted p-1">
-      {tab("review", "/inbox", "To file", toFile)}
+      {tab("conversations", "/inbox", "Conversations")}
+      {tab("review", "/inbox?box=review", "To file", toFile)}
       {tab("inbox", "/inbox?box=inbox", "Inbox")}
       {tab("sent", "/inbox?box=sent", "Sent")}
       {tab("archived", "/inbox?box=archived", "Archived")}

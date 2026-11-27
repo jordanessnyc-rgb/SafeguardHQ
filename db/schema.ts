@@ -1310,3 +1310,29 @@ export const chatReads = pgTable("chat_reads", {
     .references(() => profiles.userId, { onDelete: "cascade" }),
   lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** When each team member last opened each conversation (Unread counts and the Recent tab). */
+export const conversationReads = pgTable(
+  "conversation_reads",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.userId, { onDelete: "cascade" }),
+    conversationKey: text("conversation_key").notNull(),
+    lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.conversationKey] }), index("conversation_reads_recent_idx").on(t.userId, t.lastReadAt)],
+);
+
+/** Conversations each team member starred (the Starred tab). Personal: others don't see your stars. */
+export const conversationStars = pgTable(
+  "conversation_stars",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.userId, { onDelete: "cascade" }),
+    conversationKey: text("conversation_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.conversationKey] })],
+);

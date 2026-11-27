@@ -7,6 +7,8 @@ import { schema as s } from "@/lib/db";
 import { requireStaff } from "@/lib/auth/session";
 import { safeAction, type ActionState } from "@/lib/actions";
 import { addInternalNote, assignConversation, teamMembers } from "@/lib/team/inbox";
+import { markConversationRead, toggleStar } from "@/lib/team/conversations";
+import { composeMessage } from "@/app/(app)/comms/actions";
 
 const actorName = (u: { fullName: string | null; email: string }) => u.fullName?.trim() || u.email.split("@")[0];
 
@@ -43,4 +45,37 @@ export async function addNoteAction(activityId: string, _prev: ActionState, form
   });
   revalidatePath("/inbox");
   return res;
+}
+
+// --- Conversation view -------------------------------------------------------------------------
+
+const keySchema = z.string().min(3).max(400).regex(/^(c|a|m):/);
+
+/** Star / unstar a conversation (personal). */
+export async function toggleStarAction(key: string) {
+  const user = await requireStaff();
+  await user.db((tx) => toggleStar(tx, user.id, keySchema.parse(key)));
+  revalidatePath("/inbox");
+}
+
+/** Bulk "Mark as read" from the conversation list (checked rows). */
+export async function markReadAction(form: FormData) {
+  const user = await requireStaff();
+  const keys = z.array(keySchema).max(500).parse(form.getAll("key").map(String));
+  await user.db((tx) => markConversationRead(tx, user.id, keys));
+  revalidatePath("/inbox");
+}
+
+/**
+ * The conversation's message bar: SMS and Email go through the normal compose action (a person is
+ * sending, so it's approved and sent at once, same as "Send now"); Internal comment adds a note.
+ */
+export async function sendInConversationAction(lastActivityId: string, prev: ActionState, form: FormData): Promise<ActionState> {
+  if (form.get("channel") === "INTERNAL") {
+    const note = new FormData();
+    note.set("body", String(form.get("body") ?? ""));
+    return addNoteAction(lastActivityId, prev, note);
+  }
+  form.set("intent", "send");
+  return composeMessage(prev, form);
 }

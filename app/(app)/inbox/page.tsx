@@ -33,6 +33,8 @@ import { addNoteAction, assignConversationAction } from "./team-actions";
 import { AssignForm } from "./assign-form";
 import { ContactPanel, UnknownSenderPanel } from "@/components/team/contact-panel";
 import { loadContactPanel } from "@/lib/team/contact-panel";
+import { CONV_TABS, filterConversations, listConversations, loadThread, markConversationRead, type ConvTab } from "@/lib/team/conversations";
+import { ConversationsView } from "./conversations-view";
 
 export const metadata = { title: "Messages" };
 
@@ -100,10 +102,12 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const user = await requireStaff();
   const sp = await searchParams;
   const now = new Date();
-  const box: MessageBox = sp.box === "inbox" || sp.box === "sent" || sp.box === "archived" ? sp.box : "review";
   const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
-  // Team inbox = everything; My inbox = assigned to me + my jobs; Unassigned = nobody's yet.
+  // Team inbox = everything; My inbox = mine; Unassigned = nobody's yet.
   const view: InboxView = sp.view === "mine" || sp.view === "unassigned" ? sp.view : "team";
+  // Default: conversations (one per person). The classic per-message boxes stay for filing and archives.
+  if (sp.box !== "review" && sp.box !== "inbox" && sp.box !== "sent" && sp.box !== "archived") return conversationsPage(user, { view, q, sp, now });
+  const box: MessageBox = sp.box;
   const me = { id: user.id, email: user.email };
   const search: SQL | undefined = q ? or(ilike(s.activities.subject, `%${q}%`), ilike(s.activities.body, `%${q}%`), ilike(s.activities.fromAddress, `%${q}%`), ilike(s.activities.toAddress, `%${q}%`)) : undefined;
   const notTrashed = sql`not (coalesce(${s.activities.raw}, '{}'::jsonb) ? 'trashed')`;
@@ -113,6 +117,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     sent: and(inArray(s.activities.type, ["EMAIL_OUT", "SMS"]), eq(s.activities.direction, "OUTBOUND"), isNull(s.activities.archivedAt)),
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
+    conversations: undefined,
   };
   // In the Inbox box, My inbox is my history (received + sent) and Team inbox is everyone's combined.
   const myHistory = and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNull(s.activities.archivedAt));
@@ -164,6 +169,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     sent: { description: "Emails and texts sent from the CRM, plus copies of mail sent from Titan.", empty: "Nothing sent yet.", listLabel: "sent" },
     archived: { description: "Archived mail and texts. Put one back in the inbox if you need it again.", empty: "Nothing archived.", listLabel: "archived" },
     outbox: { description: "", empty: "", listLabel: "" },
+    conversations: { description: "", empty: "", listLabel: "" },
   };
   const composeProps = { lines: lines.map((l) => ({ id: l.id, label: l.label })), templates, defaultFromEmail, isOwner: user.role === "OWNER" };
   const header = (
@@ -180,12 +186,12 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   );
   const searchForm = (
     <form className="flex gap-1 border-b border-border/70 p-2.5" role="search">
-      {box !== "review" && <input type="hidden" name="box" value={box} />}
+      <input type="hidden" name="box" value={box} />
       {view !== "team" && <input type="hidden" name="view" value={view} />}
       <Input name="q" type="search" defaultValue={q} placeholder="Search sender, subject or text" aria-label="Search messages" className="h-8" />
     </form>
   );
-  const viewHref = (v: InboxView) => `/inbox?${new URLSearchParams({ ...(box === "review" ? {} : { box }), ...(v === "team" ? {} : { view: v }), ...(q ? { q } : {}) })}`.replace(/\?$/, "");
+  const viewHref = (v: InboxView) => `/inbox?${new URLSearchParams({ box, ...(v === "team" ? {} : { view: v }), ...(q ? { q } : {}) })}`.replace(/\?$/, "");
   const viewTabs = (
     <nav aria-label="Whose messages" className="seg m-2.5 mb-0 flex">
       {([["team", "Team inbox", null], ["mine", "My inbox", mineCount], ["unassigned", "Unassigned", unassignedCount]] as const).map(([v, label, n]) => (
@@ -219,7 +225,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const index = found >= 0 ? found : Math.min(Math.max(0, at), items.length - 1);
   const explicit = Boolean(requested);
   const current = items[index];
-  const base = `/inbox?${box === "review" ? "" : `box=${box}&`}${view === "team" ? "" : `view=${view}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
+  const base = `/inbox?box=${box}&${view === "team" ? "" : `view=${view}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
   const href = (i: number) => `${base}id=${items[i].id}&at=${i}`;
   const afterGone = items[index + 1] ? href(index + 1) : items[index - 1] ? href(index - 1) : base.replace(/[?&]$/, "");
   const prev = items[index - 1] ? href(index - 1) : null;
@@ -609,5 +615,68 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       </div>
       <InboxKeys prevHref={prev} nextHref={next} />
     </>
+  );
+}
+
+/** The default Messages view: one conversation per person, chat thread in the middle, client on the right. */
+async function conversationsPage(
+  user: Awaited<ReturnType<typeof requireStaff>>,
+  { view, q, sp, now }: { view: InboxView; q: string; sp: Awaited<PageProps<"/inbox">["searchParams"]>; now: Date },
+) {
+  const tab: ConvTab = CONV_TABS.find((t) => t === sp.tab) ?? "all";
+  const c = typeof sp.c === "string" && /^(c|a|m):/.test(sp.c) ? sp.c.slice(0, 400) : null;
+  const data = await user.db(async (tx) => {
+    const all = await listConversations(tx, { me: user.id, q });
+    const scoped = filterConversations(all, view, "all");
+    const selected = (c && all.find((r) => r.key === c)) || null;
+    const thread = selected ? await loadThread(tx, selected.key) : [];
+    if (selected) await markConversationRead(tx, user.id, [selected.key]);
+    const protectedConv = thread.some((i) => i.kind === "message" && (i.a.sensitive || i.a.airnycCaseId));
+    return {
+      rows: filterConversations(all, view, tab),
+      tabCounts: Object.fromEntries(CONV_TABS.map((t) => [t, t === "unread" ? scoped.reduce((n, r) => n + (r.key === selected?.key ? 0 : r.unread), 0) : filterConversations(all, view, t).length])) as Record<ConvTab, number>,
+      selected,
+      thread,
+      panel: selected?.contactId && !protectedConv ? await loadContactPanel(tx, selected.contactId, now) : null,
+      assignee: selected ? ((await assignmentFor(tx, selected.key))?.assignee ?? "") : "",
+      members: await teamMembers(tx),
+      lines: await tx.select({ id: s.phoneLines.id, label: s.phoneLines.label, lineKey: s.phoneLines.lineKey }).from(s.phoneLines),
+      templates: await tx.select({ key: s.messageTemplates.key, name: s.messageTemplates.name, channel: s.messageTemplates.channel }).from(s.messageTemplates).where(eq(s.messageTemplates.active, true)),
+      defaultFromEmail: (await tx.select({ v: s.settings.defaultFromEmail }).from(s.settings))[0]?.v ?? "sales@ess-nyc.com",
+      toFile: (await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere))[0].n,
+      toApprove: (await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING])))[0].n,
+    };
+  });
+  const composeProps = { lines: data.lines.map((l) => ({ id: l.id, label: l.label })), templates: data.templates, defaultFromEmail: data.defaultFromEmail, isOwner: user.role === "OWNER" };
+  const header = (
+    <PageHeader
+      title="Messages"
+      description={view === "mine" ? "Your conversations: emails you received and sent, your texts, and anything assigned to you." : view === "unassigned" ? "Conversations nobody is looking after yet." : "Everyone's conversations in one place, one per person."}
+      actions={
+        <>
+          <NewMessageButton {...composeProps} />
+          <QueueTabs active="conversations" toFile={data.toFile} toApprove={data.toApprove} />
+        </>
+      }
+    />
+  );
+  return (
+    <ConversationsView
+      header={header}
+      rows={data.rows}
+      tabCounts={data.tabCounts}
+      view={view}
+      tab={tab}
+      q={q}
+      selected={data.selected}
+      thread={data.thread}
+      panel={data.panel}
+      assignee={data.assignee}
+      members={data.members}
+      me={user.id}
+      lines={data.lines}
+      defaultFromEmail={data.defaultFromEmail}
+      now={now}
+    />
   );
 }
