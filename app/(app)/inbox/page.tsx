@@ -26,6 +26,16 @@ import { inboxReviewWhere, OUTBOX_WAITING, suggestJob } from "@/lib/queues";
 import { cn } from "@/lib/utils";
 import { reviewActivity } from "../comms/actions";
 
+import { MentionComposer } from "@/components/team/mention-composer";
+import { MentionText } from "@/components/team/mention-text";
+import { assignmentFor, conversationKey, notesFor, ownerSql, teamMembers, viewWhere, type InboxView } from "@/lib/team/inbox";
+import { addNoteAction, assignConversationAction } from "./team-actions";
+import { AssignForm } from "./assign-form";
+import { ContactPanel, UnknownSenderPanel } from "@/components/team/contact-panel";
+import { loadContactPanel } from "@/lib/team/contact-panel";
+import { CONV_TABS, filterConversations, listConversations, loadThread, markConversationRead, type ConvTab } from "@/lib/team/conversations";
+import { ConversationsView } from "./conversations-view";
+
 export const metadata = { title: "Messages" };
 
 const TZ = "America/New_York";
@@ -92,8 +102,13 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const user = await requireStaff();
   const sp = await searchParams;
   const now = new Date();
-  const box: MessageBox = sp.box === "inbox" || sp.box === "sent" || sp.box === "archived" ? sp.box : "review";
   const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
+  // Team inbox = everything; My inbox = mine; Unassigned = nobody's yet.
+  const view: InboxView = sp.view === "mine" || sp.view === "unassigned" ? sp.view : "team";
+  // Default: conversations (one per person). The classic per-message boxes stay for filing and archives.
+  if (sp.box !== "review" && sp.box !== "inbox" && sp.box !== "sent" && sp.box !== "archived") return conversationsPage(user, { view, q, sp, now });
+  const box: MessageBox = sp.box;
+  const me = { id: user.id, email: user.email };
   const search: SQL | undefined = q ? or(ilike(s.activities.subject, `%${q}%`), ilike(s.activities.body, `%${q}%`), ilike(s.activities.fromAddress, `%${q}%`), ilike(s.activities.toAddress, `%${q}%`)) : undefined;
   const notTrashed = sql`not (coalesce(${s.activities.raw}, '{}'::jsonb) ? 'trashed')`;
   const boxWhere: Record<MessageBox, SQL | undefined> = {
@@ -102,9 +117,16 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     sent: and(inArray(s.activities.type, ["EMAIL_OUT", "SMS"]), eq(s.activities.direction, "OUTBOUND"), isNull(s.activities.archivedAt)),
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
+    conversations: undefined,
   };
-  const where = and(boxWhere[box], search);
-  const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail } = await user.db(async (tx) => ({
+  // In the Inbox box, My inbox is my history (received + sent) and Team inbox is everyone's combined.
+  const myHistory = and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNull(s.activities.archivedAt));
+  const boxFor = (v: InboxView) => (v !== "unassigned" && box === "inbox" ? myHistory : boxWhere[box]);
+  const where = and(boxFor(view), search, viewWhere(view, me));
+  const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail, members, mineCount, unassignedCount } = await user.db(async (tx) => ({
+    members: await teamMembers(tx),
+    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxFor("mine"), viewWhere("mine", me))))[0].n,
+    unassignedCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("unassigned", me))))[0].n,
     items: await tx
       .select({
         id: s.activities.id,
@@ -118,6 +140,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         sensitive: s.activities.sensitive,
         attachmentCount: sql<number>`coalesce(jsonb_array_length(${s.activities.attachments}), 0)`.mapWith(Number),
         hasGuess: sql<boolean>`${s.activities.aiClassification} ? 'category'`,
+        owner: ownerSql,
         contact: { id: s.contacts.id, firstName: s.contacts.firstName, lastName: s.contacts.lastName },
       })
       .from(s.activities)
@@ -146,12 +169,13 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     sent: { description: "Emails and texts sent from the CRM, plus copies of mail sent from Titan.", empty: "Nothing sent yet.", listLabel: "sent" },
     archived: { description: "Archived mail and texts. Put one back in the inbox if you need it again.", empty: "Nothing archived.", listLabel: "archived" },
     outbox: { description: "", empty: "", listLabel: "" },
+    conversations: { description: "", empty: "", listLabel: "" },
   };
   const composeProps = { lines: lines.map((l) => ({ id: l.id, label: l.label })), templates, defaultFromEmail, isOwner: user.role === "OWNER" };
   const header = (
     <PageHeader
       title="Messages"
-      description={BOX_TEXT[box].description}
+      description={box !== "inbox" || view === "unassigned" ? BOX_TEXT[box].description : view === "mine" ? "Your messages: emails you received and sent, your text conversations, and anything assigned to you." : "Everyone's messages in one place: what the team received and sent."}
       actions={
         <>
           <NewMessageButton {...composeProps} />
@@ -162,17 +186,32 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   );
   const searchForm = (
     <form className="flex gap-1 border-b border-border/70 p-2.5" role="search">
-      {box !== "review" && <input type="hidden" name="box" value={box} />}
+      <input type="hidden" name="box" value={box} />
+      {view !== "team" && <input type="hidden" name="view" value={view} />}
       <Input name="q" type="search" defaultValue={q} placeholder="Search sender, subject or text" aria-label="Search messages" className="h-8" />
     </form>
   );
+  const viewHref = (v: InboxView) => `/inbox?${new URLSearchParams({ box, ...(v === "team" ? {} : { view: v }), ...(q ? { q } : {}) })}`.replace(/\?$/, "");
+  const viewTabs = (
+    <nav aria-label="Whose messages" className="seg m-2.5 mb-0 flex">
+      {([["team", "Team inbox", null], ["mine", "My inbox", mineCount], ["unassigned", "Unassigned", unassignedCount]] as const).map(([v, label, n]) => (
+        <Link key={v} href={viewHref(v)} aria-current={view === v ? "page" : undefined} className={cn("seg-item flex-1 justify-center text-xs", view === v && "seg-on")}>
+          {label}
+          {n ? <span className="ml-1 tabular-nums text-muted-foreground">{n}</span> : null}
+        </Link>
+      ))}
+    </nav>
+  );
+  const memberName = (id: string | null) => (id ? members.find((m) => m.id === id)?.name ?? "Someone" : null);
+
   if (items.length === 0)
     return (
       <>
         {header}
         <div className="panel overflow-hidden">
+          {viewTabs}
           {searchForm}
-          <EmptyState>{q ? `Nothing matches "${q}".` : BOX_TEXT[box].empty}</EmptyState>
+          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here yet: no emails to or from you, texts you've sent, or conversations assigned to you." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
         </div>
       </>
     );
@@ -186,7 +225,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const index = found >= 0 ? found : Math.min(Math.max(0, at), items.length - 1);
   const explicit = Boolean(requested);
   const current = items[index];
-  const base = `/inbox?${box === "review" ? "" : `box=${box}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
+  const base = `/inbox?box=${box}&${view === "team" ? "" : `view=${view}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
   const href = (i: number) => `${base}id=${items[i].id}&at=${i}`;
   const afterGone = items[index + 1] ? href(index + 1) : items[index - 1] ? href(index - 1) : base.replace(/[?&]$/, "");
   const prev = items[index - 1] ? href(index - 1) : null;
@@ -201,6 +240,14 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       .where(eq(s.activities.id, current.id)),
   );
   const { a, contact, jobNumber } = open;
+  const convKey = conversationKey(a);
+  const protectedMsg = a.sensitive || Boolean(a.airnycCaseId);
+  const team = await user.db(async (tx) => ({
+    assignment: await assignmentFor(tx, convKey),
+    notes: protectedMsg ? [] : await notesFor(tx, convKey),
+    // Client panel: the lead/client behind this message (not for AIRnyc members, whose details are sealed).
+    panel: contact?.id && !protectedMsg ? await loadContactPanel(tx, contact.id, now) : null,
+  }));
   const documents = a.jobId
     ? await user.db((tx) => tx.select({ id: s.documents.id, title: s.documents.title, containsPricing: s.documents.containsPricing }).from(s.documents).where(and(eq(s.documents.jobId, a.jobId!), isNull(s.documents.archivedAt), isNotNull(s.documents.storagePath))))
     : [];
@@ -245,13 +292,21 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       ).reverse()
     : [];
   const callNumber = counterpart?.startsWith("+") ? counterpart : null;
+  const clientPanel = protectedMsg ? (
+    <p className="text-xs text-muted-foreground">AIRnyc member details stay in the AIRnyc case.</p>
+  ) : team.panel ? (
+    <ContactPanel data={team.panel} members={members} me={user.id} now={now} />
+  ) : (
+    <UnknownSenderPanel name={sms ? null : (meta?.from?.name ?? null)} email={sms ? null : (counterpart ?? null)} phone={sms ? (counterpart ?? null) : null} />
+  );
 
   return (
     <>
       {header}
-      <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
+      <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)] xl:grid-cols-[20rem_minmax(0,1fr)_19rem]">
         {/* ---------- message list ---------- */}
         <nav aria-label="Messages to file" className={cn("min-w-0 border-r border-border/70 bg-muted/20 lg:block", explicit && "hidden")}>
+          {viewTabs}
           {searchForm}
           <div className="flex items-center justify-between border-b border-border/70 px-3 py-2 text-xs text-muted-foreground">
             <span>{total > items.length ? `Newest ${items.length} of ${total}` : `${total} ${BOX_TEXT[box].listLabel}`}</span>
@@ -284,6 +339,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                         {m.attachmentCount > 0 && <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-label="Has attachments" />}
                       </span>
                       <span className="line-clamp-2 text-xs text-muted-foreground">{m.sensitive ? "Open to reveal (logged)." : splitQuoted(m.snippet ?? "").main.replace(/\s+/g, " ").trim() || "(no text)"}</span>
+                      {m.owner && (
+                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{m.owner === user.id ? "Yours" : `→ ${memberName(m.owner)}`}</span>
+                      )}
                       {(m.hasGuess || m.triageStatus === "BLOCKED") && (
                         <span className="mt-1 flex gap-1">
                           {m.hasGuess && <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">Suggestion ready</Badge>}
@@ -433,6 +491,54 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
 
             {ai?.error && <p className="text-xs text-destructive">AI error: {ai.error}</p>}
 
+            <section aria-label="Team" className="space-y-3 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] p-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Assigned to</span>
+                <AssignForm action={assignConversationAction.bind(null, a.id)} members={members} current={team.assignment?.assignee ?? ""} />
+                {!team.assignment && current.owner && (
+                  <span className="text-xs text-muted-foreground">
+                    In {current.owner === user.id ? "your" : `${memberName(current.owner)}'s`} inbox because it was sent to {current.owner === user.id ? "you" : "them"}.
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Internal notes</h3>
+                  <span className="text-xs text-muted-foreground">Only your team sees these. Never sent to the client.</span>
+                </div>
+                {protectedMsg ? (
+                  <p className="text-xs text-muted-foreground">Notes are off for AIRnyc messages. Keep member details in the AIRnyc case.</p>
+                ) : (
+                  <>
+                    {team.notes.length > 0 && (
+                      <ol className="space-y-2">
+                        {team.notes.map((n) => (
+                          <li key={n.id} className="flex gap-2">
+                            <Avatar name={memberName(n.authorId) ?? "?"} className="mt-0.5 size-6 text-[10px]" />
+                            <div className="min-w-0 flex-1 rounded-lg bg-card px-3 py-2 text-sm shadow-xs ring-1 ring-black/[0.05] dark:ring-white/10">
+                              <div className="mb-0.5 flex flex-wrap items-baseline gap-x-2 text-xs">
+                                <span className="font-semibold">{memberName(n.authorId)}</span>
+                                <time dateTime={n.createdAt.toISOString()} className="text-muted-foreground">{fmtDate(n.createdAt, true)}</time>
+                              </div>
+                              <MentionText text={n.body ?? ""} members={members} me={user.id} />
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    <MentionComposer
+                      action={addNoteAction.bind(null, a.id)}
+                      members={members}
+                      me={user.id}
+                      rows={2}
+                      placeholder="Write an internal note… type @ and a name to notify a teammate"
+                      submitLabel="Add note"
+                    />
+                  </>
+                )}
+              </div>
+            </section>
+
             {box !== "review" && (
               <MessageActions
                 activityId={a.id}
@@ -500,10 +606,77 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
               </p>
             </section>
             )}
+            <section aria-label="Client" className="rounded-lg border p-3 xl:hidden">{clientPanel}</section>
           </div>
         </article>
+        <aside aria-label="Client" className="hidden min-w-0 border-l border-border/70 bg-muted/10 p-4 xl:block xl:max-h-[calc(100dvh-10rem)] xl:overflow-y-auto">
+          {clientPanel}
+        </aside>
       </div>
       <InboxKeys prevHref={prev} nextHref={next} />
     </>
+  );
+}
+
+/** The default Messages view: one conversation per person, chat thread in the middle, client on the right. */
+async function conversationsPage(
+  user: Awaited<ReturnType<typeof requireStaff>>,
+  { view, q, sp, now }: { view: InboxView; q: string; sp: Awaited<PageProps<"/inbox">["searchParams"]>; now: Date },
+) {
+  const tab: ConvTab = CONV_TABS.find((t) => t === sp.tab) ?? "all";
+  const c = typeof sp.c === "string" && /^(c|a|m):/.test(sp.c) ? sp.c.slice(0, 400) : null;
+  const data = await user.db(async (tx) => {
+    const all = await listConversations(tx, { me: user.id, q });
+    const scoped = filterConversations(all, view, "all");
+    const selected = (c && all.find((r) => r.key === c)) || null;
+    const thread = selected ? await loadThread(tx, selected.key) : [];
+    if (selected) await markConversationRead(tx, user.id, [selected.key]);
+    const protectedConv = thread.some((i) => i.kind === "message" && (i.a.sensitive || i.a.airnycCaseId));
+    return {
+      rows: filterConversations(all, view, tab),
+      tabCounts: Object.fromEntries(CONV_TABS.map((t) => [t, t === "unread" ? scoped.reduce((n, r) => n + (r.key === selected?.key ? 0 : r.unread), 0) : filterConversations(all, view, t).length])) as Record<ConvTab, number>,
+      selected,
+      thread,
+      panel: selected?.contactId && !protectedConv ? await loadContactPanel(tx, selected.contactId, now) : null,
+      assignee: selected ? ((await assignmentFor(tx, selected.key))?.assignee ?? "") : "",
+      members: await teamMembers(tx),
+      lines: await tx.select({ id: s.phoneLines.id, label: s.phoneLines.label, lineKey: s.phoneLines.lineKey }).from(s.phoneLines),
+      templates: await tx.select({ key: s.messageTemplates.key, name: s.messageTemplates.name, channel: s.messageTemplates.channel }).from(s.messageTemplates).where(eq(s.messageTemplates.active, true)),
+      defaultFromEmail: (await tx.select({ v: s.settings.defaultFromEmail }).from(s.settings))[0]?.v ?? "sales@ess-nyc.com",
+      toFile: (await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere))[0].n,
+      toApprove: (await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING])))[0].n,
+    };
+  });
+  const composeProps = { lines: data.lines.map((l) => ({ id: l.id, label: l.label })), templates: data.templates, defaultFromEmail: data.defaultFromEmail, isOwner: user.role === "OWNER" };
+  const header = (
+    <PageHeader
+      title="Messages"
+      description={view === "mine" ? "Your conversations: emails you received and sent, your texts, and anything assigned to you." : view === "unassigned" ? "Conversations nobody is looking after yet." : "Everyone's conversations in one place, one per person."}
+      actions={
+        <>
+          <NewMessageButton {...composeProps} />
+          <QueueTabs active="conversations" toFile={data.toFile} toApprove={data.toApprove} />
+        </>
+      }
+    />
+  );
+  return (
+    <ConversationsView
+      header={header}
+      rows={data.rows}
+      tabCounts={data.tabCounts}
+      view={view}
+      tab={tab}
+      q={q}
+      selected={data.selected}
+      thread={data.thread}
+      panel={data.panel}
+      assignee={data.assignee}
+      members={data.members}
+      me={user.id}
+      lines={data.lines}
+      defaultFromEmail={data.defaultFromEmail}
+      now={now}
+    />
   );
 }
