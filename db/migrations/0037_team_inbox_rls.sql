@@ -1,5 +1,5 @@
 -- ============================================================================================
--- 0042 — Team inbox & internal chat RLS. Office staff (OWNER + VA) only; FIELD, SUB and no-role
+-- 0037 — Team inbox & internal chat RLS. Office staff (OWNER + VA) only; FIELD, SUB and no-role
 -- users see none of it. Nothing here is ever sent outside the team.
 --  - conversation_assignments: staff can assign, reassign and unassign any conversation.
 --  - team_messages: staff read the room; you post as yourself; you (or the OWNER) delete yours.

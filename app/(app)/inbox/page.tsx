@@ -102,6 +102,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
   // Team inbox = everything; My inbox = assigned to me + my jobs; Unassigned = nobody's yet.
   const view: InboxView = sp.view === "mine" || sp.view === "unassigned" ? sp.view : "team";
+  const me = { id: user.id, email: user.email };
   const search: SQL | undefined = q ? or(ilike(s.activities.subject, `%${q}%`), ilike(s.activities.body, `%${q}%`), ilike(s.activities.fromAddress, `%${q}%`), ilike(s.activities.toAddress, `%${q}%`)) : undefined;
   const notTrashed = sql`not (coalesce(${s.activities.raw}, '{}'::jsonb) ? 'trashed')`;
   const boxWhere: Record<MessageBox, SQL | undefined> = {
@@ -111,11 +112,11 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
   };
-  const where = and(boxWhere[box], search, viewWhere(view, user.id));
+  const where = and(boxWhere[box], search, viewWhere(view, me));
   const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail, members, mineCount, unassignedCount } = await user.db(async (tx) => ({
     members: await teamMembers(tx),
-    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("mine", user.id))))[0].n,
-    unassignedCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("unassigned", user.id))))[0].n,
+    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("mine", me))))[0].n,
+    unassignedCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("unassigned", me))))[0].n,
     items: await tx
       .select({
         id: s.activities.id,
@@ -199,7 +200,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         <div className="panel overflow-hidden">
           {viewTabs}
           {searchForm}
-          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here is assigned to you, or on a job you're assigned to." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
+          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here was sent to you or assigned to you." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
         </div>
       </>
     );
@@ -232,7 +233,6 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const protectedMsg = a.sensitive || Boolean(a.airnycCaseId);
   const team = await user.db(async (tx) => ({
     assignment: await assignmentFor(tx, convKey),
-    jobOwner: a.jobId ? ((await tx.select({ id: s.jobs.assignedTo }).from(s.jobs).where(eq(s.jobs.id, a.jobId)))[0]?.id ?? null) : null,
     notes: protectedMsg ? [] : await notesFor(tx, convKey),
   }));
   const documents = a.jobId
@@ -475,9 +475,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Assigned to</span>
                 <AssignForm action={assignConversationAction.bind(null, a.id)} members={members} current={team.assignment?.assignee ?? ""} />
-                {!team.assignment && team.jobOwner && (
+                {!team.assignment && current.owner && (
                   <span className="text-xs text-muted-foreground">
-                    Shows in {team.jobOwner === user.id ? "your" : `${memberName(team.jobOwner)}'s`} inbox through job {jobNumber}.
+                    In {current.owner === user.id ? "your" : `${memberName(current.owner)}'s`} inbox because it was sent to {current.owner === user.id ? "you" : "them"}.
                   </span>
                 )}
               </div>

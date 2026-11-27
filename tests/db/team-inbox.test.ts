@@ -1,5 +1,5 @@
 /**
- * Team inbox & internal chat: My inbox / Unassigned views, conversation assignment (thread-wide),
+ * Team inbox & internal chat: My inbox (sent to me + assigned) / Unassigned views, conversation assignment (thread-wide),
  * internal notes (never outbound, blocked on AIRnyc), @mention notifications, team chat unread counts,
  * and RLS. The mention parser is tested without a database.
  */
@@ -56,22 +56,23 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
   const email = async (v: Partial<typeof s.activities.$inferInsert>) =>
     (await t.db.insert(s.activities).values({ type: "EMAIL_IN", direction: "INBOUND", subject: "Access", body: "Hello", ...v }).returning())[0];
   const ids = async (who: TestUser, view: "mine" | "unassigned") =>
-    (await who.as((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(and(eq(s.activities.type, "EMAIL_IN"), viewWhere(view, who.id))))).map((r) => r.id).sort();
+    (await who.as((tx) => tx.select({ id: s.activities.id }).from(s.activities).where(and(eq(s.activities.type, "EMAIL_IN"), viewWhere(view, { id: who.id, email: who.claims.email! }))))).map((r) => r.id).sort();
+  const to = (...addresses: string[]) => ({ raw: { email: { from: { name: "PM", address: "pm@acme.test" }, to: addresses.map((address) => ({ name: "", address })), cc: [] } } });
 
-  it("My inbox = conversations assigned to me + messages on my jobs; Unassigned = neither", async () => {
-    const onMyJob = await email({ jobId, threadKey: "<t1>" });
-    const first = await email({ threadKey: "<t2>" });
-    const reply = await email({ threadKey: "<t2>" }); // same thread, arrives later
-    const loose = await email({ threadKey: "<t3>" });
+  it("My inbox = emails sent to me + conversations assigned to me; Unassigned = neither", async () => {
+    const toMaria = await email({ threadKey: "<t1>", ...to(va.claims.email!.toUpperCase()) }); // case doesn't matter
+    const first = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") });
+    const reply = await email({ threadKey: "<t2>", ...to("sales@ess-nyc.com") }); // same thread, arrives later
+    const loose = await email({ threadKey: "<t3>", ...to("sales@ess-nyc.com") });
 
     await va2.as(async (tx) => assignConversation(tx, { activity: first, assignee: va2.id, actor: { id: va2.id, name: "Sam Park" } }));
-    expect(await ids(va, "mine")).toEqual([onMyJob.id]);
+    expect(await ids(va, "mine")).toEqual([toMaria.id]);
     expect(await ids(va2, "mine")).toEqual([first.id, reply.id].sort()); // the reply follows the thread
-    expect(await ids(va, "unassigned")).toEqual([loose.id]);
+    expect(await ids(va, "unassigned")).toEqual([loose.id]); // mail to sales@ nobody has taken yet
   });
 
   it("assigning someone else notifies them; unassigning removes it", async () => {
-    const msg = await email({ threadKey: "<t4>", subject: "Mold question" });
+    const msg = await email({ threadKey: "<t4>", subject: "Mold question", ...to("sales@ess-nyc.com") });
     await owner.as((tx) => assignConversation(tx, { activity: msg, assignee: va.id, actor: { id: owner.id, name: "Jordan Adhami" } }));
     const mine = await va.as((tx) => tx.select().from(s.notifications).where(eq(s.notifications.kind, "ASSIGNED")));
     expect(mine.map((n) => n.title)).toEqual(["Jordan Adhami assigned you “Mold question”"]);

@@ -257,50 +257,15 @@
     {
       "idx": 36,
       "version": "7",
-      "when": 1795625031200,
-      "tag": "0036_tags",
+      "when": 1795792220773,
+      "tag": "0036_team_inbox",
       "breakpoints": true
     },
     {
       "idx": 37,
       "version": "7",
-      "when": 1795625038984,
-      "tag": "0037_tags_rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 38,
-      "version": "7",
-      "when": 1795625818141,
-      "tag": "0038_workflows",
-      "breakpoints": true
-    },
-    {
-      "idx": 39,
-      "version": "7",
-      "when": 1795625819650,
-      "tag": "0039_workflows_rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 40,
-      "version": "7",
-      "when": 1795630317572,
-      "tag": "0040_workflows_no_auto_send",
-      "breakpoints": true
-    },
-    {
-      "idx": 41,
-      "version": "7",
-      "when": 1795785907648,
-      "tag": "0041_team_inbox",
-      "breakpoints": true
-    },
-    {
-      "idx": 42,
-      "version": "7",
-      "when": 1795785908883,
-      "tag": "0042_team_inbox_rls",
+      "when": 1795792221984,
+      "tag": "0037_team_inbox_rls",
       "breakpoints": true
     }
   ]

@@ -3,8 +3,9 @@
  *
  *  - A conversation is identified by its message's thread key (email thread root / Quo conversation),
  *    or the message's own id when it has none, so replies in an assigned thread follow automatically.
- *  - My inbox = conversations assigned to me + messages on jobs whose assigned person is me.
- *  - Unassigned = neither assigned nor on a job with an assigned person.
+ *  - My inbox = conversations assigned to me + emails sent to me (my login email is in To or Cc).
+ *    Texts aren't addressed to a person, so they reach My inbox only by being assigned.
+ *  - Unassigned = not assigned and not addressed to anyone on the team (e.g. mail to sales@).
  *  - Internal notes are activities of type NOTE / direction INTERNAL: there is no code path that sends
  *    an activity, so a note can never reach the client.
  */
@@ -18,19 +19,31 @@ export type InboxView = "team" | "mine" | "unassigned";
 export const conversationKey = (a: { threadKey: string | null; id: string }) => a.threadKey ?? a.id;
 const keySql = sql`coalesce(${col(s.activities.threadKey)}, ${col(s.activities.id)}::text)`;
 
+/**
+ * True when the message was addressed to `email` (To or Cc). Uses the parsed headers kept in
+ * raw.email (inbound mail) and falls back to to_address (outbound / older rows). Case-insensitive.
+ */
+function addressedTo(email: SQL): SQL {
+  return sql`(
+    exists (select 1 from jsonb_array_elements(
+      coalesce(${col(s.activities.raw)}->'email'->'to', '[]'::jsonb) || coalesce(${col(s.activities.raw)}->'email'->'cc', '[]'::jsonb)) r
+      where lower(r->>'address') = lower(${email}))
+    or ${col(s.activities.toAddress)} ilike '%' || ${email} || '%')`;
+}
+const teamEmails = sql`(select p.email from ${s.profiles} p where p.role in ('OWNER', 'VA'))`;
+
 /** WHERE fragment (on `activities`) for a Messages view. */
-export function viewWhere(view: InboxView, userId: string): SQL | undefined {
+export function viewWhere(view: InboxView, user: { id: string; email: string }): SQL | undefined {
   const assignedTo = (who: SQL) => sql`exists (select 1 from ${s.conversationAssignments} ca where ca.conversation_key = ${keySql} and ${who})`;
-  const jobOwnedBy = (who: SQL) => sql`exists (select 1 from ${s.jobs} j where j.id = ${col(s.activities.jobId)} and ${who})`;
-  if (view === "mine") return sql`(${assignedTo(sql`ca.assignee = ${userId}`)} or ${jobOwnedBy(sql`j.assigned_to = ${userId}`)})`;
-  if (view === "unassigned") return sql`(not ${assignedTo(sql`true`)} and not ${jobOwnedBy(sql`j.assigned_to is not null`)})`;
+  if (view === "mine") return sql`(${assignedTo(sql`ca.assignee = ${user.id}`)} or ${addressedTo(sql`${user.email}`)})`;
+  if (view === "unassigned") return sql`(not ${assignedTo(sql`true`)} and not exists (select 1 from ${teamEmails} te(email) where ${addressedTo(sql`te.email`)}))`;
   return undefined;
 }
 
-/** The person each listed message belongs to: its conversation's assignee, else its job's. */
+/** The person each listed message belongs to: its conversation's assignee, else the team member it was sent to. */
 export const ownerSql = sql<string | null>`coalesce(
   (select ca.assignee from ${s.conversationAssignments} ca where ca.conversation_key = ${keySql}),
-  (select j.assigned_to from ${s.jobs} j where j.id = ${col(s.activities.jobId)}))`;
+  (select p.user_id from ${s.profiles} p where p.role in ('OWNER', 'VA') and ${addressedTo(sql`p.email`)} limit 1))`;
 
 /** OWNER + VA accounts: the people who can be assigned, mentioned and chat. */
 export async function teamMembers(tx: Tx): Promise<(Member & { email: string })[]> {

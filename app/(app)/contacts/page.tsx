@@ -14,8 +14,6 @@ import { schema as s } from "@/lib/db";
 import { personName } from "@/lib/labels";
 import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
 import { formatPhone, toE164 } from "@/lib/phone";
-import { TagRow } from "@/components/tag-chip";
-import { hasTag, listTags, tagParam, tagsForMany } from "@/lib/tags";
 
 export const metadata = { title: "People" };
 
@@ -31,7 +29,6 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const sort = SORTS.find(([k]) => k === sp.sort)?.[0] ?? "name";
-  const tag = tagParam(sp.tag);
   const phone = toE164(q);
   const jobCount = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_contact_id = ${col(s.contacts.id)} and j.archived_at is null)`;
   const where = and(
@@ -44,7 +41,6 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
           ilike(s.organizations.name, `%${q}%`),
         )
       : undefined,
-    tag ? hasTag("contact", s.contacts.id, tag) : undefined,
   );
   const order: SQL[] =
     sort === "company" ? [sql`${s.organizations.name} asc nulls last`] :
@@ -52,7 +48,7 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
     sort === "newest" ? [desc(s.contacts.createdAt)] :
     [];
 
-  const { total, rows, win, allTags, rowTags } = await user.db(async (tx) => {
+  const { total, rows, win } = await user.db(async (tx) => {
     const [{ n }] = await tx.select({ n: count() }).from(s.contacts).leftJoin(s.organizations, eq(s.organizations.id, s.contacts.orgId)).where(where);
     const win = pageWindow(n, pageFrom(sp.page));
     const rows = await tx
@@ -63,9 +59,9 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
       .orderBy(...order, sql`${s.contacts.lastName} asc nulls last`, asc(s.contacts.firstName), asc(s.contacts.id))
       .limit(PAGE_SIZE)
       .offset(win.offset);
-    return { total: n, rows, win, allTags: await listTags(tx), rowTags: await tagsForMany(tx, "contact", rows.map((r) => r.c.id)) };
+    return { total: n, rows, win };
   });
-  const href = (page: number) => listHref("/contacts", { q, tag, sort: sort === "name" ? undefined : sort, page });
+  const href = (page: number) => listHref("/contacts", { q, sort: sort === "name" ? undefined : sort, page });
 
   return (
     <>
@@ -75,17 +71,11 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
         <NativeSelect name="sort" defaultValue={sort} aria-label="Sort by" className="w-auto">
           {SORTS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </NativeSelect>
-        {allTags.length > 0 && (
-          <NativeSelect name="tag" defaultValue={tag ?? ""} aria-label="Filter by tag" className="w-auto">
-            <option value="">Any tag</option>
-            {allTags.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </NativeSelect>
-        )}
-        {(q || tag) && <Link href="/contacts" className="text-sm text-muted-foreground underline hover:text-foreground">Clear</Link>}
+        {q && <Link href="/contacts" className="text-sm text-muted-foreground underline hover:text-foreground">Clear</Link>}
       </FilterForm>
       <Pager total={total} {...win} href={href} noun={total === 1 ? "contact" : "contacts"} />
       {rows.length === 0 ? (
-        <EmptyState>{q || tag ? "No contacts match." : "No contacts yet."}</EmptyState>
+        <EmptyState>{q ? "No contacts match." : "No contacts yet."}</EmptyState>
       ) : (
         <Table>
           <TableHeader>
@@ -103,7 +93,6 @@ export default async function ContactsPage({ searchParams }: PageProps<"/contact
                 <TableCell>
                   <Link className="font-medium hover:underline" href={`/contacts/${c.id}`}>{personName(c)}</Link>
                   {c.doNotContact && <Badge variant="destructive" className="ml-2">Do not contact</Badge>}
-                  <TagRow tags={rowTags.get(c.id)} className="mt-1" />
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">
                   {orgName && c.orgId ? <Link href={`/organizations/${c.orgId}`} className="hover:underline">{orgName}</Link> : "—"}
