@@ -15,6 +15,7 @@ import {
   Route,
   Sparkles,
   Users,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -42,6 +43,7 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; secondary?: boole
     { href: "/contacts", label: "People", icon: Users },
     { href: "/organizations", label: "Companies", icon: Landmark },
     { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+    { href: "/automations", label: "Automations", icon: Workflow },
     { href: "/search", label: "Ask the CRM", icon: Sparkles, aiOnly: true },
   ] },
   { label: "Owner tools", secondary: true, ownerOnly: true, items: [

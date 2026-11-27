@@ -27,6 +27,7 @@ export default async function SettingsLayout({ children }: LayoutProps<"/setting
         { href: sec("digest"), label: "Daily digest", status: on(cfg?.digestEnabled) },
         { href: sec("followups"), label: "Proposal follow-ups", status: on(cfg?.followUpEnabled) },
         { href: sec("pipeline"), label: "Pipeline timing" },
+        { href: "/settings/tags", label: "Tags" },
         { href: sec("checklist"), label: "AIRnyc checklist" },
       ],
     },

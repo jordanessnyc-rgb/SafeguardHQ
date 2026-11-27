@@ -253,6 +253,41 @@
       "when": 1791331436986,
       "tag": "0035_outbound_cc_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795625031200,
+      "tag": "0036_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795625038984,
+      "tag": "0037_tags_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795625818141,
+      "tag": "0038_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795625819650,
+      "tag": "0039_workflows_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795630317572,
+      "tag": "0040_workflows_no_auto_send",
+      "breakpoints": true
     }
   ]
 }

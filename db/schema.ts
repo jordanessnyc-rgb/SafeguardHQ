@@ -26,6 +26,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { authUsers } from "drizzle-orm/supabase";
+import type { TagColor } from "../lib/tag-style";
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -1248,3 +1249,112 @@ export const workerStatus = pgTable("worker_status", {
   lastError: text("last_error"),
   intervalSeconds: integer("interval_seconds"), // how often it's meant to run, to spot stalls
 });
+
+// ---------------------------------------------------------------------------
+// Tags (automation part 1): labels on contacts, companies and jobs. One shared list of tags;
+// each record can carry any of them. Staff (OWNER + VA) tag; only the OWNER deletes a tag.
+// The join rows keep who added the tag and when — workflows (part 2) trigger on new rows.
+// ---------------------------------------------------------------------------
+
+export const tags = pgTable(
+  "tags",
+  {
+    ...baseColumns(),
+    name: text("name").notNull(),
+    color: text("color").$type<TagColor>().notNull().default("gray"),
+    description: text("description"),
+  },
+  (t) => [uniqueIndex("tags_name_uq").on(sql`lower(${t.name})`)],
+);
+
+const taggedAt = () => ({
+  tagId: uuid("tag_id")
+    .notNull()
+    .references(() => tags.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: uuid("created_by").default(sql`auth.uid()`),
+});
+
+export const contactTags = pgTable(
+  "contact_tags",
+  {
+    ...taggedAt(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.contactId] }), index("contact_tags_contact_idx").on(t.contactId)],
+);
+
+export const organizationTags = pgTable(
+  "organization_tags",
+  {
+    ...taggedAt(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.orgId] }), index("organization_tags_org_idx").on(t.orgId)],
+);
+
+export const jobTags = pgTable(
+  "job_tags",
+  {
+    ...taggedAt(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.tagId, t.jobId] }), index("job_tags_job_idx").on(t.jobId)],
+);
+
+// ---------------------------------------------------------------------------
+// Workflows (automation part 2): "when <trigger>, if <conditions>, do <steps>". The definition is
+// JSON validated by lib/automation/definition.ts. Staff can read; only the OWNER creates, edits or
+// switches them on (RLS 0039). The worker enrols matching events as runs and advances them.
+// ---------------------------------------------------------------------------
+
+export const workflows = pgTable("workflows", {
+  ...baseColumns(),
+  name: text("name").notNull(),
+  description: text("description"),
+  active: boolean("active").notNull().default(false),
+  // Only events at or after this moment start runs, so switching a workflow on never replays history.
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  trigger: jsonb("trigger").$type<import("../lib/automation/definition").Trigger>().notNull(),
+  conditions: jsonb("conditions").$type<import("../lib/automation/definition").Condition[]>().notNull().default(sql`'[]'::jsonb`),
+  steps: jsonb("steps").$type<import("../lib/automation/definition").Step[]>().notNull().default(sql`'[]'::jsonb`),
+  // No auto-send: a workflow's emails/texts are always Outbox drafts a person approves (CLAUDE.md rule 6).
+});
+
+export const workflowRunStatusEnum = pgEnum("workflow_run_status", ["RUNNING", "WAITING", "DONE", "STOPPED", "SKIPPED", "FAILED"]);
+
+export type WorkflowLogEntry = { at: string; step: number | null; outcome: "ok" | "skipped" | "stopped" | "failed" | "waiting"; note: string };
+
+export const workflowRuns = pgTable(
+  "workflow_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workflowId: uuid("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    // Identifies the triggering event (stage-change activity id, tag link, new record id): a run is
+    // never started twice for the same event.
+    triggerKey: text("trigger_key").notNull(),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id").references(() => organizations.id, { onDelete: "cascade" }),
+    status: workflowRunStatusEnum("status").notNull().default("RUNNING"),
+    stepIndex: integer("step_index").notNull().default(0),
+    resumeAt: timestamp("resume_at", { withTimezone: true }).notNull().defaultNow(),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
+    log: jsonb("log").$type<WorkflowLogEntry[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("workflow_runs_event_uq").on(t.workflowId, t.triggerKey),
+    index("workflow_runs_due_idx").on(t.status, t.resumeAt),
+    index("workflow_runs_workflow_idx").on(t.workflowId, t.createdAt),
+  ],
+);
