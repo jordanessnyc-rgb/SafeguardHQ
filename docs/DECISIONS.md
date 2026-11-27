@@ -628,3 +628,10 @@ changes worth knowing:
 - **@mentions** match a member's full name, or first name when it's unique on the team; the author is never notified. Mentions in notes or chat, and being assigned a conversation by someone else, create `notifications`.
 - **Team chat** (`/team-chat`, under Daily work): one room for OWNER + VA, refreshed every 20 s while open. The menu badge = new chat messages from others + unread mention/assignment notifications. Opening the page marks both read. You can delete your own messages; the owner can delete any.
 - **RLS (0037):** staff only; notifications readable only by their recipient; chat posts only as yourself.
+## 2026-11-27 — Contact page as a 3-column workspace
+
+- Requested from a reference screenshot of another CRM's contact view: **details on the left, conversations in the middle, notes/tasks/etc. on the right**. Built only from data the database already has, so it ships without a migration. Owner, Followers and Tags from the reference need new columns and wait until the `PRODUCTION_DATABASE_URL` secret is set (tags come back with the #35 work).
+- **Left:** avatar, name, title · company, email/phone, then tabs **All fields** (the existing edit form), **DND** (one-click do-not-contact switch, `setDoNotContact`) and **Actions** (new job, add task/note, archive).
+- **Middle:** emails, texts and calls with the person grouped by day (New York), oldest at the top and opened scrolled to the newest. Each item expands to the full text, with links to the job and to Messages; sealed AIRnyc items stay sealed. A one-line "Type a message…" bar opens the existing compose form, or explains why not when DND is on.
+- **Right:** an icon rail switches between **Notes** (add, search; includes notes on their jobs), **Tasks** (add, tick done), **Appointments** (their scheduled jobs, upcoming/past), **Documents** (on their jobs; RLS hides priced ones from VAs) and **Jobs & properties**. Tab/panel choices are in the URL (`?tab=`, `?panel=`, `?q=`).
+- Data: `lib/contacts/workspace.ts` (viewer's RLS transaction); view: `app/(app)/contacts/[id]/workspace-view.tsx`. Tests: `tests/db/contact-workspace.test.ts`.
