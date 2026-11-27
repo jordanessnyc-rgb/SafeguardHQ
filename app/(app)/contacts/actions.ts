@@ -78,3 +78,26 @@ export async function archiveContact(id: string) {
   await user.db((tx) => tx.update(s.contacts).set({ archivedAt: new Date() }).where(eq(s.contacts.id, id)));
   redirect("/contacts");
 }
+
+/** Contact page → Notes: an internal note on the person (shows on their timeline; never sent). */
+export async function addContactNote(id: string, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireStaff();
+  const res = await safeAction(async () => {
+    const body = z.string().trim().min(1, "Write a note first.").max(10000).parse(String(form.get("body") ?? ""));
+    await user.db(async (tx) => {
+      const [c] = await tx.select({ brand: s.contacts.brand }).from(s.contacts).where(eq(s.contacts.id, id));
+      if (!c) throw new Error("That contact no longer exists.");
+      await tx.insert(s.activities).values({ type: "NOTE", direction: "INTERNAL", contactId: id, brand: c.brand, body, triageStatus: "SKIPPED" });
+    });
+    return { ok: true, message: "Note added." };
+  });
+  revalidatePath(`/contacts/${id}`);
+  return res;
+}
+
+/** Contact page → DND: turn do-not-contact on or off in one click. */
+export async function setDoNotContact(id: string, value: boolean) {
+  const user = await requireStaff();
+  await user.db((tx) => tx.update(s.contacts).set({ doNotContact: value }).where(eq(s.contacts.id, id)));
+  revalidatePath(`/contacts/${id}`);
+}

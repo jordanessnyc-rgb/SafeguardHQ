@@ -616,3 +616,11 @@ changes worth knowing:
   - **Schedule.** Day headers show the weekday and a large date (today in a green disc), a red "now" line, lighter gridlines, Titan events as tinted blocks with a colour bar rather than dashed outlines, and the long explanation folded behind "How the calendar works".
   - **Messages.** The list sits on a muted pane with the open message white; the action bar is a muted strip.
 - Nothing functional changed; this is CSS and class names. Dark-mode tokens were kept in step.
+
+## 2026-11-27 — Contact page as a 3-column workspace
+
+- Requested from a reference screenshot of another CRM's contact view: **details on the left, conversations in the middle, notes/tasks/etc. on the right**. Built only from data the database already has, so it ships without a migration. Owner, Followers and Tags from the reference need new columns and wait until the `PRODUCTION_DATABASE_URL` secret is set (tags come back with the #35 work).
+- **Left:** avatar, name, title · company, email/phone, then tabs **All fields** (the existing edit form), **DND** (one-click do-not-contact switch, `setDoNotContact`) and **Actions** (new job, add task/note, archive).
+- **Middle:** emails, texts and calls with the person grouped by day (New York), oldest at the top and opened scrolled to the newest. Each item expands to the full text, with links to the job and to Messages; sealed AIRnyc items stay sealed. A one-line "Type a message…" bar opens the existing compose form, or explains why not when DND is on.
+- **Right:** an icon rail switches between **Notes** (add, search; includes notes on their jobs), **Tasks** (add, tick done), **Appointments** (their scheduled jobs, upcoming/past), **Documents** (on their jobs; RLS hides priced ones from VAs) and **Jobs & properties**. Tab/panel choices are in the URL (`?tab=`, `?panel=`, `?q=`).
+- Data: `lib/contacts/workspace.ts` (viewer's RLS transaction); view: `app/(app)/contacts/[id]/workspace-view.tsx`. Tests: `tests/db/contact-workspace.test.ts`.
