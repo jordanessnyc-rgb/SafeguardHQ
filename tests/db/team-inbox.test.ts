@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
 import * as s from "@/db/schema";
 import { mentionedIds, splitMentions } from "@/lib/team/mentions";
+import { loadContactPanel } from "@/lib/team/contact-panel";
 import { addInternalNote, assignConversation, notesFor, postTeamMessage, teamMembers, unreadForNav, viewWhere } from "@/lib/team/inbox";
 import { createUser, hasTestDb, pgError, setupTestDb, type TestDb, type TestUser } from "../helpers/db";
 
@@ -129,6 +130,27 @@ describe.skipIf(!hasTestDb)("team inbox & internal chat", () => {
     expect(await va2.as((tx) => unreadForNav(tx, va2.id))).toBe(before.sam + 1);
     const [mention] = await va2.as((tx) => tx.select().from(s.notifications).where(eq(s.notifications.kind, "MENTION_CHAT")));
     expect(mention.title).toBe("Maria Lopez mentioned you in Team chat");
+  });
+
+  it("client panel: details, open tasks, notes, appointments and documents (priced ones hidden from VAs)", async () => {
+    const [c] = await t.db.insert(s.contacts).values({ firstName: "Dana", lastName: "Reyes", emails: ["dana@acme.test"], phones: ["+19295550100"] }).returning();
+    const soon = new Date(Date.now() + 2 * 86_400_000);
+    const [j] = await t.db.insert(s.jobs).values({ serviceCode: "LL152", pipelineKey: "INSPECTION", stage: "SCHEDULED", clientContactId: c.id, scheduledAt: soon }).returning();
+    await t.db.insert(s.tasks).values([{ title: "Confirm access", contactId: c.id, dueAt: soon }, { title: "Old task", jobId: j.id, status: "DONE" }]);
+    await t.db.insert(s.activities).values({ type: "NOTE", direction: "INTERNAL", contactId: c.id, body: "Prefers texts after 5pm" });
+    await t.db.insert(s.documents).values([
+      { jobId: j.id, kind: "REPORT", title: "LL152 report", storagePath: "jobs/r.pdf", storageBucket: "job-files" },
+      { jobId: j.id, kind: "PROPOSAL", title: "Proposal with price", storagePath: "jobs/p.pdf", storageBucket: "job-files-pricing", containsPricing: true },
+    ]);
+
+    const asVa = await va.as((tx) => loadContactPanel(tx, c.id));
+    expect(asVa?.contact).toMatchObject({ firstName: "Dana", lastName: "Reyes", emails: ["dana@acme.test"], phones: ["+19295550100"] });
+    expect(asVa?.tasks.map((x) => x.title)).toEqual(["Confirm access"]); // done tasks don't show
+    expect(asVa?.notes.map((x) => x.body)).toEqual(["Prefers texts after 5pm"]);
+    expect(asVa?.appointments.map((x) => [x.jobNumber, x.upcoming])).toEqual([[j.jobNumber, true]]);
+    expect(asVa?.documents.map((x) => x.title)).toEqual(["LL152 report"]);
+    const asOwner = await owner.as((tx) => loadContactPanel(tx, c.id));
+    expect(asOwner?.documents.map((x) => x.title).sort()).toEqual(["LL152 report", "Proposal with price"]);
   });
 
   it("RLS: field staff see nothing; you can't post as someone else or read others' notifications", async () => {

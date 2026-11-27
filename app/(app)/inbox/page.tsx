@@ -31,6 +31,8 @@ import { MentionText } from "@/components/team/mention-text";
 import { assignmentFor, conversationKey, notesFor, ownerSql, teamMembers, viewWhere, type InboxView } from "@/lib/team/inbox";
 import { addNoteAction, assignConversationAction } from "./team-actions";
 import { AssignForm } from "./assign-form";
+import { ContactPanel, UnknownSenderPanel } from "@/components/team/contact-panel";
+import { loadContactPanel } from "@/lib/team/contact-panel";
 
 export const metadata = { title: "Messages" };
 
@@ -112,9 +114,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
   };
-  // My inbox in the Inbox box is a personal history: what I received and what I sent, in one list.
+  // In the Inbox box, My inbox is my history (received + sent) and Team inbox is everyone's combined.
   const myHistory = and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNull(s.activities.archivedAt));
-  const boxFor = (v: InboxView) => (v === "mine" && box === "inbox" ? myHistory : boxWhere[box]);
+  const boxFor = (v: InboxView) => (v !== "unassigned" && box === "inbox" ? myHistory : boxWhere[box]);
   const where = and(boxFor(view), search, viewWhere(view, me));
   const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail, members, mineCount, unassignedCount } = await user.db(async (tx) => ({
     members: await teamMembers(tx),
@@ -167,7 +169,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const header = (
     <PageHeader
       title="Messages"
-      description={view === "mine" && box === "inbox" ? "Your messages: emails you received and sent, your text conversations, and anything assigned to you." : BOX_TEXT[box].description}
+      description={box !== "inbox" || view === "unassigned" ? BOX_TEXT[box].description : view === "mine" ? "Your messages: emails you received and sent, your text conversations, and anything assigned to you." : "Everyone's messages in one place: what the team received and sent."}
       actions={
         <>
           <NewMessageButton {...composeProps} />
@@ -237,6 +239,8 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const team = await user.db(async (tx) => ({
     assignment: await assignmentFor(tx, convKey),
     notes: protectedMsg ? [] : await notesFor(tx, convKey),
+    // Client panel: the lead/client behind this message (not for AIRnyc members, whose details are sealed).
+    panel: contact?.id && !protectedMsg ? await loadContactPanel(tx, contact.id, now) : null,
   }));
   const documents = a.jobId
     ? await user.db((tx) => tx.select({ id: s.documents.id, title: s.documents.title, containsPricing: s.documents.containsPricing }).from(s.documents).where(and(eq(s.documents.jobId, a.jobId!), isNull(s.documents.archivedAt), isNotNull(s.documents.storagePath))))
@@ -282,11 +286,18 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       ).reverse()
     : [];
   const callNumber = counterpart?.startsWith("+") ? counterpart : null;
+  const clientPanel = protectedMsg ? (
+    <p className="text-xs text-muted-foreground">AIRnyc member details stay in the AIRnyc case.</p>
+  ) : team.panel ? (
+    <ContactPanel data={team.panel} members={members} me={user.id} now={now} />
+  ) : (
+    <UnknownSenderPanel name={sms ? null : (meta?.from?.name ?? null)} email={sms ? null : (counterpart ?? null)} phone={sms ? (counterpart ?? null) : null} />
+  );
 
   return (
     <>
       {header}
-      <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
+      <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)] xl:grid-cols-[20rem_minmax(0,1fr)_19rem]">
         {/* ---------- message list ---------- */}
         <nav aria-label="Messages to file" className={cn("min-w-0 border-r border-border/70 bg-muted/20 lg:block", explicit && "hidden")}>
           {viewTabs}
@@ -589,8 +600,12 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
               </p>
             </section>
             )}
+            <section aria-label="Client" className="rounded-lg border p-3 xl:hidden">{clientPanel}</section>
           </div>
         </article>
+        <aside aria-label="Client" className="hidden min-w-0 border-l border-border/70 bg-muted/10 p-4 xl:block xl:max-h-[calc(100dvh-10rem)] xl:overflow-y-auto">
+          {clientPanel}
+        </aside>
       </div>
       <InboxKeys prevHref={prev} nextHref={next} />
     </>
