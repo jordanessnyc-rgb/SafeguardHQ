@@ -12,8 +12,6 @@ import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { BRAND_LABELS, label, ORG_TYPE_LABELS } from "@/lib/labels";
 import { listHref, PAGE_SIZE, pageFrom, pageWindow } from "@/lib/list";
-import { TagRow } from "@/components/tag-chip";
-import { hasTag, listTags, tagParam, tagsForMany } from "@/lib/tags";
 
 export const metadata = { title: "Companies" };
 
@@ -29,7 +27,6 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const sort = SORTS.find(([k]) => k === sp.sort)?.[0] ?? "name";
-  const tag = tagParam(sp.tag);
   const type = s.organizations.type.enumValues.find((v) => v === sp.type) ?? "";
   const contacts = sql<number>`(select count(*)::int from ${s.contacts} c where c.org_id = ${col(s.organizations.id)} and c.archived_at is null)`;
   const jobs = sql<number>`(select count(*)::int from ${s.jobs} j where j.client_org_id = ${col(s.organizations.id)} and j.archived_at is null)`;
@@ -38,7 +35,6 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
     isNull(s.organizations.archivedAt),
     q ? or(ilike(s.organizations.name, `%${q}%`), ilike(s.organizations.email, `%${q}%`)) : undefined,
     type ? eq(s.organizations.type, type) : undefined,
-    tag ? hasTag("organization", s.organizations.id, tag) : undefined,
   );
   const order: SQL[] =
     sort === "jobs" ? [sql`${jobs} desc`] :
@@ -46,7 +42,7 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
     sort === "newest" ? [desc(s.organizations.createdAt)] :
     [];
 
-  const { total, rows, win, allTags, rowTags } = await user.db(async (tx) => {
+  const { total, rows, win } = await user.db(async (tx) => {
     const [{ n }] = await tx.select({ n: count() }).from(s.organizations).where(where);
     const win = pageWindow(n, pageFrom(sp.page));
     const rows = await tx
@@ -56,10 +52,10 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
       .orderBy(...order, asc(s.organizations.name), asc(s.organizations.id))
       .limit(PAGE_SIZE)
       .offset(win.offset);
-    return { total: n, rows, win, allTags: await listTags(tx), rowTags: await tagsForMany(tx, "organization", rows.map((r) => r.id)) };
+    return { total: n, rows, win };
   });
-  const href = (page: number) => listHref("/organizations", { q, type, tag, sort: sort === "name" ? undefined : sort, page });
-  const filtered = Boolean(q || type || tag);
+  const href = (page: number) => listHref("/organizations", { q, type, sort: sort === "name" ? undefined : sort, page });
+  const filtered = Boolean(q || type);
 
   return (
     <>
@@ -70,12 +66,6 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
           <option value="">All types</option>
           {Object.entries(ORG_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </NativeSelect>
-        {allTags.length > 0 && (
-          <NativeSelect name="tag" defaultValue={tag ?? ""} aria-label="Filter by tag" className="w-auto">
-            <option value="">Any tag</option>
-            {allTags.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </NativeSelect>
-        )}
         <NativeSelect name="sort" defaultValue={sort} aria-label="Sort by" className="w-auto">
           {SORTS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </NativeSelect>
@@ -99,10 +89,7 @@ export default async function OrganizationsPage({ searchParams }: PageProps<"/or
           <TableBody>
             {rows.map((o) => (
               <TableRow key={o.id}>
-                <TableCell>
-                  <Link className="font-medium hover:underline" href={`/organizations/${o.id}`}>{o.name}</Link>
-                  <TagRow tags={rowTags.get(o.id)} className="mt-1" />
-                </TableCell>
+                <TableCell><Link className="font-medium hover:underline" href={`/organizations/${o.id}`}>{o.name}</Link></TableCell>
                 <TableCell>{label(ORG_TYPE_LABELS, o.type)}</TableCell>
                 <TableCell className="hidden sm:table-cell">{label(BRAND_LABELS, o.brand)}</TableCell>
                 <TableCell className="hidden text-right tabular-nums sm:table-cell">{o.contacts}</TableCell>

@@ -13,9 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { daysUntil } from "@/lib/compliance/expiry";
 import { PageHeader } from "@/components/page-header";
-import { TagEditor } from "@/components/tag-editor";
-import { listTags, tagsFor } from "@/lib/tags";
-import { addTagAction, removeTagAction } from "@/app/(app)/tags/actions";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { fmtDate, label, ORG_TYPE_LABELS, personName, SERVICE_LABELS, usd } from "@/lib/labels";
@@ -61,10 +58,10 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
       .where(and(eq(s.invoicesCache.orgId, id), sql`coalesce(${s.invoicesCache.status}, '') not in ('draft', 'deleted', 'void')`));
     const stageName = await stageNamer(tx);
     const [sub] = org.type === "SUBCONTRACTOR" ? await tx.select().from(s.subProfiles).where(eq(s.subProfiles.orgId, id)) : [];
-    return { org, contacts, jobs, managed, sub, activities, billing, stageName, tags: await tagsFor(tx, "organization", id), allTags: await listTags(tx) };
+    return { org, contacts, jobs, managed, sub, activities, billing, stageName };
   });
   if (!data) notFound();
-  const { org, contacts, jobs, managed, sub, activities, billing, stageName, tags, allTags } = data;
+  const { org, contacts, jobs, managed, sub, activities, billing, stageName } = data;
   const isOwner = user.role === "OWNER";
   const coiDays = sub?.insuranceExpires ? daysUntil(sub.insuranceExpires, new Date()) : null;
 
@@ -87,9 +84,6 @@ export default async function OrganizationPage({ params }: PageProps<"/organizat
           </>
         }
       />
-      <div className="-mt-2 mb-5">
-        <TagEditor tags={tags} allTags={allTags} add={addTagAction.bind(null, "organization", id)} remove={removeTagAction.bind(null, "organization", id)} />
-      </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader><CardTitle>Contacts</CardTitle></CardHeader>

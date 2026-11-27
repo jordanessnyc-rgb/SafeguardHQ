@@ -11,9 +11,6 @@ import { PageHeader } from "@/components/page-header";
 import { Timeline } from "@/components/timeline";
 import { ComposeMessage } from "@/components/compose-message";
 import { loadComposeData } from "@/lib/comms/compose-data";
-import { TagEditor } from "@/components/tag-editor";
-import { listTags, tagsFor } from "@/lib/tags";
-import { addTagAction, removeTagAction } from "@/app/(app)/tags/actions";
 import { requireStaff } from "@/lib/auth/session";
 import { schema as s } from "@/lib/db";
 import { label, personName, SERVICE_LABELS, titleCase } from "@/lib/labels";
@@ -41,10 +38,10 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       .where(or(eq(s.activities.contactId, id)))
       .orderBy(desc(s.activities.occurredAt))
       .limit(100);
-    return { contact, org, orgs, properties, jobs, activities, compose: await loadComposeData(tx), stageName: await stageNamer(tx), tags: await tagsFor(tx, "contact", id), allTags: await listTags(tx) };
+    return { contact, org, orgs, properties, jobs, activities, compose: await loadComposeData(tx), stageName: await stageNamer(tx) };
   });
   if (!data) notFound();
-  const { contact: c, org, orgs, properties, jobs, activities, compose, stageName, tags, allTags } = data;
+  const { contact: c, org, orgs, properties, jobs, activities, compose, stageName } = data;
 
   return (
     <>
@@ -53,9 +50,6 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
         description={[c.title, org?.name].filter(Boolean).join(" · ") || undefined}
         actions={<Link href={`/jobs/new?clientContactId=${id}${c.orgId ? `&clientOrgId=${c.orgId}` : ""}`} className={buttonVariants()}>New job</Link>}
       />
-      <div className="-mt-2 mb-5">
-        <TagEditor tags={tags} allTags={allTags} add={addTagAction.bind(null, "contact", id)} remove={removeTagAction.bind(null, "contact", id)} />
-      </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader><CardTitle>Reach</CardTitle></CardHeader>
