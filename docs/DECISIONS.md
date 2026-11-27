@@ -648,3 +648,13 @@ changes worth knowing:
 - Requested the same day: "at least someone must approve" every workflow email or text. The per-workflow "send automatically" switch is removed (column dropped in `0040_workflows_no_auto_send.sql`), and the engine no longer approves or sends anything: an email/text step only creates an Outbox draft. This supersedes the auto-send notes in the part 2 entry above.
 - With nothing sent automatically, drafting no longer waits for business hours (the person approving decides when it goes). Blank fill-ins show as `[scheduled date]` etc. in the draft, and the run log says which to fill in.
 - The global Settings → "Auto-send emails/texts" switches don't apply to workflows; they still only cover the messages they did before (missed-call text-back and AI/template replies).
+
+## 2026-11-27 — Team inbox, My inbox and internal chat
+
+- **Not in SPEC; requested and approved (Jordan) on 2026-11-27.**
+- **Conversations, not single messages, are assigned.** The key is the message's thread key (email thread root / Quo conversation id), or its own id when it has none (`conversation_assignments`), so later replies in an assigned thread follow automatically. Outbound replies carry the replied-to Message-ID as their thread key, so in Sent they may not always match the inbound thread; the Inbox, To file and Archived views are the ones that matter.
+- **Views in Messages** (every box): **Team inbox** (everything, as before), **My inbox** = conversations assigned to me **plus** messages on jobs whose assigned person is me ("Assigned + my jobs", chosen by the user), **Unassigned** = neither. Each listed message shows whose it is.
+- **Internal notes** are `activities` rows (type NOTE, direction INTERNAL, `raw.conversationKey`). No code path sends an activity, so a note can't reach the client. They also appear on the job/contact timeline as internal notes. Notes are refused on AIRnyc/sealed messages (CLAUDE.md rule 5): member details belong in the encrypted case.
+- **@mentions** match a member's full name, or first name when it's unique on the team (`lib/team/mentions.ts`); the author is never notified. Mentions in notes or chat, and being assigned a conversation by someone else, create `notifications`.
+- **Team chat** (`/team-chat`, under Daily work): one room for OWNER + VA, refreshed every 20 s while open (no realtime infrastructure needed). The menu badge = new chat messages from others since you last opened it + unread mention/assignment notifications (chat mentions aren't counted twice). Opening the page marks both read. You can delete your own messages; the owner can delete any.
+- **RLS (0042):** staff only; notifications are readable only by their recipient; chat messages can only be posted as yourself.

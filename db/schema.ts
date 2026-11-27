@@ -1358,3 +1358,64 @@ export const workflowRuns = pgTable(
     index("workflow_runs_workflow_idx").on(t.workflowId, t.createdAt),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// Team inbox & internal chat (2026-11-27). Conversations in Messages can be assigned to a team
+// member; "My inbox" = assigned to me + messages on jobs assigned to me. Internal notes live in
+// `activities` (type NOTE, direction INTERNAL) so they can never be sent. Team chat is a separate
+// room. Mentions and assignments create notifications. Staff (OWNER + VA) only (RLS 0042).
+// ---------------------------------------------------------------------------
+
+/** Who owns a conversation. Key = the message's thread key (or its id when it has none). */
+export const conversationAssignments = pgTable("conversation_assignments", {
+  conversationKey: text("conversation_key").primaryKey(),
+  assignee: uuid("assignee")
+    .notNull()
+    .references(() => profiles.userId, { onDelete: "cascade" }),
+  assignedBy: uuid("assigned_by").default(sql`auth.uid()`),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The team chat room. Never sent to anyone outside the team. */
+export const teamMessages = pgTable(
+  "team_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    authorId: uuid("author_id")
+      .notNull()
+      .default(sql`auth.uid()`)
+      .references(() => profiles.userId, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    mentions: uuid("mentions").array().notNull().default(sql`'{}'::uuid[]`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [index("team_messages_created_idx").on(t.createdAt)],
+);
+
+/** In-app notifications: @mentions in notes or chat, and conversations assigned to you. */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.userId, { onDelete: "cascade" }),
+    kind: text("kind").$type<"MENTION_NOTE" | "MENTION_CHAT" | "ASSIGNED">().notNull(),
+    actorId: uuid("actor_id").default(sql`auth.uid()`),
+    title: text("title").notNull(),
+    body: text("body"),
+    href: text("href"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (t) => [index("notifications_user_idx").on(t.userId, t.readAt, t.createdAt)],
+);
+
+/** When each person last opened Team chat, for the unread count. */
+export const chatReads = pgTable("chat_reads", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => profiles.userId, { onDelete: "cascade" }),
+  lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
+});

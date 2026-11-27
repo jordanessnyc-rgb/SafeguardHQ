@@ -26,6 +26,12 @@ import { inboxReviewWhere, OUTBOX_WAITING, suggestJob } from "@/lib/queues";
 import { cn } from "@/lib/utils";
 import { reviewActivity } from "../comms/actions";
 
+import { MentionComposer } from "@/components/team/mention-composer";
+import { MentionText } from "@/components/team/mention-text";
+import { assignmentFor, conversationKey, notesFor, ownerSql, teamMembers, viewWhere, type InboxView } from "@/lib/team/inbox";
+import { addNoteAction, assignConversationAction } from "./team-actions";
+import { AssignForm } from "./assign-form";
+
 export const metadata = { title: "Messages" };
 
 const TZ = "America/New_York";
@@ -94,6 +100,8 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const now = new Date();
   const box: MessageBox = sp.box === "inbox" || sp.box === "sent" || sp.box === "archived" ? sp.box : "review";
   const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
+  // Team inbox = everything; My inbox = assigned to me + my jobs; Unassigned = nobody's yet.
+  const view: InboxView = sp.view === "mine" || sp.view === "unassigned" ? sp.view : "team";
   const search: SQL | undefined = q ? or(ilike(s.activities.subject, `%${q}%`), ilike(s.activities.body, `%${q}%`), ilike(s.activities.fromAddress, `%${q}%`), ilike(s.activities.toAddress, `%${q}%`)) : undefined;
   const notTrashed = sql`not (coalesce(${s.activities.raw}, '{}'::jsonb) ? 'trashed')`;
   const boxWhere: Record<MessageBox, SQL | undefined> = {
@@ -103,8 +111,11 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     archived: and(inArray(s.activities.type, ["EMAIL_IN", "EMAIL_OUT", "SMS"]), isNotNull(s.activities.archivedAt), notTrashed),
     outbox: undefined,
   };
-  const where = and(boxWhere[box], search);
-  const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail } = await user.db(async (tx) => ({
+  const where = and(boxWhere[box], search, viewWhere(view, user.id));
+  const { items, jobs, total, toFile, toApprove, lines, templates, defaultFromEmail, members, mineCount, unassignedCount } = await user.db(async (tx) => ({
+    members: await teamMembers(tx),
+    mineCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("mine", user.id))))[0].n,
+    unassignedCount: (await tx.select({ n: count() }).from(s.activities).where(and(boxWhere[box], viewWhere("unassigned", user.id))))[0].n,
     items: await tx
       .select({
         id: s.activities.id,
@@ -118,6 +129,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         sensitive: s.activities.sensitive,
         attachmentCount: sql<number>`coalesce(jsonb_array_length(${s.activities.attachments}), 0)`.mapWith(Number),
         hasGuess: sql<boolean>`${s.activities.aiClassification} ? 'category'`,
+        owner: ownerSql,
         contact: { id: s.contacts.id, firstName: s.contacts.firstName, lastName: s.contacts.lastName },
       })
       .from(s.activities)
@@ -163,16 +175,31 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const searchForm = (
     <form className="flex gap-1 border-b border-border/70 p-2.5" role="search">
       {box !== "review" && <input type="hidden" name="box" value={box} />}
+      {view !== "team" && <input type="hidden" name="view" value={view} />}
       <Input name="q" type="search" defaultValue={q} placeholder="Search sender, subject or text" aria-label="Search messages" className="h-8" />
     </form>
   );
+  const viewHref = (v: InboxView) => `/inbox?${new URLSearchParams({ ...(box === "review" ? {} : { box }), ...(v === "team" ? {} : { view: v }), ...(q ? { q } : {}) })}`.replace(/\?$/, "");
+  const viewTabs = (
+    <nav aria-label="Whose messages" className="seg m-2.5 mb-0 flex">
+      {([["team", "Team inbox", null], ["mine", "My inbox", mineCount], ["unassigned", "Unassigned", unassignedCount]] as const).map(([v, label, n]) => (
+        <Link key={v} href={viewHref(v)} aria-current={view === v ? "page" : undefined} className={cn("seg-item flex-1 justify-center text-xs", view === v && "seg-on")}>
+          {label}
+          {n ? <span className="ml-1 tabular-nums text-muted-foreground">{n}</span> : null}
+        </Link>
+      ))}
+    </nav>
+  );
+  const memberName = (id: string | null) => (id ? members.find((m) => m.id === id)?.name ?? "Someone" : null);
+
   if (items.length === 0)
     return (
       <>
         {header}
         <div className="panel overflow-hidden">
+          {viewTabs}
           {searchForm}
-          <EmptyState>{q ? `Nothing matches "${q}".` : BOX_TEXT[box].empty}</EmptyState>
+          <EmptyState>{q ? `Nothing matches "${q}".` : view === "mine" ? "Nothing here is assigned to you, or on a job you're assigned to." : view === "unassigned" ? "Every message here has someone looking after it." : BOX_TEXT[box].empty}</EmptyState>
         </div>
       </>
     );
@@ -186,7 +213,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
   const index = found >= 0 ? found : Math.min(Math.max(0, at), items.length - 1);
   const explicit = Boolean(requested);
   const current = items[index];
-  const base = `/inbox?${box === "review" ? "" : `box=${box}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
+  const base = `/inbox?${box === "review" ? "" : `box=${box}&`}${view === "team" ? "" : `view=${view}&`}${q ? `q=${encodeURIComponent(q)}&` : ""}`;
   const href = (i: number) => `${base}id=${items[i].id}&at=${i}`;
   const afterGone = items[index + 1] ? href(index + 1) : items[index - 1] ? href(index - 1) : base.replace(/[?&]$/, "");
   const prev = items[index - 1] ? href(index - 1) : null;
@@ -201,6 +228,13 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       .where(eq(s.activities.id, current.id)),
   );
   const { a, contact, jobNumber } = open;
+  const convKey = conversationKey(a);
+  const protectedMsg = a.sensitive || Boolean(a.airnycCaseId);
+  const team = await user.db(async (tx) => ({
+    assignment: await assignmentFor(tx, convKey),
+    jobOwner: a.jobId ? ((await tx.select({ id: s.jobs.assignedTo }).from(s.jobs).where(eq(s.jobs.id, a.jobId)))[0]?.id ?? null) : null,
+    notes: protectedMsg ? [] : await notesFor(tx, convKey),
+  }));
   const documents = a.jobId
     ? await user.db((tx) => tx.select({ id: s.documents.id, title: s.documents.title, containsPricing: s.documents.containsPricing }).from(s.documents).where(and(eq(s.documents.jobId, a.jobId!), isNull(s.documents.archivedAt), isNotNull(s.documents.storagePath))))
     : [];
@@ -252,6 +286,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
       <div className="panel grid overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)]">
         {/* ---------- message list ---------- */}
         <nav aria-label="Messages to file" className={cn("min-w-0 border-r border-border/70 bg-muted/20 lg:block", explicit && "hidden")}>
+          {viewTabs}
           {searchForm}
           <div className="flex items-center justify-between border-b border-border/70 px-3 py-2 text-xs text-muted-foreground">
             <span>{total > items.length ? `Newest ${items.length} of ${total}` : `${total} ${BOX_TEXT[box].listLabel}`}</span>
@@ -284,6 +319,9 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                         {m.attachmentCount > 0 && <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-label="Has attachments" />}
                       </span>
                       <span className="line-clamp-2 text-xs text-muted-foreground">{m.sensitive ? "Open to reveal (logged)." : splitQuoted(m.snippet ?? "").main.replace(/\s+/g, " ").trim() || "(no text)"}</span>
+                      {m.owner && (
+                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{m.owner === user.id ? "Yours" : `→ ${memberName(m.owner)}`}</span>
+                      )}
                       {(m.hasGuess || m.triageStatus === "BLOCKED") && (
                         <span className="mt-1 flex gap-1">
                           {m.hasGuess && <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">Suggestion ready</Badge>}
@@ -432,6 +470,54 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
             )}
 
             {ai?.error && <p className="text-xs text-destructive">AI error: {ai.error}</p>}
+
+            <section aria-label="Team" className="space-y-3 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] p-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Assigned to</span>
+                <AssignForm action={assignConversationAction.bind(null, a.id)} members={members} current={team.assignment?.assignee ?? ""} />
+                {!team.assignment && team.jobOwner && (
+                  <span className="text-xs text-muted-foreground">
+                    Shows in {team.jobOwner === user.id ? "your" : `${memberName(team.jobOwner)}'s`} inbox through job {jobNumber}.
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Internal notes</h3>
+                  <span className="text-xs text-muted-foreground">Only your team sees these. Never sent to the client.</span>
+                </div>
+                {protectedMsg ? (
+                  <p className="text-xs text-muted-foreground">Notes are off for AIRnyc messages. Keep member details in the AIRnyc case.</p>
+                ) : (
+                  <>
+                    {team.notes.length > 0 && (
+                      <ol className="space-y-2">
+                        {team.notes.map((n) => (
+                          <li key={n.id} className="flex gap-2">
+                            <Avatar name={memberName(n.authorId) ?? "?"} className="mt-0.5 size-6 text-[10px]" />
+                            <div className="min-w-0 flex-1 rounded-lg bg-card px-3 py-2 text-sm shadow-xs ring-1 ring-black/[0.05] dark:ring-white/10">
+                              <div className="mb-0.5 flex flex-wrap items-baseline gap-x-2 text-xs">
+                                <span className="font-semibold">{memberName(n.authorId)}</span>
+                                <time dateTime={n.createdAt.toISOString()} className="text-muted-foreground">{fmtDate(n.createdAt, true)}</time>
+                              </div>
+                              <MentionText text={n.body ?? ""} members={members} me={user.id} />
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    <MentionComposer
+                      action={addNoteAction.bind(null, a.id)}
+                      members={members}
+                      me={user.id}
+                      rows={2}
+                      placeholder="Write an internal note… type @ and a name to notify a teammate"
+                      submitLabel="Add note"
+                    />
+                  </>
+                )}
+              </div>
+            </section>
 
             {box !== "review" && (
               <MessageActions

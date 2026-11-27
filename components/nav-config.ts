@@ -12,6 +12,7 @@ import {
   Inbox,
   Landmark,
   Megaphone,
+  MessagesSquare,
   Route,
   Sparkles,
   Users,
@@ -19,7 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type NavCounts = { tasks: number; inbox: number; outbox: number };
+export type NavCounts = { tasks: number; inbox: number; outbox: number; chat: number };
 type CountKey = keyof NavCounts;
 export type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean; aiOnly?: boolean; count?: CountKey; urgent?: boolean };
 
@@ -30,6 +31,7 @@ export const NAV_GROUPS: { label: string; ownerOnly?: boolean; secondary?: boole
     { href: "/jobs", label: "Jobs", icon: ClipboardList },
     { href: "/properties", label: "Clients & properties", icon: Building2 },
     { href: "/inbox", label: "Messages", icon: Inbox, count: "inbox", urgent: true },
+    { href: "/team-chat", label: "Team chat", icon: MessagesSquare, count: "chat" },
     { href: "/schedule", label: "Calendar", icon: CalendarDays },
   ] },
   { label: "Workspaces", items: [

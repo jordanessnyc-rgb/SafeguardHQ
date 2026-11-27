@@ -6,6 +6,7 @@ import { schema as s } from "@/lib/db";
 import { inboxReviewWhere, OUTBOX_WAITING } from "@/lib/queues";
 import { nyDate, TZ } from "@/lib/time";
 import { aiEnabled } from "@/lib/ai/enabled";
+import { unreadForNav } from "@/lib/team/inbox";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await requireStaff();
@@ -18,7 +19,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       .where(and(isNull(s.tasks.archivedAt), inArray(s.tasks.status, ["OPEN", "IN_PROGRESS"]), or(eq(s.tasks.assignee, user.id), isNull(s.tasks.assignee)), sql`(${s.tasks.dueAt} at time zone ${TZ})::date <= ${nyDate(new Date())}::date`));
     const [inbox] = await tx.select({ n: count() }).from(s.activities).where(inboxReviewWhere);
     const [outbox] = await tx.select({ n: count() }).from(s.outboundMessages).where(inArray(s.outboundMessages.status, [...OUTBOX_WAITING]));
-    return { tasks: tasks.n, inbox: inbox.n, outbox: outbox.n };
+    // Team chat badge = new chat messages from others + unread mentions/assignments.
+    return { tasks: tasks.n, inbox: inbox.n, outbox: outbox.n, chat: await unreadForNav(tx, user.id) };
   });
   const nav = { isOwner: user.role === "OWNER", ai: aiEnabled(), counts, name: user.fullName ?? user.email, role: user.role === "OWNER" ? "Owner" : "VA" };
   return (
